@@ -5,14 +5,20 @@ build-backend = "hatchling.build"
 [project]
 name = "deepdeck-agent-examples"
 version = "0.1.0"
-description = "Random and Alexios rule-based agents for Deep Deck League"
+description = "Trainable and rule-based example agents for Deep Deck League"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Deep Deck League" }]
-dependencies = ["deepdeck-agent-sdk>=0.1.0"]
+dependencies = [
+  "deepdeck-agent-sdk>=0.1.0",
+  "python-dotenv>=1.0,<2",
+]
 
 [project.optional-dependencies]
+deep-learning = [
+  "torch>=2.4,<3",
+]
 dev = [
   "mypy>=1.15,<2",
   "pytest>=8.3,<9",
@@ -22,6 +28,7 @@ dev = [
 
 [project.scripts]
 deepdeck-example = "deepdeck_examples.run:main"
+deepdeck-train = "deepdeck_examples.deep_learning.training:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deepdeck_examples"]
@@ -42,3 +49,6 @@ python_version = "3.10"
 strict = true
 packages = ["deepdeck_examples"]
 
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*"]
+follow_imports = "skip"

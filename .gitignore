@@ -8,4 +8,8 @@ build/
 dist/
 *.egg-info/
 *.py[cod]
-
+checkpoints/
+runs/
+*.pt
+*.pth
+*.ckpt

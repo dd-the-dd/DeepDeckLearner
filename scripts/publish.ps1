@@ -1,6 +1,6 @@
 param(
     [string]$Owner = "dd-the-dd",
-    [string]$Repository = "deepdeck-agent-examples"
+    [string]$Repository = "DeepDeckAgentExamples"
 )
 
 $ErrorActionPreference = "Stop"
