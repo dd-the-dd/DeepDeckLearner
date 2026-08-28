@@ -17,7 +17,7 @@ def random_config() -> AgentConfig:
         formats=("legacy", "commander"),
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
-        repository_url="https://github.com/dd-the-dd/DeepDeckAgentExamples",
+        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
     )
 
 
@@ -34,7 +34,7 @@ def alexios_config() -> AgentConfig:
         formats=("commander",),
         decks=DeckPolicy.only(deck_id),
         speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
-        repository_url="https://github.com/dd-the-dd/DeepDeckAgentExamples",
+        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
     )
 
 
@@ -55,5 +55,5 @@ def deep_learning_config(version: str) -> AgentConfig:
         formats=("legacy", "commander") if version == "v11" else ("legacy",),
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
-        repository_url="https://github.com/dd-the-dd/DeepDeckAgentExamples",
+        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
     )

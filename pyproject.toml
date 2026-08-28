@@ -3,16 +3,18 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "deepdeck-agent-examples"
-version = "0.1.0"
-description = "Trainable and rule-based example agents for Deep Deck League"
+name = "deepdeck-learner"
+version = "0.2.0"
+description = "Train, inspect, and locally playtest public Deep Deck AI examples"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Deep Deck League" }]
 dependencies = [
   "deepdeck-agent-sdk>=0.1.0",
+  "fastapi>=0.116,<0.117",
   "python-dotenv>=1.0,<2",
+  "uvicorn>=0.35,<0.36",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,7 @@ deep-learning = [
   "torch>=2.4,<3",
 ]
 dev = [
+  "httpx>=0.28,<0.29",
   "mypy>=1.15,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.25,<1",
@@ -29,9 +32,16 @@ dev = [
 [project.scripts]
 deepdeck-example = "deepdeck_examples.run:main"
 deepdeck-train = "deepdeck_examples.deep_learning.training:main"
+deepdeck-learner = "deepdeck_learner.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/deepdeck_examples"]
+packages = ["src/deepdeck_examples", "src/deepdeck_learner"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"apps/learner-web/dist" = "deepdeck_learner/web"
+
+[tool.hatch.build.targets.sdist.force-include]
+"apps/learner-web/dist" = "apps/learner-web/dist"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -47,7 +57,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
-packages = ["deepdeck_examples"]
+packages = ["deepdeck_examples", "deepdeck_learner"]
 
 [[tool.mypy.overrides]]
 module = ["torch", "torch.*"]

@@ -1,4 +1,5 @@
 .env
+.deepdeck/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -6,8 +7,11 @@
 __pycache__/
 build/
 dist/
+apps/learner-web/dist/
+apps/learner-web/node_modules/
 *.egg-info/
 *.py[cod]
+*.tsbuildinfo
 checkpoints/
 runs/
 *.pt

@@ -1,146 +1,106 @@
-# Entraîner les exemples V11 et V12
+# Train the V11 and V12 examples
 
-Ce guide fournit un pipeline minimal et entièrement public : observation visible, actions
-légales fournies par Rust, encodage déterministe, réseau PyTorch, entraînement supervisé,
-checkpoint et inférence avec le SDK. Aucun poids, historique de partie privé ou secret
-d'infrastructure n'est distribué.
+This is a small, public learning pipeline: visible observations, exact legal
+actions from Rust, deterministic feature encoding, a PyTorch policy, supervised
+training, checkpoints, and SDK inference. No private weights or match history are
+included.
 
-## Installation
+## Magic state to tensor
 
-Depuis le dépôt `DeepDeckAgentExamples` placé à côté du SDK :
+At each decision, Rust provides two important objects:
 
-```powershell
-python -m pip install -e "../DeepDeckAgent[dev]"
-python -m pip install -e ".[deep-learning]"
-```
+1. the game state visible to this player;
+2. the exact list of legal actions at that moment.
 
-Une machine CPU suffit pour le smoke test. Pour une expérience réelle, choisissez une
-version de PyTorch adaptée à votre GPU en suivant sa documentation officielle.
+`DecisionEncoder` converts each candidate decision into three feature streams:
 
-## Ce que les deux modèles apprennent
+- **state features**: turn, phase, life, zones, visible permanents, stack, and
+  other observable facts;
+- **delta features**: changes and events since the previous observation;
+- **action features**: action kind, source, target, cost, and other declared
+  option fields.
 
-Le réseau ne génère jamais une commande libre. Rust envoie la liste exacte des actions
-légales; le modèle calcule un logit par entrée et le SDK retourne l'identifiant choisi.
+Known cards from the agent's own deck may be included as context. Hidden cards
+from an opponent must never be inserted. Compact deterministic feature hashing
+keeps this starter independent of a private vocabulary. The checkpoint records
+the feature size; changing the schema means training a compatible checkpoint.
 
-V11 possède :
+The policy does not generate free-form commands. It produces one logit for every
+legal action, then the SDK returns the identifier with the selected score.
 
-- un Transformer pour les entités de l'état visible;
-- un Transformer distinct pour les différences et événements depuis la décision précédente;
-- une mémoire `GRUCell` transportée entre les décisions d'une partie;
-- un score dynamique par action légale;
-- une tête de valeur multijoueur de quatre positions.
+## Model families
 
-V12 conserve la politique V11, mais sa tête de valeur prédit un scalaire borné `V(s)`.
-Les valeurs retournées sont `V(s)` pour le joueur courant et `-V(s)` pour l'adversaire.
-Cette hypothèse à somme nulle rend l'exemple V12 strictement adapté à deux joueurs.
+V11 separately encodes visible state and deltas, keeps a `GRUCell` memory between
+decisions, scores the dynamic action set, and predicts up to four player values.
 
-Le code est volontairement plus petit que le système de production. Le feature hashing
-public remplace son vocabulaire et ses encodeurs versionnés; les checkpoints ne sont donc
-pas interchangeables.
+V12 keeps the same policy structure but predicts a bounded scalar `V(s)`. Its
+value output is `[V(s), -V(s)]`, which makes this public example a two-player
+starting point.
 
-## Vérifier tout le pipeline sans données
+## Verify the pipeline without data
+
+Use the workbench or the CLI:
 
 ```powershell
 deepdeck-train v11 --smoke --epochs 2 --output runs/v11-smoke
 deepdeck-train v12 --smoke --epochs 2 --output runs/v12-smoke
 ```
 
-Chaque répertoire contient :
+Each checkpoint contains `config.json` and `model.pt`. The loader uses
+`torch.load(..., weights_only=True)`. Checkpoints, runs, and common weight files
+are ignored by Git.
 
-```text
-runs/v12-smoke/
-├── config.json  # famille, schéma et hyperparamètres
-└── model.pt     # state_dict PyTorch seulement
-```
+## JSON Lines trajectory format
 
-Le chargeur utilise `torch.load(..., weights_only=True)`. Ne publiez pas vos poids par
-accident : les formats usuels et les répertoires de sortie sont dans `.gitignore`.
-
-## Préparer ses propres décisions en JSON Lines
-
-Une ligne représente une décision. Voici le plus petit document accepté :
+One line is one decision:
 
 ```json
 {"observation":{"turnNumber":1,"step":"precombatMain","players":[{"id":"p1","life":20},{"id":"p2","life":20}]},"legalActions":[{"id":"land","kind":"playLand"},{"id":"pass","kind":"passPriority"}],"chosenActionId":"land","valueTargets":[1.0,-1.0]}
 ```
 
-Champs :
+- `observation`: the visible Engine projection;
+- `legalActions`, or `decision.options`: exact actions offered by Rust;
+- `chosenActionId`: an ID present in that action list;
+- `previousObservation`: optional previous visible observation;
+- `knownDeck`: optional definitions from the agent's own known deck;
+- `valueTargets`: optional outcome/value targets by relative seat.
 
-- `observation` : projection visible reçue du moteur;
-- `legalActions`, ou `decision.options` : actions exactes proposées par Rust;
-- `chosenActionId` : action cible, obligatoirement présente dans cette liste;
-- `previousObservation` : observation visible à la décision précédente, facultative;
-- `knownDeck` : définitions connues du deck propre au début de la partie, facultatives;
-- `valueTargets` : résultats ou valeurs cibles par position relative, facultatifs.
-
-Ne placez jamais les cartes cachées d'un adversaire dans le dataset. Un export destiné à
-la recherche doit respecter le niveau de partage et le consentement associés à la partie.
-
-Entraînement :
+Train and resume without mutating the source checkpoint:
 
 ```powershell
-deepdeck-train v11 `
-  --dataset data/mes-decisions.jsonl `
+deepdeck-train v12 `
+  --dataset data/legacy-decisions.jsonl `
   --epochs 10 `
   --learning-rate 0.0003 `
-  --output runs/mon-v11
+  --output runs/my-v12
+
+deepdeck-train v12 `
+  --dataset data/new-decisions.jsonl `
+  --resume runs/my-v12 `
+  --output runs/my-v12-next
 ```
 
-Reprendre un modèle existant écrit un nouveau checkpoint et ne modifie pas la source :
+## What the baseline optimizes
 
-```powershell
-deepdeck-train v11 `
-  --dataset data/nouvelles-decisions.jsonl `
-  --resume runs/mon-v11 `
-  --output runs/mon-v11-suite
-```
+The trainer applies cross-entropy behavior cloning to `chosenActionId` and MSE
+regression to `valueTargets`. This is a baseline, not a required algorithm. PPO,
+tree search, self-play, and offline RL can reuse:
 
-Le trainer fourni fait du behavior cloning sur `chosenActionId` et une régression MSE sur
-`valueTargets`. C'est une baseline, pas une obligation. Pour PPO, recherche arborescente,
-self-play ou apprentissage hors politique, réutilisez les interfaces suivantes :
+- `DecisionEncoder.encode(...)` for tensor construction;
+- `PolicyV11.forward(...)` or `PolicyV12.forward(...)` for logits and values;
+- `save_checkpoint(...)` and `load_checkpoint(...)` for inference compatibility;
+- `DeepLearningAgent` for local or hosted inference.
 
-- `DecisionEncoder.encode(...)` pour produire les trois flux de tenseurs;
-- `PolicyV11.forward(...)` ou `PolicyV12.forward(...)` pour obtenir logits, valeurs et mémoire;
-- `save_checkpoint(...)` et `load_checkpoint(...)` pour conserver le contrat d'inférence;
-- `DeepLearningAgent` pour connecter le modèle entraîné au moteur local ou public.
+An inference match never changes weights. Learning requires an explicit dataset
+or collector, reward definition, and trainer call.
 
-Jouer une partie avec `deepdeck-example` effectue seulement de l'inférence et ne modifie
-jamais les poids. Un projet qui veut apprendre en ligne doit enregistrer ses transitions,
-définir ses récompenses et appeler explicitement son propre trainer.
+## Hosted and deck-driven learning
 
-## Jouer localement
+The convenient target flow is: select formats/decks, collect complete self-play
+trajectories, train one learner while other agents stay in inference, then test
+the checkpoint against a human locally. The first public workbench exposes this
+shape but enables it only when `trajectory-v1` is implemented.
 
-Pour simplement écouter le moteur local :
-
-```powershell
-deepdeck-example v11 --target local --checkpoint runs/mon-v11
-```
-
-Pour que l'exemple crée aussi sa partie :
-
-```powershell
-$env:DEEPDECK_LOCAL_DECK_SESSION_ID = "mon-deck"
-$env:DEEPDECK_LOCAL_OPPONENT_DECK_SESSION_ID = "opponent-deck"
-deepdeck-example v11 `
-  --target local `
-  --checkpoint runs/mon-v11 `
-  --start-local-game `
-  --local-format commander
-```
-
-Les deux decks doivent déjà exister dans le catalogue du moteur local.
-
-## Jouer sur Deep Deck League
-
-Après avoir généré une clé de compte, le manifeste enregistre automatiquement sa version
-d'agent et la plateforme retourne son UUID :
-
-```powershell
-$env:DEEPDECK_API_KEY = "ddl_agent_..."
-$env:DEEPDECK_COMPETITION_VERSION_ID = "..."
-$env:DEEPDECK_DECK_VERSION_ID = "..."
-deepdeck-example v12 --target ddl --checkpoint runs/mon-v12 --once
-```
-
-V11/V12 refusent un démarrage sans checkpoint. L'option `--allow-untrained` existe pour
-un test de câblage local explicite; elle ne doit pas servir à évaluer la qualité du modèle.
+That contract must version observations, legal actions, chosen actions, terminal
+placements, rewards, encoder schema, Engine revision, and deck content hashes.
+Hosted replay storage alone is not automatically a valid learning dataset.
