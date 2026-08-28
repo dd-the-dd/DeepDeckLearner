@@ -27,9 +27,10 @@ Open the workbench:
 .\.venv\Scripts\deepdeck-learner.exe
 ```
 
-It opens `http://127.0.0.1:8765`. Start with **Train locally → V12 → Smoke
-sample**. The smoke run verifies the complete encoder, model, optimizer, and
-checkpoint path without requiring a deck or dataset.
+It opens `http://127.0.0.1:8765`. Start with **Train locally → V12 → Start
+training**. The beginner form selects the built-in smoke trajectory for you. It
+verifies the complete encoder, model, optimizer, and checkpoint path without
+requiring a deck or dataset.
 
 The browser UI cannot launch arbitrary commands. A loopback-only Python
 controller validates a small allowlist of training and playtest jobs. It never
@@ -39,7 +40,8 @@ sends your API key to React.
 
 - Train V11 or V12 from the built-in smoke samples.
 - Train from a JSONL decision trajectory and resume a checkpoint.
-- Configure CPU/CUDA, epochs, learning rate, and seed.
+- Prefer CUDA automatically and fall back to CPU when no compatible GPU is available.
+- Configure trajectory input, CPU/CUDA, epochs, learning rate, and seed under Advanced.
 - Run random, Alexios, V11, or V12 against a local Engine session.
 - Inspect dependency readiness and bounded job logs.
 - Connect an inference agent to Deep Deck League with your account API key.
@@ -52,9 +54,10 @@ substitute smoke data or call inference “training.”
 
 ### Magic-first
 
-Choose the model family and input. A V12 smoke run is the safe first action. For
-a real experiment, choose a `.jsonl` trajectory collected with the same encoder
-schema. Advanced optimizer fields stay collapsed by default.
+Choose the model family and start. A V12 smoke run is the safe first action. The
+trajectory selector, project-relative `.deepdeck/trajectories/decisions.jsonl`
+path, and optimizer controls stay under Advanced. The workbench creates that
+ignored local trajectory file and its parent directory when it starts.
 
 ### ML-first
 
@@ -102,9 +105,11 @@ deepdeck-example alexios --target ddl --speed 1s
 ## Hosted inference and future online training
 
 Copy `.env.example` to `.env`, then set your account-owned
-`DEEPDECK_API_KEY`, competition version, and deck version. The API key identifies
-the account; the agent manifest remains free to describe its own model/version.
-No browser login or `gcloud auth login` is required.
+`DEEPDECK_API_KEY`. The Matchmaking screen finds competitions and account-visible
+decks by name, so users do not enter version identifiers. Catalog requests are
+refused locally without the key and send it to Deep Deck League as a Bearer token.
+The key identifies the account; the agent manifest remains free to describe its
+own model/version. No browser login or `gcloud auth login` is required.
 
 Playing a hosted match currently performs inference only. Training from hosted
 play will require a compatible trajectory capability containing observations,

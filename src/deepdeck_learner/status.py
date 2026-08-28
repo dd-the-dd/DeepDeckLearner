@@ -47,6 +47,11 @@ def capability_status(root: Path, engine_url: str) -> dict[str, Any]:
     pixi_built = (pixi_path / "dist" / "index.js").is_file()
     return {
         "controller": {"ready": True, "version": "0.2.0"},
+        "paths": {
+            "project": str(root),
+            "trajectory": str(root / ".deepdeck" / "trajectories" / "decisions.jsonl"),
+            "checkpoints": str(root / ".deepdeck" / "checkpoints"),
+        },
         "python": {"ready": True},
         "sdk": {"ready": module_available("deepdeck_agent")},
         "torch": {"ready": module_available("torch")},

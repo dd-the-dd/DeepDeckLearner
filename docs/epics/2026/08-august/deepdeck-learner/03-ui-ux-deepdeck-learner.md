@@ -4,9 +4,10 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 
 ## Experience model
 
-The workbench uses a dark, game-table palette related to Deep Deck League while
-always displaying a `LOCAL WORKBENCH` badge. The label and loopback URL prevent
-confusion between a user's machine and the hosted league.
+The workbench shares Deep Deck League's paper, burgundy, slate-blue, serif, and
+editorial visual language. A dark burgundy application rail, denser controls,
+status chips, and the persistent `LOCAL WORKBENCH` badge distinguish it as a
+local desktop-like tool rather than another hosted site page.
 
 The default screen uses three workflow cards: **Train locally**, **Test locally**,
 and **Join matchmaking**. Hosted training remains available from the Train page
@@ -34,7 +35,7 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 | Playtest          |                                                   |
 | Matchmaking       | Account key -> Find deck -> Join queue             |
 | Representation    | Configure                                        |
-| Models            | Model [V12]  Input [Smoke sample]  [Start]        |
+| Models            | Model [V12]  Compute [GPU preferred] [Start]      |
 |                   | > Advanced settings                               |
 |                   |                                                   |
 |                   | Recent jobs                                      |
@@ -50,6 +51,11 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 - Account setup links to the exact site section that creates an autonomous-agent
   key, then reports only whether the controller detected it.
 - ML terms include a concise tooltip and link to the representation guide.
+- Trajectory input and path are advanced controls. The suggested file lives
+  under `.deepdeck/trajectories/` in the project and is created automatically.
+- CUDA is the visible default and falls back to CPU without blocking beginners.
+- Hosted deck and competition discovery is disabled until the local controller
+  detects an account API key; the controller also enforces this boundary.
 - Advanced settings never reset beginner selections when collapsed.
 - Start buttons use a nearby blocker list instead of a generic disabled cursor.
 - Job output is a bounded log region with pause-scroll and copy controls.

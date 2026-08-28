@@ -71,6 +71,9 @@ class JobManager:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
         self.checkpoint_root = self.root / ".deepdeck" / "checkpoints"
+        self.trajectory_path = self.root / ".deepdeck" / "trajectories" / "decisions.jsonl"
+        self.trajectory_path.parent.mkdir(parents=True, exist_ok=True)
+        self.trajectory_path.touch(exist_ok=True)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
@@ -137,7 +140,7 @@ class JobManager:
         learning_rate = self._bounded_float(
             raw, "learning_rate", default=0.0003, minimum=1e-8, maximum=1.0
         )
-        device = str(raw.get("device", "cpu"))
+        device = str(raw.get("device", "cuda"))
         if device != "cpu" and not device.startswith("cuda"):
             raise JobValidationError("Device must be cpu or a cuda device.")
         argv = [

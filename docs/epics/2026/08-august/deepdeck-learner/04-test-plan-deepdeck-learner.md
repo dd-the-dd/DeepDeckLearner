@@ -10,6 +10,9 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - Command construction returns an argv list and never invokes a shell.
 - Job metadata redacts secret names and values.
 - React forms preserve beginner values while advanced settings are toggled.
+- CUDA preference resolves to CPU when CUDA is unavailable.
+- Hosted catalog routes return 401 without `DEEPDECK_API_KEY` and never perform
+  an anonymous upstream request.
 
 ## Integration tests
 
@@ -19,6 +22,7 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - A failing child process transitions to failed and exposes bounded diagnostics.
 - A local play request checks Engine health before starting the agent.
 - Frontend production build and the pinned Pixi compatibility metadata are checked.
+- The default project trajectory path and empty file are created idempotently.
 
 ## Contract tests
 

@@ -28,6 +28,7 @@ def test_health_status_and_protected_job_start(tmp_path: Path) -> None:
 def test_catalog_routes_keep_deck_identifiers_behind_named_results(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setenv("DEEPDECK_API_KEY", "ddl_agent_test")
     monkeypatch.setattr(
         learner_app,
         "platform_decks",
@@ -40,4 +41,12 @@ def test_catalog_routes_keep_deck_identifiers_behind_named_results(
     response = client.get("/api/v1/catalog/decks?search=reanimator&format=legacy")
     assert response.status_code == 200
     assert response.json()["items"][0]["name"] == "Reanimator"
+
+
+def test_platform_catalog_requires_account_api_key(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
+    client = TestClient(create_app(tmp_path))
+
+    assert client.get("/api/v1/catalog/decks?format=legacy").status_code == 401
+    assert client.get("/api/v1/catalog/competitions").status_code == 401
 
