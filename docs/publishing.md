@@ -1,16 +1,20 @@
-# Publier le dépôt public
+# Publish and protect DeepDeckLearner
 
-Le public peut lire, cloner, forker et proposer une pull request. Le ruleset fourni
-réserve cependant les mises à jour, suppressions et réécritures de `main` au compte
-`@dd-the-dd`.
+The public can read, clone, fork, and propose pull requests. The repository
+ruleset reserves updates, deletion, and history rewrites on `main` to
+`@dd-the-dd` and requires the configured CI checks before merge.
 
-Après avoir installé GitHub CLI et ouvert la session du propriétaire :
+After authenticating GitHub CLI as the owner:
 
 ```powershell
 gh auth login
 .\scripts\publish.ps1
 ```
 
-Le script crée le dépôt public, pousse `main`, puis applique réellement le fichier
-`.github/rulesets/protect-main.json` avec l'API GitHub. Le simple fait de committer ce
-fichier ne suffit pas à activer la protection.
+The script creates or updates the public repository, pushes `main`, and applies
+`.github/rulesets/protect-main.json` through the GitHub API. Committing the
+ruleset file alone does not activate protection.
+
+Engine, Pixi, and Agent submodule changes must be reviewed like source changes.
+Release workflows build the React application before packaging the Python wheel,
+so the `deepdeck-learner` command includes the workbench UI.
