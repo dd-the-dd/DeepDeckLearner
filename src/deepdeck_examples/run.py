@@ -72,10 +72,6 @@ def parser() -> argparse.ArgumentParser:
         default=os.getenv("DEEPDECK_COMPETITION_VERSION_ID"),
     )
     result.add_argument(
-        "--agent-version-id",
-        default=os.getenv("DEEPDECK_AGENT_VERSION_ID"),
-    )
-    result.add_argument(
         "--deck-version-id",
         default=os.getenv("DEEPDECK_DECK_VERSION_ID"),
     )
@@ -218,7 +214,6 @@ async def run(arguments: argparse.Namespace) -> None:
         return
     matchmaking_ids = {
         "DEEPDECK_COMPETITION_VERSION_ID": arguments.competition_version_id,
-        "DEEPDECK_AGENT_VERSION_ID": arguments.agent_version_id,
         "DEEPDECK_DECK_VERSION_ID": arguments.deck_version_id,
     }
     missing = [name for name, value in matchmaking_ids.items() if not value]
@@ -227,7 +222,6 @@ async def run(arguments: argparse.Namespace) -> None:
     await runner.serve_matchmaking(
         MatchmakingEntry(
             competition_version_id=arguments.competition_version_id,
-            agent_version_id=arguments.agent_version_id,
             deck_version_id=arguments.deck_version_id,
         ),
         continuous=not arguments.once,
