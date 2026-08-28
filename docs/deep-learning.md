@@ -132,12 +132,12 @@ Les deux decks doivent déjà exister dans le catalogue du moteur local.
 
 ## Jouer sur Deep Deck League
 
-Après avoir généré une clé liée à la même version d'agent que le ticket :
+Après avoir généré une clé de compte, le manifeste enregistre automatiquement sa version
+d'agent et la plateforme retourne son UUID :
 
 ```powershell
 $env:DEEPDECK_API_KEY = "ddl_agent_..."
 $env:DEEPDECK_COMPETITION_VERSION_ID = "..."
-$env:DEEPDECK_AGENT_VERSION_ID = "..."
 $env:DEEPDECK_DECK_VERSION_ID = "..."
 deepdeck-example v12 --target ddl --checkpoint runs/mon-v12 --once
 ```
