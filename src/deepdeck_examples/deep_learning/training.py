@@ -18,6 +18,14 @@ from .models import ModelConfig, PolicyV11, build_model
 LOGGER = logging.getLogger(__name__)
 
 
+def resolve_device(requested: torch.device | str) -> torch.device:
+    resolved = torch.device(requested)
+    if resolved.type == "cuda" and not torch.cuda.is_available():
+        LOGGER.warning("CUDA was requested but is unavailable; falling back to CPU.")
+        return torch.device("cpu")
+    return resolved
+
+
 @dataclass(frozen=True)
 class DecisionSample:
     observation: dict[str, Any]
@@ -146,7 +154,7 @@ def train(
         raise ValueError("epochs must be positive")
     if learning_rate <= 0:
         raise ValueError("learning_rate must be positive")
-    resolved_device = torch.device(device)
+    resolved_device = resolve_device(device)
     model.to(resolved_device)
     model.train()
     encoder = DecisionEncoder(EncoderConfig(feature_size=model.config.feature_size))
@@ -218,7 +226,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--epochs", type=int, default=3)
     result.add_argument("--learning-rate", type=float, default=3e-4)
     result.add_argument("--value-coefficient", type=float, default=0.5)
-    result.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    result.add_argument(
+        "--device",
+        default="cuda",
+        help="Preferred PyTorch device. CUDA automatically falls back to CPU when unavailable.",
+    )
     result.add_argument("--seed", type=int, default=1)
     return result
 
@@ -227,8 +239,9 @@ def main() -> None:
     arguments = parser().parse_args()
     torch.manual_seed(arguments.seed)
     samples = smoke_samples(arguments.version) if arguments.smoke else load_jsonl(arguments.dataset)
+    device = resolve_device(arguments.device)
     model = (
-        load_checkpoint(arguments.resume, device=arguments.device)
+        load_checkpoint(arguments.resume, device=device)
         if arguments.resume
         else build_model(
             arguments.version,
@@ -243,7 +256,7 @@ def main() -> None:
         epochs=arguments.epochs,
         learning_rate=arguments.learning_rate,
         value_coefficient=arguments.value_coefficient,
-        device=arguments.device,
+        device=device,
         seed=arguments.seed,
     )
     target = save_checkpoint(arguments.output, model)

@@ -31,7 +31,7 @@ const workflowCopy: Record<Workflow, { title: string; kicker: string; descriptio
   'local-training': {
     title: 'Train locally',
     kicker: 'Best place to start',
-    description: 'Learn from a trajectory file on your CPU or GPU. Try a tiny smoke run first.',
+    description: 'Pick a model and launch. DeepDeckLearner chooses the safe starter settings for you.',
   },
   'online-training': {
     title: 'Train online',
@@ -84,7 +84,7 @@ function TrainingForm({ status, refresh }: { status: CapabilityStatus | null; re
   const [advanced, setAdvanced] = useState(false);
   const [epochs, setEpochs] = useState(3);
   const [learningRate, setLearningRate] = useState(0.0003);
-  const [device, setDevice] = useState('cpu');
+  const [device, setDevice] = useState('cuda');
   const [error, setError] = useState('');
   const blockers = workflowBlockers(status, 'local-training');
 
@@ -109,13 +109,18 @@ function TrainingForm({ status, refresh }: { status: CapabilityStatus | null; re
   return (
     <form className="panel configure" onSubmit={submit}>
       <div className="section-heading"><div><span className="eyebrow">Configure</span><h2>Local training</h2></div><span className="step">01</span></div>
-      <div className="field-grid">
+      <div className="field-grid beginner-fields">
         <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="v12">V12 · two-player</option><option value="v11">V11 · multiplayer</option></select></label>
-        <label>Training input<select value={source} onChange={(event) => setSource(event.target.value as 'smoke' | 'dataset')}><option value="smoke">Smoke sample · recommended first</option><option value="dataset">Trajectory JSONL</option></select></label>
+        <div className="automatic-setting"><span>Compute</span><strong>GPU preferred</strong><small>Automatically uses CPU when CUDA is unavailable.</small></div>
       </div>
-      {source === 'dataset' && <label>Dataset path<input value={dataset} onChange={(event) => setDataset(event.target.value)} placeholder="D:\\datasets\\legacy-v1.jsonl" required /></label>}
       <button className="advanced-toggle" type="button" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><span>{advanced ? '−' : '+'}</span> Advanced settings</button>
-      {advanced && <div className="advanced-fields"><label>Epochs<input type="number" min="1" max="1000" value={epochs} onChange={(event) => setEpochs(Number(event.target.value))} /></label><label>Learning rate<input type="number" min="0.00000001" max="1" step="0.0001" value={learningRate} onChange={(event) => setLearningRate(Number(event.target.value))} /></label><label>Device<input value={device} onChange={(event) => setDevice(event.target.value)} placeholder="cpu or cuda" /></label></div>}
+      {advanced && <div className="advanced-fields">
+        <label>Training input<select value={source} onChange={(event) => { const next = event.target.value as 'smoke' | 'dataset'; setSource(next); if (next === 'dataset' && !dataset) setDataset(status?.paths.trajectory ?? '.deepdeck/trajectories/decisions.jsonl'); }}><option value="smoke">Built-in smoke trajectory</option><option value="dataset">Trajectory JSONL file</option></select></label>
+        {source === 'dataset' && <label className="wide-field">Trajectory file<input value={dataset} onChange={(event) => setDataset(event.target.value)} placeholder={status?.paths.trajectory ?? '.deepdeck/trajectories/decisions.jsonl'} required /><small>Created automatically inside this project when the workbench starts.</small></label>}
+        <label>Epochs<input type="number" min="1" max="1000" value={epochs} onChange={(event) => setEpochs(Number(event.target.value))} /></label>
+        <label>Learning rate<input type="number" min="0.00000001" max="1" step="0.0001" value={learningRate} onChange={(event) => setLearningRate(Number(event.target.value))} /></label>
+        <label>Device<select value={device} onChange={(event) => setDevice(event.target.value)}><option value="cuda">CUDA · fallback to CPU</option><option value="cpu">CPU</option></select></label>
+      </div>}
       {blockers.length > 0 && <div className="notice warning"><strong>Before you start</strong>{blockers.map((item) => <span key={item}>{item}</span>)}</div>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="form-actions"><button className="primary" disabled={blockers.length > 0}>Start training <span>→</span></button><small>One training job at a time protects your GPU.</small></div>
@@ -194,13 +199,21 @@ function MatchmakingForm({ status, jobs, refresh }: { status: CapabilityStatus |
   const needsCheckpoint = agent === 'v11' || agent === 'v12';
 
   useEffect(() => {
+    if (!status?.hosted.api_key_configured) {
+      setCompetitions([]);
+      return;
+    }
     void loadCompetitions().then(setCompetitions).catch((reason) => {
       setError(reason instanceof Error ? reason.message : 'Unable to load active competitions.');
     });
-  }, []);
+  }, [status?.hosted.api_key_configured]);
 
   async function findDecks(event: FormEvent) {
     event.preventDefault();
+    if (!status?.hosted.api_key_configured) {
+      setError('Add your account API key and restart DeepDeckLearner before searching decks.');
+      return;
+    }
     setSearching(true); setError(''); setSelectedDeck(null);
     try { setDecks(await searchDecks(query, format)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to search decks.'); }
@@ -231,7 +244,7 @@ function MatchmakingForm({ status, jobs, refresh }: { status: CapabilityStatus |
     <form className="deck-finder" onSubmit={findDecks}>
       <label>Format<select value={format} onChange={(event) => { setFormat(event.target.value); setDecks([]); setSelectedDeck(null); }}><option value="legacy">Legacy</option><option value="commander">Commander</option></select></label>
       <label>Deck name or creator<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Reanimator, Alexios, Andrea…" /></label>
-      <button className="primary" type="submit" disabled={searching}>{searching ? 'Searching…' : 'Search decks'}</button>
+      <button className="primary" type="submit" disabled={searching || !status?.hosted.api_key_configured}>{searching ? 'Searching…' : 'Search decks'}</button>
     </form>
     {decks.length > 0 && <div className="deck-search-results" role="listbox" aria-label="Deck search results">{decks.map((deck) => <button type="button" role="option" aria-selected={selectedDeck?.id === deck.id} className={selectedDeck?.id === deck.id ? 'selected' : ''} key={deck.id} onClick={() => setSelectedDeck(deck)}><strong>{deck.name}</strong><span>{deck.creator ? `by ${deck.creator}` : 'Community deck'} · {deck.format ?? format} · v{deck.version}</span><small>{deck.playableCardCount} playable cards</small></button>)}</div>}
     <form onSubmit={submit}>

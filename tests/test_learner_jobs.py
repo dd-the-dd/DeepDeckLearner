@@ -23,6 +23,7 @@ def test_smoke_command_is_argv_and_uses_current_python(tmp_path: Path) -> None:
     )
     assert argv[0] == sys.executable
     assert "--smoke" in argv
+    assert argv[argv.index("--device") + 1] == "cuda"
     assert label == "V12 smoke"
     assert artifact is not None and artifact.parent.is_dir() and not artifact.exists()
 

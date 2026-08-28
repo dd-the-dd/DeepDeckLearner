@@ -8,7 +8,14 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .catalogs import CatalogError, active_competitions, local_legal_decks, platform_decks
+from .catalogs import (
+    CatalogAuthenticationError,
+    CatalogError,
+    account_api_key,
+    active_competitions,
+    local_legal_decks,
+    platform_decks,
+)
 from .jobs import JobManager, JobValidationError
 from .status import capability_status, project_root
 
@@ -44,14 +51,20 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.get("/api/v1/catalog/decks")
     def deck_catalog(search: str = "", format: str = "legacy", page: int = 1) -> dict[str, Any]:
         try:
+            account_api_key()
             return platform_decks(search, format, max(1, page))
+        except CatalogAuthenticationError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
         except CatalogError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.get("/api/v1/catalog/competitions")
     def competition_catalog() -> dict[str, Any]:
         try:
+            account_api_key()
             return active_competitions()
+        except CatalogAuthenticationError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
         except CatalogError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
 

@@ -1,5 +1,6 @@
 export type CapabilityStatus = {
   controller: { ready: boolean; version: string };
+  paths: { project: string; trajectory: string; checkpoints: string };
   sdk: { ready: boolean };
   torch: { ready: boolean };
   engine: { source_available: boolean; revision: string | null; url: string; healthy: boolean };

@@ -12,6 +12,19 @@ class CatalogError(RuntimeError):
     pass
 
 
+class CatalogAuthenticationError(CatalogError):
+    pass
+
+
+def account_api_key() -> str:
+    api_key = os.getenv("DEEPDECK_API_KEY", "").strip()
+    if not api_key:
+        raise CatalogAuthenticationError(
+            "Add DEEPDECK_API_KEY to the project .env and restart DeepDeckLearner."
+        )
+    return api_key
+
+
 def _platform_url() -> str:
     return os.getenv(
         "DEEPDECK_PLATFORM_URL", "https://staging.deepdeckleague.com/api/v1"
@@ -34,7 +47,8 @@ def platform_decks(search: str, game_format: str, page: int = 1) -> dict[str, An
         raise CatalogError("Format must be legacy or commander.")
     with httpx.Client(timeout=10.0) as client:
         response = client.get(
-            f"{_platform_url()}/decks",
+            f"{_platform_url()}/agents/catalog/decks",
+            headers={"Authorization": f"Bearer {account_api_key()}"},
             params={
                 "page": page,
                 "page_size": 12,
@@ -51,7 +65,8 @@ def platform_decks(search: str, game_format: str, page: int = 1) -> dict[str, An
 def active_competitions() -> dict[str, Any]:
     with httpx.Client(timeout=10.0) as client:
         response = client.get(
-            f"{_platform_url()}/competitions",
+            f"{_platform_url()}/agents/catalog/competitions",
+            headers={"Authorization": f"Bearer {account_api_key()}"},
             params={"status": "active", "page": 1, "page_size": 100},
         )
     data = _data(response)

@@ -84,3 +84,60 @@ select:focus, input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb
 @media (max-width: 960px) { .app-shell { grid-template-columns: 1fr; } aside { position: static; height: auto; display: grid; grid-template-columns: auto 1fr; align-items: center; } aside nav { grid-column: 1 / -1; display: flex; overflow-x: auto; margin-top: 18px; } .local-badge { margin: 0; justify-self: end; } .aside-foot { display: none; } main { padding: 30px; } }
 @media (max-width: 720px) { main { padding: 25px 16px 60px; } header { align-items: start; flex-direction: column; }.health { justify-content: start; }.workflow-grid, .field-grid, .advanced-fields, .model-grid, .deck-finder, .deck-search-results { grid-template-columns: 1fr; }.deck-finder button { margin: 0 0 15px; }.segmented { position: static; margin: 12px 0; }.form-actions { align-items: start; flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Deep Deck League family: editorial paper palette with denser app controls. */
+:root { color: #17191c; background: #e6ddd1; --gold: #762b36; --mint: #55745a; --panel: #f7f2eb; --line: #c8bcaf; --muted: #77716c; }
+body { background: radial-gradient(circle at 88% 2%, rgba(88,111,129,.16), transparent 31%), linear-gradient(115deg, #f2ede5, #e8dfd4); }
+aside { border-right-color: #3d2228; background: linear-gradient(180deg, #572028, #32272b); color: #f6eee3; box-shadow: 12px 0 34px rgba(40,29,31,.12); }
+.brand-mark { border-color: #eee3d0; color: #eee3d0; background: rgba(255,255,255,.04); }
+.brand em, .aside-foot a { color: #e7c8aa; }
+.local-badge { border-color: rgba(238,227,208,.34); background: rgba(238,227,208,.08); color: #eee3d0; }
+nav button { color: rgba(246,238,227,.65); border-radius: 2px; }
+nav button span { color: rgba(246,238,227,.45); }
+nav button:hover, nav button.active { background: rgba(255,255,255,.1); color: #fff; }
+nav button.active { box-shadow: inset 3px 0 #eee3d0; }
+nav button.active span { color: #eee3d0; }
+.aside-foot { border-top-color: rgba(255,255,255,.16); }
+.aside-foot small { color: rgba(246,238,227,.55); }
+h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
+.eyebrow, .card-kicker { color: var(--red, #762b36); }
+.status-chip { border-color: #c8bcaf; background: rgba(255,255,255,.28); color: #77716c; }
+.status-chip.ready i { background: #55745a; box-shadow: 0 0 0 3px rgba(85,116,90,.13); }
+.intro > p, .lead { color: #5f5b57; }
+.workflow-card { border-color: #c8bcaf; border-top: 4px solid #586f81; border-radius: 0; background: rgba(255,255,255,.33); box-shadow: 0 10px 30px rgba(23,25,28,.05); }
+.workflow-card:nth-child(2) { border-top-color: #762b36; background: rgba(255,255,255,.26); }
+.workflow-card:nth-child(3) { border-top-color: #55745a; }
+.workflow-card:hover { border-color: #8f8276; box-shadow: 0 16px 34px rgba(23,25,28,.09); }
+.card-title b, .empty span, .tensor-flow b { color: #762b36; }
+.card-copy, .running-count { color: #77716c; }
+.panel { border-color: #c8bcaf; border-top: 4px solid #762b36; border-radius: 0; background: rgba(247,242,235,.9); box-shadow: 0 14px 42px rgba(23,25,28,.07); }
+.panel.jobs { border-top-color: #586f81; }
+.step { color: #cfc3b7; }
+label { color: #4d4b49; }
+select, input { border-color: #c8bcaf; border-radius: 0; background: #fffdf9; color: #17191c; }
+select:focus, input:focus { border-color: #586f81; box-shadow: 0 0 0 3px rgba(88,111,129,.12); }
+.advanced-toggle, .text-button { color: #762b36; }
+.advanced-toggle span { border-color: #a99286; }
+.advanced-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 16px; border: 1px solid #d5c9bd; background: rgba(255,255,255,.25); }
+.advanced-fields .wide-field { grid-column: span 2; }
+.advanced-fields label small { color: #77716c; font-size: 9px; line-height: 1.4; }
+.automatic-setting { display: grid; align-content: center; gap: 4px; min-height: 44px; margin-bottom: 15px; border-left: 3px solid #586f81; background: rgba(88,111,129,.07); padding: 9px 12px; }
+.automatic-setting span { color: #77716c; font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.automatic-setting strong { font: 500 15px Georgia, serif; }
+.automatic-setting small { color: #77716c; font-size: 9px; }
+.notice { border-left-color: #946528; background: rgba(148,101,40,.08); color: #6e5435; }
+.notice strong { color: #762b36; }
+.primary { border-color: #17191c; border-radius: 0; background: #17191c; color: #f6eee3; }
+.primary:hover:not(:disabled) { background: #762b36; border-color: #762b36; }
+.primary:disabled { border-color: #c8bcaf; background: #ddd4ca; color: #938b83; }
+.setup-steps li, .deck-search-results button, .job, .tensor-flow span { border-color: #c8bcaf; border-radius: 0; background: rgba(255,255,255,.34); }
+.setup-steps li > span { border-color: #a99286; color: #762b36; }
+.setup-steps li.complete > span { border-color: #55745a; background: rgba(85,116,90,.1); color: #55745a; }
+.setup-steps a, .job code { color: #586f81; }
+.deck-search-results button:hover, .deck-search-results button.selected { border-color: #762b36; background: rgba(118,43,54,.06); box-shadow: inset 3px 0 #762b36; }
+.selected-deck { border-left-color: #55745a; background: rgba(85,116,90,.08); }
+.segmented button { border-color: #c8bcaf; background: #f7f2eb; color: #77716c; }
+.segmented button.selected { background: #586f81; color: #fff; }
+.prose p { color: #5f5b57; }
+.model > span { color: #762b36; }
+@media (max-width: 720px) { .advanced-fields .wide-field { grid-column: auto; } }

@@ -5,6 +5,7 @@ import { workflowBlockers } from './readiness';
 
 const ready = {
   controller: { ready: true, version: '0.2.0' },
+  paths: { project: '/project', trajectory: '/project/.deepdeck/trajectories/decisions.jsonl', checkpoints: '/project/.deepdeck/checkpoints' },
   sdk: { ready: true },
   torch: { ready: true },
   engine: { source_available: true, revision: 'abc', url: 'http://127.0.0.1:8787', healthy: true },
