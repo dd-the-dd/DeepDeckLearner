@@ -46,3 +46,36 @@ def test_playtest_rejects_remote_engine(tmp_path: Path) -> None:
                 "opponent_deck_session_id": "deck-b",
             }
         )
+
+
+def test_matchmaking_uses_selected_catalog_values_without_exposing_ids_in_ui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEEPDECK_API_KEY", "ddl_agent_test")
+    manager = JobManager(tmp_path)
+    argv, label, artifact = manager._matchmaking_command(  # noqa: SLF001
+        {
+            "agent": "random",
+            "speed": "1s",
+            "competition_version_id": "competition-version",
+            "deck_version_id": "deck-version",
+            "continuous": False,
+        }
+    )
+    assert label == "RANDOM Deep Deck League"
+    assert artifact is None
+    assert argv[argv.index("--competition-version-id") + 1] == "competition-version"
+    assert argv[argv.index("--deck-version-id") + 1] == "deck-version"
+    assert "--once" in argv
+    assert manager._child_environment()["DEEPDECK_API_KEY"] == "ddl_agent_test"  # noqa: SLF001
+
+
+def test_matchmaking_requires_an_account_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
+    manager = JobManager(tmp_path)
+    with pytest.raises(JobValidationError, match="project .env"):
+        manager._matchmaking_command(  # noqa: SLF001
+            {"competition_version_id": "competition", "deck_version_id": "deck"}
+        )

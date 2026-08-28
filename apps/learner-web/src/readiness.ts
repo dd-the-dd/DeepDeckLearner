@@ -1,6 +1,6 @@
 import type { CapabilityStatus } from './api';
 
-export type Workflow = 'local-training' | 'online-training' | 'local-playtest';
+export type Workflow = 'local-training' | 'online-training' | 'local-playtest' | 'matchmaking';
 
 export function workflowBlockers(status: CapabilityStatus | null, workflow: Workflow): string[] {
   if (!status) return ['Checking local capabilities…'];
@@ -11,6 +11,12 @@ export function workflowBlockers(status: CapabilityStatus | null, workflow: Work
     const blockers: string[] = [];
     if (!status.hosted.api_key_configured) blockers.push('Add DEEPDECK_API_KEY to your .env.');
     if (!status.hosted.trajectory_training) blockers.push(status.hosted.reason);
+    return blockers;
+  }
+  if (workflow === 'matchmaking') {
+    const blockers: string[] = [];
+    if (!status.sdk.ready) blockers.push('Install DeepDeckAgent SDK.');
+    if (!status.hosted.api_key_configured) blockers.push('Create your account API key and add it to the project .env.');
     return blockers;
   }
   const blockers: string[] = [];

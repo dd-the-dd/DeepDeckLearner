@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 MAX_LOG_LINES = 500
 TRAINING_KINDS = {"training.smoke", "training.dataset"}
 PLAYTEST_KIND = "playtest.agent"
-SUPPORTED_KINDS = TRAINING_KINDS | {PLAYTEST_KIND}
+MATCHMAKING_KIND = "matchmaking.agent"
+SUPPORTED_KINDS = TRAINING_KINDS | {PLAYTEST_KIND, MATCHMAKING_KIND}
 
 
 def utc_now() -> str:
@@ -121,6 +122,8 @@ class JobManager:
     ) -> tuple[list[str], str, Path | None]:
         if kind in TRAINING_KINDS:
             return self._training_command(kind, raw)
+        if kind == MATCHMAKING_KIND:
+            return self._matchmaking_command(raw)
         return self._playtest_command(raw)
 
     def _training_command(
@@ -222,6 +225,45 @@ class JobManager:
                 argv.append("--allow-untrained")
         return argv, f"{example.upper()} local {game_format}", None
 
+    def _matchmaking_command(self, raw: dict[str, Any]) -> tuple[list[str], str, None]:
+        if not os.getenv("DEEPDECK_API_KEY"):
+            raise JobValidationError(
+                "Add DEEPDECK_API_KEY to the project .env and restart DeepDeckLearner."
+            )
+        example = str(raw.get("agent", "random"))
+        if example not in {"random", "alexios", "v11", "v12"}:
+            raise JobValidationError("Unknown example agent.")
+        competition = str(raw.get("competition_version_id", "")).strip()
+        deck = str(raw.get("deck_version_id", "")).strip()
+        if not competition or not deck:
+            raise JobValidationError("Choose an active competition and a deck.")
+        speed = str(raw.get("speed", "1s"))
+        if speed not in {"100ms", "1s", "10s"}:
+            raise JobValidationError("Speed must be 100ms, 1s, or 10s.")
+        argv = [
+            sys.executable,
+            "-m",
+            "deepdeck_examples.run",
+            example,
+            "--target",
+            "ddl",
+            "--speed",
+            speed,
+            "--competition-version-id",
+            competition,
+            "--deck-version-id",
+            deck,
+        ]
+        if not bool(raw.get("continuous", False)):
+            argv.append("--once")
+        checkpoint = raw.get("checkpoint")
+        if example in {"v11", "v12"}:
+            checkpoint_path = Path(str(checkpoint or "")).expanduser().resolve()
+            if not (checkpoint_path / "config.json").is_file():
+                raise JobValidationError("Choose a completed checkpoint for V11 or V12.")
+            argv.extend(["--checkpoint", str(checkpoint_path)])
+        return argv, f"{example.upper()} Deep Deck League", None
+
     @staticmethod
     def _bounded_int(
         raw: dict[str, Any], key: str, *, default: int, minimum: int, maximum: int
@@ -289,5 +331,7 @@ class JobManager:
             "HOME",
             "LOCALAPPDATA",
             "USERPROFILE",
+            "DEEPDECK_API_KEY",
+            "DEEPDECK_PLATFORM_URL",
         }
         return {key: value for key, value in os.environ.items() if key in allowed}

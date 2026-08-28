@@ -8,8 +8,9 @@ The workbench uses a dark, game-table palette related to Deep Deck League while
 always displaying a `LOCAL WORKBENCH` badge. The label and loopback URL prevent
 confusion between a user's machine and the hosted league.
 
-The default screen uses three workflow cards: **Train locally**, **Train online**,
-and **Test locally**. Each card shows `Ready`, `Needs setup`, `Running`, or
+The default screen uses three workflow cards: **Train locally**, **Test locally**,
+and **Join matchmaking**. Hosted training remains available from the Train page
+as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`, `Running`, or
 `Unavailable` before the user enters a form.
 
 ## Information architecture
@@ -17,6 +18,8 @@ and **Test locally**. Each card shows `Ready`, `Needs setup`, `Running`, or
 - Overview: dependency health, quick starts, recent jobs.
 - Train: local/online segmented control, beginner fields, advanced disclosure.
 - Playtest: local agent and deck-session configuration plus visual client.
+- Matchmaking: account-key checklist, public deck search, agent configuration,
+  and queue status.
 - Representation: Magic-to-tensor schema, dimensions, masks, and examples.
 - Models: V11/V12 descriptions, checkpoints, and experiment metadata.
 
@@ -29,6 +32,7 @@ and **Test locally**. Each card shows `Ready`, `Needs setup`, `Running`, or
 | Overview          | Start from what you know                          |
 | Train             | [ Train locally ] [ Train online ] [ Test local ] |
 | Playtest          |                                                   |
+| Matchmaking       | Account key -> Find deck -> Join queue             |
 | Representation    | Configure                                        |
 | Models            | Model [V12]  Input [Smoke sample]  [Start]        |
 |                   | > Advanced settings                               |
@@ -41,6 +45,10 @@ and **Test locally**. Each card shows `Ready`, `Needs setup`, `Running`, or
 ## Interaction details
 
 - Beginner labels use Magic language: format, deck, opponent, and checkpoint.
+- Deck identifiers never appear as beginner inputs. Hosted decks use the League
+  search and local decks use the Engine legal-deck catalog.
+- Account setup links to the exact site section that creates an autonomous-agent
+  key, then reports only whether the controller detected it.
 - ML terms include a concise tooltip and link to the representation guide.
 - Advanced settings never reset beginner selections when collapsed.
 - Start buttons use a nearby blocker list instead of a generic disabled cursor.
@@ -55,6 +63,8 @@ and **Test locally**. Each card shows `Ready`, `Needs setup`, `Running`, or
 - Running: elapsed time, phase, last log line, stop action.
 - Complete: checkpoint/artifact path and suggested `Test locally` follow-up.
 - Unsupported: visible roadmap reason; no inert primary action.
+- No deck results: keep the query and format visible, explain that no legal deck
+  matched, and offer another search without falling back to a raw identifier.
 
 ## Responsive behavior
 
