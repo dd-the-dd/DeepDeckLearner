@@ -56,6 +56,15 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 - CUDA is the visible default and falls back to CPU without blocking beginners.
 - Hosted deck and competition discovery is disabled until the local controller
   detects an account API key; the controller also enforces this boundary.
+- A compact **Local runtime** panel appears on Overview and Playtest. Each row
+  shows the current and compatible short revisions plus one primary lifecycle
+  action and one synchronization action. The panel-level `Start local stack`
+  action skips components that are already ready.
+- Pixi uses `Prepare` rather than a misleading server verb: it is a renderer
+  package built for the local visual client, while Engine is the process that
+  actually starts and remains running.
+- Synchronization is labelled `Sync version`, with nearby copy explaining that
+  it uses reviewed pinned commits rather than upstream `main`.
 - Advanced settings never reset beginner selections when collapsed.
 - Start buttons use a nearby blocker list instead of a generic disabled cursor.
 - Job output is a bounded log region with pause-scroll and copy controls.
@@ -69,6 +78,8 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 - Running: elapsed time, phase, last log line, stop action.
 - Complete: checkpoint/artifact path and suggested `Test locally` follow-up.
 - Unsupported: visible roadmap reason; no inert primary action.
+- Dependency update: current/compatible revisions, progress in Recent jobs, and
+  an actionable dirty-worktree or toolchain error without losing page state.
 - No deck results: keep the query and format visible, explain that no legal deck
   matched, and offer another search without falling back to a raw identifier.
 

@@ -29,6 +29,10 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
    signal to React.
 5. Deliver dataset/smoke training first. Deck-driven and hosted training remain
    explicit capabilities, not optimistic UI promises.
+6. Runtime synchronization means the gitlinks pinned by DeepDeckLearner. A
+   running local app never advances Engine or Pixi to an unreviewed remote head.
+7. Pixi has a prepare/build lifecycle rather than a standalone server lifecycle.
+   Engine remains the long-running local process owned by a controller job.
 
 ## Options considered
 

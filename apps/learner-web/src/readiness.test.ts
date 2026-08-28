@@ -8,8 +8,8 @@ const ready = {
   paths: { project: '/project', trajectory: '/project/.deepdeck/trajectories/decisions.jsonl', checkpoints: '/project/.deepdeck/checkpoints' },
   sdk: { ready: true },
   torch: { ready: true },
-  engine: { source_available: true, revision: 'abc', url: 'http://127.0.0.1:8787', healthy: true },
-  pixi: { source_available: true, built: true, revision: 'def' },
+  engine: { source_available: true, revision: 'abc', pinned_revision: 'abc', synced: true, dirty: false, built: true, url: 'http://127.0.0.1:8787', healthy: true },
+  pixi: { source_available: true, built: true, build_present: true, built_revision: 'def', revision: 'def', pinned_revision: 'def', synced: true, dirty: false },
   hosted: { api_key_configured: false, trajectory_training: false, reason: 'Not published.' },
   workflows: {},
 } satisfies CapabilityStatus;

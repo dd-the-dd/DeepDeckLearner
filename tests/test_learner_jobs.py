@@ -80,3 +80,32 @@ def test_matchmaking_requires_an_account_key(
         manager._matchmaking_command(  # noqa: SLF001
             {"competition_version_id": "competition", "deck_version_id": "deck"}
         )
+
+
+def test_dependency_commands_are_allowlisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "external" / "deepdeck-engine" / "Cargo.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("[package]\nname='test'\n", encoding="utf-8")
+    monkeypatch.setattr("deepdeck_learner.jobs.shutil.which", lambda executable: "cargo")
+    monkeypatch.setattr("deepdeck_learner.jobs.current_revision", lambda root, name: "abc")
+    monkeypatch.setattr("deepdeck_learner.jobs.pinned_revision", lambda root, name: "abc")
+    manager = JobManager(tmp_path)
+
+    engine, engine_label, _ = manager._dependency_command(  # noqa: SLF001
+        "dependency.engine.start", {}
+    )
+    pixi, pixi_label, _ = manager._dependency_command(  # noqa: SLF001
+        "dependency.pixi.prepare", {}
+    )
+    sync, sync_label, _ = manager._dependency_command(  # noqa: SLF001
+        "dependency.sync", {"dependency": "pixi"}
+    )
+
+    assert engine[:2] == ["cargo", "run"]
+    assert engine_label == "DeepDeckEngine local server"
+    assert pixi[2:5] == ["deepdeck_learner.dependencies", "prepare-pixi", "--root"]
+    assert pixi_label == "Prepare DeepDeckPixi"
+    assert sync[-2:] == ["--dependency", "pixi"]
+    assert sync_label == "Sync DeepDeckPixi"

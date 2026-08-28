@@ -13,7 +13,9 @@ submodules. It does not copy their code.
 
 ## Quick start for a Magic player
 
-Requirements: Git, Python 3.10+, Node.js 22.13+, and PowerShell 7.
+Requirements: Git, Python 3.10+, Node.js 22.13+, PowerShell 7, and a Rust
+toolchain for the first local Engine build. On Windows, install the Visual C++
+Build Tools when the bundled Rust linker cannot use an installed Windows SDK.
 
 ```powershell
 git clone --recurse-submodules https://github.com/dd-the-dd/DeepDeckLearner.git
@@ -31,6 +33,11 @@ It opens `http://127.0.0.1:8765`. Start with **Train locally → V12 → Start
 training**. The beginner form selects the built-in smoke trajectory for you. It
 verifies the complete encoder, model, optimizer, and checkpoint path without
 requiring a deck or dataset.
+
+The **Local runtime** panel can synchronize the reviewed Engine/Pixi revisions,
+prepare Pixi, and start a sleeping Engine. **Start local stack** skips anything
+already ready. Synchronization never follows a floating branch and refuses to
+overwrite local changes inside either public dependency.
 
 The browser UI cannot launch arbitrary commands. A loopback-only Python
 controller validates a small allowlist of training and playtest jobs. It never
