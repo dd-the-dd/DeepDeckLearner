@@ -8,6 +8,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .catalogs import CatalogError, active_competitions, local_legal_decks, platform_decks
 from .jobs import JobManager, JobValidationError
 from .status import capability_status, project_root
 
@@ -39,6 +40,29 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.get("/api/v1/jobs")
     def jobs() -> list[dict[str, Any]]:
         return manager.list_jobs()
+
+    @app.get("/api/v1/catalog/decks")
+    def deck_catalog(search: str = "", format: str = "legacy", page: int = 1) -> dict[str, Any]:
+        try:
+            return platform_decks(search, format, max(1, page))
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/api/v1/catalog/competitions")
+    def competition_catalog() -> dict[str, Any]:
+        try:
+            return active_competitions()
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/api/v1/catalog/local-decks")
+    def local_deck_catalog(
+        format: str = "legacy", engine_url: str = "http://127.0.0.1:8787"
+    ) -> list[dict[str, str]]:
+        try:
+            return local_legal_decks(engine_url, format)
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.get("/api/v1/jobs/{job_id}")
     def job(job_id: str) -> dict[str, Any]:

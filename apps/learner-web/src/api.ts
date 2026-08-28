@@ -22,6 +22,28 @@ export type Job = {
   logs: string[];
 };
 
+export type DeckSummary = {
+  id: string;
+  name: string;
+  creator?: string;
+  version: number;
+  format?: string;
+  colors: string[];
+  playableCardCount: number;
+};
+
+export type CompetitionSummary = {
+  versionId: string;
+  name: string;
+  status: string;
+  format: string;
+  timeControl: string;
+};
+
+export type LocalDeck = { deckSessionId: string; deckName: string };
+
+type Page<T> = { items: T[] };
+
 let sessionToken = '';
 
 async function json<T>(response: Response): Promise<T> {
@@ -45,6 +67,20 @@ export async function loadStatus(): Promise<CapabilityStatus> {
 
 export async function loadJobs(): Promise<Job[]> {
   return json<Job[]>(await fetch('/api/v1/jobs'));
+}
+
+export async function searchDecks(search: string, format: string): Promise<DeckSummary[]> {
+  const query = new URLSearchParams({ search, format });
+  return (await json<Page<DeckSummary>>(await fetch(`/api/v1/catalog/decks?${query}`))).items;
+}
+
+export async function loadCompetitions(): Promise<CompetitionSummary[]> {
+  return (await json<Page<CompetitionSummary>>(await fetch('/api/v1/catalog/competitions'))).items;
+}
+
+export async function loadLocalDecks(format: string, engineUrl: string): Promise<LocalDeck[]> {
+  const query = new URLSearchParams({ format, engine_url: engineUrl });
+  return json<LocalDeck[]>(await fetch(`/api/v1/catalog/local-decks?${query}`));
 }
 
 export async function startJob(payload: Record<string, unknown>): Promise<Job> {

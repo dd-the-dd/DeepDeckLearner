@@ -57,6 +57,21 @@ select:focus, input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb
 .primary { min-height: 42px; padding: 0 18px; border: 1px solid #d6b76f; border-radius: 5px; background: var(--gold); color: #15140f; cursor: pointer; font-weight: 700; }
 .primary span { margin-left: 20px; }.primary:disabled { border-color: #344139; background: #202923; color: #667269; cursor: not-allowed; }
 .form-error, .controller-error { color: #e8a589; font-size: 12px; }
+.setup-steps { display: grid; gap: 10px; margin: 0 0 24px; padding: 0; list-style: none; }
+.setup-steps li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 7px; background: #0d1310; }
+.setup-steps li > span { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid #5e5337; border-radius: 50%; color: var(--gold); font-size: 11px; }
+.setup-steps li.complete > span { border-color: #35634f; background: #10271e; color: var(--mint); }
+.setup-steps strong { font-size: 12px; }.setup-steps p { margin: 5px 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.setup-steps a { color: var(--gold); font-size: 11px; }
+.deck-finder { display: grid; grid-template-columns: minmax(140px, .35fr) minmax(260px, 1fr) auto; gap: 12px; align-items: end; }
+.deck-finder button { margin-bottom: 15px; }
+.deck-search-results { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 2px 0 20px; }
+.deck-search-results button { min-height: 108px; display: grid; align-content: start; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #0d1310; color: inherit; cursor: pointer; text-align: left; }
+.deck-search-results button:hover, .deck-search-results button.selected { border-color: var(--gold); background: #1c1b14; }
+.deck-search-results span, .deck-search-results small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.checkbox-label { display: flex; align-items: center; gap: 9px; }.checkbox-label input { min-height: auto; width: auto; }
+.selected-deck { display: grid; gap: 5px; margin: 8px 0 16px; padding: 13px 15px; border-left: 2px solid var(--mint); background: #10271e; }
+.selected-deck span, .selected-deck small { color: var(--muted); font-size: 10px; }.selected-deck strong { font-size: 14px; }
 .jobs { margin-top: 18px; }
 .empty { min-height: 100px; display: grid; place-items: center; align-content: center; color: var(--muted); }
 .empty span { color: var(--gold); font-size: 22px; }.empty p { margin: 6px 0; font-size: 12px; }
@@ -67,5 +82,5 @@ select:focus, input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb
 .prose { max-width: 850px; }.prose p { color: #aab5ae; line-height: 1.75; }.tensor-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 25px 0; }.tensor-flow span { padding: 15px; border: 1px solid #344239; border-radius: 5px; background: #0d1310; }.tensor-flow b { color: var(--gold); }
 .model-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.model { margin: 0; min-height: 210px; }.model > span { color: var(--gold); font: 600 26px Manrope; }.model h2 { margin-top: 24px; }.model p { margin-top: 13px; color: var(--muted); line-height: 1.6; font-size: 12px; }
 @media (max-width: 960px) { .app-shell { grid-template-columns: 1fr; } aside { position: static; height: auto; display: grid; grid-template-columns: auto 1fr; align-items: center; } aside nav { grid-column: 1 / -1; display: flex; overflow-x: auto; margin-top: 18px; } .local-badge { margin: 0; justify-self: end; } .aside-foot { display: none; } main { padding: 30px; } }
-@media (max-width: 720px) { main { padding: 25px 16px 60px; } header { align-items: start; flex-direction: column; }.health { justify-content: start; }.workflow-grid, .field-grid, .advanced-fields, .model-grid { grid-template-columns: 1fr; }.segmented { position: static; margin: 12px 0; }.form-actions { align-items: start; flex-direction: column; } }
+@media (max-width: 720px) { main { padding: 25px 16px 60px; } header { align-items: start; flex-direction: column; }.health { justify-content: start; }.workflow-grid, .field-grid, .advanced-fields, .model-grid, .deck-finder, .deck-search-results { grid-template-columns: 1fr; }.deck-finder button { margin: 0 0 15px; }.segmented { position: static; margin: 12px 0; }.form-actions { align-items: start; flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }

@@ -49,6 +49,20 @@ Every job records model version, parameters, dependency revisions, start/end
 times, exit status, and artifact paths. Secrets and full environment dumps are
 excluded.
 
+### F8 - Configure League access step by step (Must)
+
+The workbench links directly to the Autonomous agents section of the user's
+Deep Deck League account, explains that the generated `.env` line is shown only
+once, and reports whether the restarted controller detected the key. The key
+value stays in the controller environment and is never returned to React.
+
+### F9 - Select decks by name (Must)
+
+Hosted matchmaking searches the public Deep Deck League deck catalog by name,
+creator, and format. Local playtesting reads the Engine's legal-deck catalog.
+Both interfaces display human-readable deck names while retaining version and
+session identifiers only in submitted controller payloads and job arguments.
+
 ## User stories and acceptance criteria
 
 ### Story A - First smoke run
@@ -83,4 +97,23 @@ As an AI developer, I cannot accidentally mistake online inference for training.
 - The hosted-training button remains disabled until a compatible capability is
   advertised.
 - The browser never receives the API key value.
+
+### Story E - Guided matchmaking access
+
+As a Magic player, I can find the exact account section that creates my API key
+and understand where its `.env` line belongs.
+
+- The workbench links to `/account#autonomous-agents` on Deep Deck League.
+- The UI reports configured/not configured without exposing the key.
+- A matchmaking job cannot start without a controller-owned key.
+- The child agent process receives only the explicitly allowlisted account key.
+
+### Story F - Human-readable deck selection
+
+As a Magic player, I choose decks by name instead of copying identifiers.
+
+- Hosted results are filtered by format and searched through the public catalog.
+- Active competition and deck version identifiers remain internal.
+- Local playtest choices come from the Engine's legal decks for that format.
+- Empty, loading, unavailable, and no-result states do not expose an ID field.
 

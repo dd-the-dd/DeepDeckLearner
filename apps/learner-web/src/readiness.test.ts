@@ -24,4 +24,10 @@ describe('workflowBlockers', () => {
       'Not published.',
     ]);
   });
+
+  it('guides matchmaking to the account key without requiring hosted training', () => {
+    expect(workflowBlockers(ready, 'matchmaking')).toEqual([
+      'Create your account API key and add it to the project .env.',
+    ]);
+  });
 });
