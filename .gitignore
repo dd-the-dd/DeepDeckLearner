@@ -9,6 +9,7 @@ build/
 dist/
 apps/learner-web/dist/
 apps/learner-web/node_modules/
+apps/learner-web/.vite/
 *.egg-info/
 *.py[cod]
 *.tsbuildinfo
