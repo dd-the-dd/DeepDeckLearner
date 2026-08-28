@@ -1,28 +1,28 @@
 # Deep Deck Agent Examples
 
-Quatre agents publics et volontairement faciles à modifier :
+This repository contains four public agents designed to be easy to understand and modify:
 
-- `random` choisit une action légale au hasard avec une graine reproductible;
-- `alexios` suit une liste explicite de priorités pour jouer rapidement le deck
-  **Alexios, Deimos of Kosmos**;
-- `v11` montre un réseau PyTorch récurrent avec une valeur multijoueur;
-- `v12` reprend cette politique avec une valeur antisymétrique à deux joueurs.
+- `random` selects a random legal action with a reproducible seed;
+- `alexios` follows an explicit priority list to play the **Alexios, Deimos of Kosmos**
+  deck quickly;
+- `v11` demonstrates a recurrent PyTorch network with multiplayer value estimates;
+- `v12` adapts that policy to an antisymmetric two-player value.
 
-Ils utilisent le paquet
-[`DeepDeckAgent`](https://github.com/dd-the-dd/DeepDeckAgent). Le moteur Rust
-reste l'autorité sur les règles et refuse une action qui n'est pas dans la liste légale.
+They use the
+[`DeepDeckAgent`](https://github.com/dd-the-dd/DeepDeckAgent) package. The Rust engine
+remains authoritative for the rules and rejects any action outside the legal-action list.
 
-## Installation locale avant publication PyPI
+## Local installation before the PyPI release
 
-Placez les deux dépôts dans le même dossier :
+Place both repositories in the same directory:
 
 ```text
-Projet/
+Projects/
 ├── DeepDeckAgent/
 └── DeepDeckAgentExamples/
 ```
 
-Puis :
+Then run:
 
 ```powershell
 cd DeepDeckAgentExamples
@@ -33,28 +33,27 @@ python -m pip install -e ".[dev]" --no-deps
 pytest
 ```
 
-Pour les exemples V11/V12, ajoutez PyTorch avec l'extra optionnel :
+Install the optional PyTorch dependencies for the V11/V12 examples:
 
 ```powershell
 python -m pip install -e ".[deep-learning]"
 ```
 
-Le baseline aléatoire et Alexios restent utilisables sans installer PyTorch.
+The random baseline and Alexios agent do not require PyTorch.
 
-## Un seul programme, deux cibles
+## One program, two targets
 
-La même démo peut servir un moteur local ou entrer dans le matchmaking Deep Deck League :
+The same demo can serve a local engine or join Deep Deck League matchmaking:
 
 ```powershell
-# Attend une partie créée par le moteur local.
+# Wait for a game created by the local engine.
 deepdeck-example alexios --target local
 
-# Se connecte au service public, entre dans la file, puis s'y remet après le match.
+# Connect to the public service, queue, play, and queue again after the match.
 deepdeck-example alexios --target ddl
 ```
 
-Pour créer aussi une partie locale, renseignez deux identifiants de deck déjà importés
-dans le moteur :
+To create the local game as well, provide two deck IDs already imported into the engine:
 
 ```powershell
 $env:DEEPDECK_LOCAL_DECK_SESSION_ID = "alexios"
@@ -62,109 +61,103 @@ $env:DEEPDECK_LOCAL_OPPONENT_DECK_SESSION_ID = "commander-opponent"
 deepdeck-example alexios --target local --start-local-game --local-format commander
 ```
 
-Le premier siège utilise le contrôleur WebSocket de l'exemple. Le second utilise
-`ai-random` par défaut; `--local-opponent-controller` permet d'en choisir un autre.
+The first seat uses the example's WebSocket controller. The second uses `ai-random` by
+default; use `--local-opponent-controller` to select another controller.
 
-## Baseline aléatoire
+## Random baseline
 
 ```powershell
 deepdeck-example random --target local --speed 100ms --seed 42
 ```
 
-La graine rend la suite de choix reproductible. L'agent n'invente aucune action et ne
-connaît pas les cartes cachées adverses.
+The seed makes the choice sequence reproducible. The agent never invents actions and
+cannot see hidden opponent cards.
 
-## Agent Alexios
+## Alexios agent
 
 ```powershell
 $env:ALEXIOS_DECK_ID = "alexios"
 deepdeck-example alexios --target local --speed 1s
 ```
 
-Sa politique actuelle est intentionnellement « dumb », déterministe et programmatique :
+Its current policy is intentionally simple, deterministic, and programmatic:
 
-1. garder une main avec au moins trois terrains, sinon prendre un mulligan;
-2. jouer un terrain disponible;
-3. lancer Alexios dès que le moteur l'autorise;
-4. répondre avec une redirection lorsqu'un objet adverse sur la pile cible Alexios;
-5. durant notre phase principale, équiper Alexios autant que possible tout en réservant
-   le mana estimé d'une redirection ou d'un boost létal;
-6. retirer d'abord une créature adverse assez forte pour tuer Alexios au combat;
-7. lancer les équipements, puis les créatures, puis les autres permanents;
-8. utiliser les removals restants sur la créature adverse la plus puissante;
-9. si un effet de goad est disponible, cibler la créature adverse la plus puissante;
-10. conserver un boost instantané lorsqu'il peut transformer une attaque d'Alexios en
-    élimination surprise;
-11. craquer Food et Clue seulement lorsqu'aucune action prioritaire ne reste;
-12. attaquer d'abord avec Alexios et préférer les adversaires à faible total de vie.
+1. keep a hand with at least three lands; otherwise, mulligan;
+2. play an available land;
+3. cast Alexios as soon as the engine allows it;
+4. respond with redirection when an opposing stack object targets Alexios;
+5. during the agent's main phase, equip Alexios as much as possible while reserving the
+   estimated mana for redirection or a lethal combat trick;
+6. remove an opposing creature first when it is strong enough to kill Alexios in combat;
+7. cast equipment, then creatures, then other permanents;
+8. use remaining removal on the strongest opposing creature;
+9. when a goad effect is available, target the strongest opposing creature;
+10. hold an instant-speed boost when it can turn an Alexios attack into a surprise kill;
+11. sacrifice Food and Clue tokens only when no higher-priority action remains;
+12. attack with Alexios first and prefer opponents with lower life totals.
 
-Les estimations de mana et de létalité sont volontairement simples. Cet exemple montre
-où écrire la stratégie; il n'est pas présenté comme un agent compétitif.
+The mana and lethality estimates are intentionally basic. This example shows where to
+write strategy code; it is not presented as a competitive agent.
 
-Le code complet est dans
+The complete implementation is in
 [`src/deepdeck_examples/alexios.py`](src/deepdeck_examples/alexios.py).
 
-## Exemples deep learning V11 et V12
+## V11 and V12 deep-learning examples
 
-Aucun poids n'est inclus dans ce dépôt. Les fichiers `*.pt`, `*.pth`, `*.ckpt`, `runs/`
-et `checkpoints/` sont ignorés par Git. Il faut donc entraîner un checkpoint ou en fournir
-un explicitement avant de jouer :
+This repository contains no model weights. Git ignores `*.pt`, `*.pth`, `*.ckpt`, `runs/`,
+and `checkpoints/`. Train a checkpoint or explicitly provide one before playing:
 
 ```powershell
-# Deux échantillons intégrés vérifient le pipeline de bout en bout.
+# Two bundled samples verify the end-to-end pipeline.
 deepdeck-train v12 --smoke --epochs 2 --output runs/v12-smoke
 
-# Inférence locale avec le checkpoint produit.
+# Run local inference with the generated checkpoint.
 deepdeck-example v12 --target local --checkpoint runs/v12-smoke
 ```
 
-`--allow-untrained` autorise des poids aléatoires uniquement pour tester le protocole et
-la connexion. Sans checkpoint, la commande refuse normalement de démarrer V11/V12.
+`--allow-untrained` permits random weights only for protocol and connection testing.
+Without a checkpoint, the command normally refuses to start V11 or V12.
 
-Les exemples conservent les idées structurantes des versions internes :
+The examples preserve the important design ideas from the internal versions:
 
-- V11 encode séparément l'état visible et les changements depuis la décision précédente,
-  maintient une mémoire GRU, attribue un logit à chaque action légale dynamique et prédit
-  jusqu'à quatre valeurs de joueurs;
-- V12 utilise la même politique, mais produit une seule valeur à somme nulle `V(s)` et
-  expose `[V(s), -V(s)]`; il est donc réservé ici aux parties Legacy à deux joueurs.
+- V11 separately encodes visible state and changes since the previous decision, maintains
+  GRU memory, assigns a logit to every dynamic legal action, and predicts up to four player
+  values;
+- V12 uses the same policy but produces one zero-sum value `V(s)` and exposes
+  `[V(s), -V(s)]`, so this public example is limited to two-player Legacy games.
 
-L'encodeur public utilise un feature hashing compact afin de ne dépendre d'aucun vocabulaire
-ou fichier privé. Il s'agit d'un point de départ entraînable, pas d'une copie compatible
-avec les checkpoints privés de production et pas d'une promesse de force de jeu.
+The public encoder uses compact feature hashing and does not depend on a private vocabulary
+or data file. It is a trainable starting point, not a checkpoint-compatible copy of the
+private production model and not a promise of playing strength.
 
-Le format JSON Lines, les objectifs d'entraînement, la reprise d'un checkpoint et les
-points d'extension sont détaillés dans
-[`docs/deep-learning.md`](docs/deep-learning.md).
+The JSON Lines format, training objectives, checkpoint resume behavior, and extension
+points are documented in [`docs/deep-learning.md`](docs/deep-learning.md).
 
-## Deep Deck League public
+## Deep Deck League public matchmaking
 
-Après avoir créé l'agent et généré sa clé dans **Account → Autonomous agents** :
+After creating an agent and generating its key under **Account → Autonomous agents**:
 
 ```powershell
 Copy-Item .env.example .env
-# Renseignez la clé, le slug/version de l'agent et les trois UUID de matchmaking.
+# Fill in the key, agent slug/version, and the three matchmaking UUIDs.
 deepdeck-example alexios --target ddl --speed 1s
 ```
 
-Le fichier `.env` est chargé automatiquement; il n'est pas nécessaire d'exporter chaque
-variable dans PowerShell.
+The `.env` file loads automatically, so you do not need to export each variable in
+PowerShell.
 
-Ne copiez jamais la clé globale du moteur dans ce dépôt. Une clé publique de signature
-peut identifier une version officielle, mais chaque personne doit se connecter avec son
-propre compte DDL et sa propre clé révocable. Le `agent_id` de la configuration doit
-correspondre au slug de l'agent auquel la clé est liée.
+Never copy the engine's global key into this repository. A public signing key may identify
+an official version, but every user must connect with their own DDL account and revocable
+key. The configuration's `agent_id` must match the slug of the agent linked to that key.
 
-La commande publique connecte d'abord le WebSocket, entre ensuite dans la file, prend les
-décisions et se remet en file après chaque match. Elle peut donc tourner comme service en
-arrière-plan sans navigateur et sans `gcloud auth login`. Ajoutez `--once` pour l'arrêter
-après une seule partie.
+The public command connects the WebSocket first, joins the queue, makes decisions, and
+queues again after each match. It can run as a background service without a browser and
+without `gcloud auth login`. Add `--once` to stop after one game.
 
-## Modifier la stratégie
+## Modify the strategy
 
-La fonction la plus importante est `choose_priority`. Chaque bloc retourne un objet
-`Action` déjà déclaré légal par Rust. Les tests utilisent de petits états lisibles et
-peuvent être exécutés après chaque changement :
+The most important method is `choose_priority`. Each block returns an `Action` already
+declared legal by Rust. Tests use small, readable states and can be run after every change:
 
 ```powershell
 ruff check .
@@ -172,11 +165,9 @@ mypy
 pytest
 ```
 
-## Propriété du dépôt
+## Repository ownership
 
-Le code est lisible et forkable publiquement. Seul `@dd-the-dd` possède l'accès en
-écriture et peut mettre à jour la branche `main`; les autres personnes peuvent proposer
-une pull request sans obtenir de droit de push.
+The code is public, readable, and forkable. Only `@dd-the-dd` has write access and can
+update `main`; everyone else can propose a pull request without receiving push access.
 
-La procédure qui applique cette protection est dans
-[`docs/publishing.md`](docs/publishing.md).
+The protection procedure is documented in [`docs/publishing.md`](docs/publishing.md).
