@@ -99,6 +99,19 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 
 ## Visual assets
 
-The initial release uses CSS shapes and the existing Deep Deck wordmark treatment.
-It does not create AI imagery. Engine-rendered card imagery remains owned by Pixi.
+The application rail displays the canonical Deep Deck League logo from the
+League's hosted public asset, followed by the `Learner` product suffix. The logo
+links back to the League in a new tab and retains meaningful alternative text if
+the hosted asset is unavailable. Referencing the canonical asset avoids shipping
+and maintaining a second multi-megabyte logo copy in this public workbench.
+
+The rail footer includes a compact `Support on Patreon` action using the same
+Patreon glyph and burgundy/paper treatment as the League. It opens the official
+Deep Deck League Patreon page in a new tab, remains visible in the responsive
+top-navigation layout, and is visually subordinate to workflow actions. Source
+code remains a separate secondary link so community support is not confused with
+an application capability.
+
+The release does not create AI imagery. Engine-rendered card imagery remains
+owned by Pixi.
 
