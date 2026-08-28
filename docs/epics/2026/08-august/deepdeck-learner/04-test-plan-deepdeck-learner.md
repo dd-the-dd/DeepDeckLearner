@@ -13,6 +13,9 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - CUDA preference resolves to CPU when CUDA is unavailable.
 - Hosted catalog routes return 401 without `DEEPDECK_API_KEY` and never perform
   an anonymous upstream request.
+- Dependency names and actions are allowlisted; paths cannot be supplied by React.
+- Engine build freshness compares the executable with its Rust inputs.
+- Synchronization refuses a dirty dependency and checks out only its gitlink.
 
 ## Integration tests
 
@@ -23,6 +26,8 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - A local play request checks Engine health before starting the agent.
 - Frontend production build and the pinned Pixi compatibility metadata are checked.
 - The default project trajectory path and empty file are created idempotently.
+- Pixi preparation runs fixed install/build commands and records the built revision.
+- Starting an already-built Engine uses the executable without recompiling it.
 
 ## Contract tests
 

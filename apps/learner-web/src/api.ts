@@ -3,8 +3,8 @@ export type CapabilityStatus = {
   paths: { project: string; trajectory: string; checkpoints: string };
   sdk: { ready: boolean };
   torch: { ready: boolean };
-  engine: { source_available: boolean; revision: string | null; url: string; healthy: boolean };
-  pixi: { source_available: boolean; built: boolean; revision: string | null };
+  engine: { source_available: boolean; revision: string | null; pinned_revision: string | null; synced: boolean; dirty: boolean; built: boolean; url: string; healthy: boolean };
+  pixi: { source_available: boolean; built: boolean; build_present: boolean; built_revision: string | null; revision: string | null; pinned_revision: string | null; synced: boolean; dirty: boolean };
   hosted: { api_key_configured: boolean; trajectory_training: boolean; reason: string };
   workflows: Record<string, boolean>;
 };

@@ -77,6 +77,56 @@ function WorkflowCard({
   );
 }
 
+function shortRevision(revision: string | null) {
+  return revision ? revision.slice(0, 8) : 'not installed';
+}
+
+function DependencyPanel({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const engine = status?.engine;
+  const pixi = status?.pixi;
+  const stackReady = Boolean(engine?.healthy && pixi?.built);
+
+  async function run(action: string, payload: Record<string, unknown>) {
+    setBusy(action); setError('');
+    try { await startJob(payload); refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to start dependency task.'); }
+    finally { setBusy(''); }
+  }
+
+  async function startStack() {
+    setBusy('stack'); setError('');
+    try {
+      if (!engine?.source_available || !engine.synced || !pixi?.source_available || !pixi.synced) {
+        throw new Error('Synchronize every missing or outdated dependency before starting the local stack.');
+      }
+      if (!engine.healthy) await startJob({ kind: 'dependency.engine.start' });
+      if (!pixi.built) await startJob({ kind: 'dependency.pixi.prepare' });
+      refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to start the local stack.'); }
+    finally { setBusy(''); }
+  }
+
+  return <section className="panel dependency-panel">
+    <div className="section-heading dependency-heading"><div><span className="eyebrow">Local runtime</span><h2>Engine and visual client</h2><p>Use the compatible versions pinned by this workbench.</p></div><button className="primary" type="button" disabled={!status || stackReady || Boolean(busy)} onClick={() => void startStack()}>{stackReady ? 'Local stack ready' : busy === 'stack' ? 'Starting…' : 'Start local stack'}</button></div>
+    <div className="dependency-list">
+      <article>
+        <div className="dependency-icon engine">E</div>
+        <div className="dependency-copy"><span>DeepDeckEngine</span><strong>{engine?.healthy ? 'Running' : engine?.synced ? engine.built ? 'Ready to start' : 'Build required' : engine?.source_available ? 'Update available' : 'Not installed'}</strong><small>Current {shortRevision(engine?.revision ?? null)} · compatible {shortRevision(engine?.pinned_revision ?? null)}</small>{engine?.dirty && <em>Local changes prevent automatic synchronization.</em>}</div>
+        <div className="dependency-actions"><button type="button" disabled={!engine?.source_available || !engine.synced || engine.healthy || Boolean(busy)} onClick={() => void run('engine', { kind: 'dependency.engine.start' })}>{engine?.healthy ? 'Running' : engine?.built ? 'Start' : 'Build & start'}</button><button type="button" disabled={engine?.synced || engine?.dirty || Boolean(busy)} onClick={() => void run('engine-sync', { kind: 'dependency.sync', dependency: 'engine' })}>{engine?.synced ? 'Up to date' : 'Sync version'}</button></div>
+      </article>
+      <article>
+        <div className="dependency-icon pixi">P</div>
+        <div className="dependency-copy"><span>DeepDeckPixi</span><strong>{pixi?.built ? 'Ready' : pixi?.synced ? 'Build required' : pixi?.source_available ? 'Update available' : 'Not installed'}</strong><small>Current {shortRevision(pixi?.revision ?? null)} · compatible {shortRevision(pixi?.pinned_revision ?? null)}</small>{pixi?.dirty && <em>Local changes prevent automatic synchronization.</em>}</div>
+        <div className="dependency-actions"><button type="button" disabled={!pixi?.source_available || !pixi.synced || pixi.built || Boolean(busy)} onClick={() => void run('pixi', { kind: 'dependency.pixi.prepare' })}>{pixi?.built ? 'Ready' : 'Prepare'}</button><button type="button" disabled={pixi?.synced || pixi?.dirty || Boolean(busy)} onClick={() => void run('pixi-sync', { kind: 'dependency.sync', dependency: 'pixi' })}>{pixi?.synced ? 'Up to date' : 'Sync version'}</button></div>
+      </article>
+    </div>
+    <p className="dependency-note">Sync uses the reviewed revisions pinned by DeepDeckLearner. It never follows a floating upstream branch.</p>
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
+}
+
 function TrainingForm({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
   const [source, setSource] = useState<'smoke' | 'dataset'>('smoke');
   const [model, setModel] = useState('v12');
@@ -284,5 +334,5 @@ export default function App() {
     setPage(next === 'local-playtest' ? 'playtest' : next === 'matchmaking' ? 'compete' : 'train');
   }
 
-  return <div className="app-shell"><aside><div className="brand"><span className="brand-mark">DD</span><div><strong>DeepDeck</strong><em>Learner</em></div></div><span className="local-badge">● Local workbench</span><nav aria-label="Main navigation">{pages.map((item) => <button className={page === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => setPage(item.id)}><span>{item.glyph}</span>{item.label}</button>)}</nav><div className="aside-foot"><small>Public AI laboratory</small><a href="https://github.com/dd-the-dd/DeepDeckLearner">View source ↗</a></div></aside><main><header><div><span className="eyebrow">Deep Deck AI laboratory</span><h1>{page === 'overview' ? 'Start from what you know.' : pages.find((item) => item.id === page)?.label}</h1></div><div className="health"><StatusDot ready={Boolean(status?.engine.healthy)} label="Engine" /><StatusDot ready={Boolean(status?.pixi.source_available)} label="Pixi" /><span className="running-count">{running} running</span></div></header>{loadError && <p className="controller-error" role="alert">Local controller: {loadError}</p>}{page === 'overview' && <><section className="intro"><p>Train first, test the behavior, then choose a League deck by name. Open the ML controls only when you need them.</p><div className="workflow-grid">{(['local-training', 'local-playtest', 'matchmaking'] as Workflow[]).map((item) => <WorkflowCard key={item} workflow={item} status={status} onSelect={selectWorkflow} />)}</div></section><TrainingForm status={status} refresh={refresh} /><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'train' && <>{workflow === 'online-training' ? <OnlinePanel status={status} /> : <TrainingForm status={status} refresh={refresh} />}<div className="segmented"><button className={workflow === 'local-training' ? 'selected' : ''} onClick={() => setWorkflow('local-training')}>Local</button><button className={workflow === 'online-training' ? 'selected' : ''} onClick={() => setWorkflow('online-training')}>Online</button></div><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'playtest' && <><PlaytestForm status={status} refresh={refresh} /><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'compete' && <><MatchmakingForm status={status} jobs={jobs} refresh={refresh} /><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'representation' && <section className="panel prose"><span className="eyebrow">Magic → tensor</span><h2>A decision, not a screenshot</h2><p>The encoder combines the observable game state, each legal action, known deck context, and a previous-state delta. V11 keeps four multiplayer value slots; V12 specializes the value head for two-player Legacy.</p><div className="tensor-flow"><span>Game observation</span><b>+</b><span>Legal action</span><b>+</b><span>Known deck</span><b>→</b><span>Feature tensor</span></div><p>Feature indices and masks are versioned in <code>deepdeck_examples.deep_learning.encoding</code>. See the ML guide before changing them: a checkpoint is only compatible with the schema it learned.</p></section>}{page === 'models' && <section className="model-grid"><article className="panel model"><span>V12</span><h2>Two-player policy</h2><p>Legacy-oriented example with two value slots. Weights are intentionally not public.</p></article><article className="panel model"><span>V11</span><h2>Multiplayer policy</h2><p>Commander-oriented example with four value slots and the same public encoder family.</p></article><article className="panel model"><span>Baseline</span><h2>Readable behavior</h2><p>Random and Alexios rule-based agents make protocol and behavior testing approachable.</p></article></section>}</main></div>;
+  return <div className="app-shell"><aside><div className="brand"><span className="brand-mark">DD</span><div><strong>DeepDeck</strong><em>Learner</em></div></div><span className="local-badge">● Local workbench</span><nav aria-label="Main navigation">{pages.map((item) => <button className={page === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => setPage(item.id)}><span>{item.glyph}</span>{item.label}</button>)}</nav><div className="aside-foot"><small>Public AI laboratory</small><a href="https://github.com/dd-the-dd/DeepDeckLearner">View source ↗</a></div></aside><main><header><div><span className="eyebrow">Deep Deck AI laboratory</span><h1>{page === 'overview' ? 'Start from what you know.' : pages.find((item) => item.id === page)?.label}</h1></div><div className="health"><StatusDot ready={Boolean(status?.engine.healthy)} label="Engine" /><StatusDot ready={Boolean(status?.pixi.built)} label="Pixi" /><span className="running-count">{running} running</span></div></header>{loadError && <p className="controller-error" role="alert">Local controller: {loadError}</p>}{page === 'overview' && <><section className="intro"><p>Train first, test the behavior, then choose a League deck by name. Open the ML controls only when you need them.</p><div className="workflow-grid">{(['local-training', 'local-playtest', 'matchmaking'] as Workflow[]).map((item) => <WorkflowCard key={item} workflow={item} status={status} onSelect={selectWorkflow} />)}</div></section><DependencyPanel status={status} refresh={refresh} /><TrainingForm status={status} refresh={refresh} /><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'train' && <>{workflow === 'online-training' ? <OnlinePanel status={status} /> : <TrainingForm status={status} refresh={refresh} />}<div className="segmented"><button className={workflow === 'local-training' ? 'selected' : ''} onClick={() => setWorkflow('local-training')}>Local</button><button className={workflow === 'online-training' ? 'selected' : ''} onClick={() => setWorkflow('online-training')}>Online</button></div><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'playtest' && <><DependencyPanel status={status} refresh={refresh} /><PlaytestForm status={status} refresh={refresh} /><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'compete' && <><MatchmakingForm status={status} jobs={jobs} refresh={refresh} /><JobsPanel jobs={jobs} refresh={refresh} /></>}{page === 'representation' && <section className="panel prose"><span className="eyebrow">Magic → tensor</span><h2>A decision, not a screenshot</h2><p>The encoder combines the observable game state, each legal action, known deck context, and a previous-state delta. V11 keeps four multiplayer value slots; V12 specializes the value head for two-player Legacy.</p><div className="tensor-flow"><span>Game observation</span><b>+</b><span>Legal action</span><b>+</b><span>Known deck</span><b>→</b><span>Feature tensor</span></div><p>Feature indices and masks are versioned in <code>deepdeck_examples.deep_learning.encoding</code>. See the ML guide before changing them: a checkpoint is only compatible with the schema it learned.</p></section>}{page === 'models' && <section className="model-grid"><article className="panel model"><span>V12</span><h2>Two-player policy</h2><p>Legacy-oriented example with two value slots. Weights are intentionally not public.</p></article><article className="panel model"><span>V11</span><h2>Multiplayer policy</h2><p>Commander-oriented example with four value slots and the same public encoder family.</p></article><article className="panel model"><span>Baseline</span><h2>Readable behavior</h2><p>Random and Alexios rule-based agents make protocol and behavior testing approachable.</p></article></section>}</main></div>;
 }

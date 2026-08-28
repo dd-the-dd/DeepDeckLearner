@@ -125,6 +125,26 @@ select:focus, input:focus { border-color: #586f81; box-shadow: 0 0 0 3px rgba(88
 .automatic-setting span { color: #77716c; font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .automatic-setting strong { font: 500 15px Georgia, serif; }
 .automatic-setting small { color: #77716c; font-size: 9px; }
+.dependency-panel { border-top-color: #586f81; }
+.dependency-heading { align-items: center; gap: 20px; }
+.dependency-heading p { margin: 7px 0 0; color: #77716c; font-size: 10px; }
+.dependency-heading .primary { flex: 0 0 auto; }
+.dependency-list { display: grid; border: 1px solid #c8bcaf; background: rgba(255,255,255,.22); }
+.dependency-list article { display: grid; grid-template-columns: 40px minmax(0,1fr) auto; gap: 14px; align-items: center; min-height: 82px; padding: 13px 15px; }
+.dependency-list article + article { border-top: 1px solid #c8bcaf; }
+.dependency-icon { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid currentColor; font: 600 14px Georgia,serif; }
+.dependency-icon.engine { color: #762b36; background: rgba(118,43,54,.06); }
+.dependency-icon.pixi { color: #586f81; background: rgba(88,111,129,.07); }
+.dependency-copy { display: grid; gap: 3px; min-width: 0; }
+.dependency-copy > span { color: #77716c; font-size: 7px; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+.dependency-copy > strong { font: 500 16px Georgia,serif; }
+.dependency-copy small { overflow: hidden; color: #77716c; font: 8px ui-monospace,monospace; text-overflow: ellipsis; white-space: nowrap; }
+.dependency-copy em { color: #946528; font-size: 8px; font-style: normal; }
+.dependency-actions { display: flex; gap: 6px; }
+.dependency-actions button { min-height: 34px; border: 1px solid #586f81; background: transparent; color: #405462; padding: 0 10px; font-size: 8px; font-weight: 800; cursor: pointer; }
+.dependency-actions button:first-child { border-color: #17191c; background: #17191c; color: #f6eee3; }
+.dependency-actions button:disabled { border-color: #c8bcaf; background: transparent; color: #9d958d; cursor: not-allowed; }
+.dependency-note { margin: 10px 0 0; color: #77716c; font-size: 8px; line-height: 1.45; }
 .notice { border-left-color: #946528; background: rgba(148,101,40,.08); color: #6e5435; }
 .notice strong { color: #762b36; }
 .primary { border-color: #17191c; border-radius: 0; background: #17191c; color: #f6eee3; }
@@ -140,4 +160,4 @@ select:focus, input:focus { border-color: #586f81; box-shadow: 0 0 0 3px rgba(88
 .segmented button.selected { background: #586f81; color: #fff; }
 .prose p { color: #5f5b57; }
 .model > span { color: #762b36; }
-@media (max-width: 720px) { .advanced-fields .wide-field { grid-column: auto; } }
+@media (max-width: 720px) { .advanced-fields .wide-field { grid-column: auto; }.dependency-heading { align-items: stretch; flex-direction: column; }.dependency-list article { grid-template-columns: 36px minmax(0,1fr); }.dependency-actions { grid-column: 1 / -1; }.dependency-actions button { flex: 1; } }

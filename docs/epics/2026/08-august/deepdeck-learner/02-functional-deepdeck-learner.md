@@ -63,6 +63,14 @@ creator, and format. Local playtesting reads the Engine's legal-deck catalog.
 Both interfaces display human-readable deck names while retaining version and
 session identifiers only in submitted controller payloads and job arguments.
 
+### F10 - Manage the local runtime (Must)
+
+The workbench reports whether the pinned Engine and Pixi sources are installed,
+synchronized, locally modified, built, and running or ready. It can synchronize
+either dependency to the reviewed commit pinned by DeepDeckLearner, build Pixi,
+start Engine, or prepare both through one guided action. Runtime updates never
+follow an upstream floating branch and never overwrite local submodule changes.
+
 ## User stories and acceptance criteria
 
 ### Story A - First smoke run
@@ -116,4 +124,17 @@ As a Magic player, I choose decks by name instead of copying identifiers.
 - Active competition and deck version identifiers remain internal.
 - Local playtest choices come from the Engine's legal decks for that format.
 - Empty, loading, unavailable, and no-result states do not expose an ID field.
+
+### Story G - One-click local stack
+
+As a Magic player, I can prepare and start the compatible local game stack
+without copying terminal commands.
+
+- Engine and Pixi expose installed, update-required, build-required, ready,
+  running, local-changes, and failed states.
+- `Start local stack` starts Engine when sleeping and prepares Pixi when stale.
+- Synchronization checks out only the commits pinned by DeepDeckLearner.
+- Dirty submodules are never overwritten and explain how the user can recover.
+- Every operation is an allowlisted controller job with bounded logs and stop
+  behavior; the browser cannot submit a command or repository path.
 

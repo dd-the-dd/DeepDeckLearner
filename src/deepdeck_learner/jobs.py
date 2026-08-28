@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -12,11 +13,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .dependencies import current_revision, engine_binary, engine_build_current, pinned_revision
+
 MAX_LOG_LINES = 500
 TRAINING_KINDS = {"training.smoke", "training.dataset"}
 PLAYTEST_KIND = "playtest.agent"
 MATCHMAKING_KIND = "matchmaking.agent"
-SUPPORTED_KINDS = TRAINING_KINDS | {PLAYTEST_KIND, MATCHMAKING_KIND}
+DEPENDENCY_KINDS = {
+    "dependency.engine.start",
+    "dependency.pixi.prepare",
+    "dependency.sync",
+}
+SUPPORTED_KINDS = TRAINING_KINDS | {PLAYTEST_KIND, MATCHMAKING_KIND} | DEPENDENCY_KINDS
 
 
 def utc_now() -> str:
@@ -105,6 +113,14 @@ class JobManager:
                 for candidate in self._jobs.values()
             ):
                 raise JobValidationError("Only one training job may run at a time.")
+            dependency = self._dependency_for(kind, raw)
+            if dependency and any(
+                candidate.kind in DEPENDENCY_KINDS
+                and dependency in candidate.label.lower()
+                and candidate.status in {"queued", "running"}
+                for candidate in self._jobs.values()
+            ):
+                raise JobValidationError(f"A {dependency} dependency task is already running.")
             self._jobs[job.id] = job
         threading.Thread(target=self._run, args=(job,), daemon=True).start()
         return job.public()
@@ -125,9 +141,87 @@ class JobManager:
     ) -> tuple[list[str], str, Path | None]:
         if kind in TRAINING_KINDS:
             return self._training_command(kind, raw)
+        if kind in DEPENDENCY_KINDS:
+            return self._dependency_command(kind, raw)
         if kind == MATCHMAKING_KIND:
             return self._matchmaking_command(raw)
         return self._playtest_command(raw)
+
+    @staticmethod
+    def _dependency_for(kind: str, raw: dict[str, Any]) -> str | None:
+        if kind == "dependency.engine.start":
+            return "engine"
+        if kind == "dependency.pixi.prepare":
+            return "pixi"
+        if kind == "dependency.sync":
+            dependency = str(raw.get("dependency", ""))
+            return dependency if dependency in {"engine", "pixi"} else None
+        return None
+
+    def _dependency_command(
+        self, kind: str, raw: dict[str, Any]
+    ) -> tuple[list[str], str, None]:
+        if kind == "dependency.engine.start":
+            manifest = self.root / "external" / "deepdeck-engine" / "Cargo.toml"
+            if not manifest.is_file():
+                raise JobValidationError("DeepDeckEngine is missing. Synchronize it first.")
+            if current_revision(self.root, "engine") != pinned_revision(self.root, "engine"):
+                raise JobValidationError(
+                    "DeepDeckEngine is not at the compatible revision. Sync it first."
+                )
+            cargo = shutil.which("cargo")
+            if not cargo and not engine_build_current(self.root):
+                raise JobValidationError("Install Rust and Cargo before starting DeepDeckEngine.")
+            if engine_build_current(self.root):
+                return (
+                    [str(engine_binary(self.root))],
+                    "DeepDeckEngine local server",
+                    None,
+                )
+            assert cargo is not None
+            return (
+                [
+                    cargo,
+                    "run",
+                    "--manifest-path",
+                    str(manifest),
+                    "--locked",
+                    "--bin",
+                    "mtg-engine-server",
+                ],
+                "DeepDeckEngine local server",
+                None,
+            )
+        if kind == "dependency.pixi.prepare":
+            return (
+                [
+                    sys.executable,
+                    "-m",
+                    "deepdeck_learner.dependencies",
+                    "prepare-pixi",
+                    "--root",
+                    str(self.root),
+                ],
+                "Prepare DeepDeckPixi",
+                None,
+            )
+        dependency = str(raw.get("dependency", ""))
+        if dependency not in {"engine", "pixi"}:
+            raise JobValidationError("Dependency must be engine or pixi.")
+        return (
+            [
+                sys.executable,
+                "-m",
+                "deepdeck_learner.dependencies",
+                "sync",
+                "--root",
+                str(self.root),
+                "--dependency",
+                dependency,
+            ],
+            f"Sync DeepDeck{dependency.title()}",
+            None,
+        )
 
     def _training_command(
         self, kind: str, raw: dict[str, Any]
@@ -295,10 +389,16 @@ class JobManager:
         job.status = "running"
         job.started_at = utc_now()
         try:
+            environment = self._child_environment()
+            if job.kind == "dependency.engine.start":
+                engine_environment = self._engine_environment()
+                environment.update(engine_environment)
+                if engine_environment:
+                    job.logs.append("Using Rust's bundled linker for the local Windows build.")
             process = subprocess.Popen(
                 job.argv,
                 cwd=self.root,
-                env=self._child_environment(),
+                env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -334,7 +434,41 @@ class JobManager:
             "HOME",
             "LOCALAPPDATA",
             "USERPROFILE",
+            "ProgramData",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
             "DEEPDECK_API_KEY",
             "DEEPDECK_PLATFORM_URL",
         }
         return {key: value for key, value in os.environ.items() if key in allowed}
+
+    @staticmethod
+    def _engine_environment() -> dict[str, str]:
+        if os.name != "nt" or shutil.which("link"):
+            return {}
+        rustc = shutil.which("rustc")
+        if not rustc:
+            return {}
+        result = subprocess.run(
+            [rustc, "--print", "sysroot"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+            shell=False,
+        )
+        sysroot = Path(result.stdout.strip()) if result.returncode == 0 else None
+        linker = (
+            sysroot
+            / "lib"
+            / "rustlib"
+            / "x86_64-pc-windows-msvc"
+            / "bin"
+            / "rust-lld.exe"
+            if sysroot
+            else None
+        )
+        if not linker or not linker.is_file():
+            return {}
+        return {"RUSTFLAGS": f"-C linker={linker}"}

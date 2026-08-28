@@ -10,6 +10,8 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
    ML path including the tensor representation.
 6. Validate Windows/Linux setup, open a reviewed pull request, and merge only
    after protected CI succeeds.
-7. Follow with trajectory-v1, deck synchronization, hosted learning, resource
+7. Deliver Story G's allowlisted local-runtime manager: pinned dependency sync,
+   Pixi preparation, Engine start/stop ownership, readiness states, and tests.
+8. Follow with trajectory-v1, deck synchronization, hosted learning, resource
    quotas, and signed dependency releases as separate reviewed work.
 
