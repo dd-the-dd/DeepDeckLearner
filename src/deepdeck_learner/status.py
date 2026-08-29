@@ -12,6 +12,7 @@ from .dependencies import (
     engine_build_current,
     has_local_changes,
     pinned_revision,
+    pixi_build_current,
 )
 
 
@@ -42,13 +43,9 @@ def capability_status(root: Path, engine_url: str) -> dict[str, Any]:
     pixi_current = current_revision(root, "pixi")
     pixi_pinned = pinned_revision(root, "pixi")
     pixi_marker = root / ".deepdeck" / "dependencies" / "pixi-build-revision"
-    pixi_built_revision = (
-        pixi_marker.read_text("utf-8").strip() if pixi_marker.is_file() else None
-    )
+    pixi_built_revision = pixi_marker.read_text("utf-8").strip() if pixi_marker.is_file() else None
     pixi_build_present = (pixi_path / "dist" / "index.js").is_file()
-    pixi_built = bool(
-        pixi_build_present and pixi_current and pixi_built_revision == pixi_current
-    )
+    pixi_built = pixi_build_current(root)
     return {
         "controller": {"ready": True, "version": "0.2.0"},
         "paths": {

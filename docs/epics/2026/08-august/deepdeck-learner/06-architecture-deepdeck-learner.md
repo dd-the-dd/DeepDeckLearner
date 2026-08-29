@@ -2,6 +2,83 @@
 
 Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 
+Architecture task: [#13](https://github.com/dd-the-dd/DeepDeckLearner/issues/13)
+
+## C4 level 1 — system context
+
+```mermaid
+flowchart LR
+    person["Person<br/><b>Magic player / AI builder</b><br/>Trains, tests and publishes an agent"]
+
+    learner["Software system<br/><b>DeepDeckLearner</b><br/>Local guided AI workbench"]
+    engine["Software system<br/><b>DeepDeckEngine</b><br/>Authoritative rules, legal actions and game state"]
+    pixi["Software system<br/><b>DeepDeckPixi</b><br/>Reusable game-table renderer"]
+    agent["Software system<br/><b>DeepDeckAgent</b><br/>Public agent protocol SDK"]
+    league["Software system<br/><b>Deep Deck League</b><br/>Accounts, decks, matchmaking, replays and rankings"]
+    github["External system<br/><b>GitHub</b><br/>Protected public source and pinned gitlinks"]
+
+    person -->|chooses a goal and inspects results| learner
+    learner -->|starts local sessions over loopback HTTP| engine
+    learner -.->|builds the pinned renderer; local host integration follows| pixi
+    learner -->|runs examples implemented with| agent
+    learner -->|authenticated deck catalog and matchmaking| league
+    agent -->|local agent protocol| engine
+    agent -->|authenticated hosted agent protocol| league
+    learner -->|initializes reviewed commits| github
+
+    classDef person fill:#f6eee3,stroke:#762b36,color:#17191c;
+    classDef local fill:#edf1f3,stroke:#586f81,color:#17191c;
+    classDef rules fill:#f3e9e7,stroke:#762b36,color:#17191c;
+    classDef hosted fill:#edf2ed,stroke:#55745a,color:#17191c;
+    class person person;
+    class learner,pixi,agent local;
+    class engine rules;
+    class league,github hosted;
+```
+
+The dashed Pixi relationship is deliberate: the current workbench retrieves and
+builds the public renderer, while the concrete visual session host remains a
+separate integration. Preparing Pixi is not presented as starting a second
+server.
+
+## C4 level 2 — DeepDeckLearner containers
+
+```mermaid
+flowchart LR
+    user["Person<br/><b>Local user</b>"]
+
+    subgraph workstation["DeepDeckLearner — user workstation"]
+        web["Container<br/><b>React workbench</b><br/>Intent routing, forms, progress and logs"]
+        controller["Container<br/><b>Python loopback controller</b><br/>Validation, capabilities, session token"]
+        jobs["Component<br/><b>Allowlisted job manager</b><br/>Owns child lifetime and bounded output"]
+        trainer["Container<br/><b>Trainer / example agents</b><br/>PyTorch, random, Alexios, V11 and V12"]
+        files[("Local files<br/>trajectories, checkpoints,<br/>build markers")]
+    end
+
+    engine["External container<br/><b>Rust Engine server</b><br/>127.0.0.1:8787"]
+    pixi["External library<br/><b>Pixi package</b><br/>Pinned and built locally"]
+    sdk["External library<br/><b>Agent SDK</b><br/>Versioned decision protocol"]
+    league["External system<br/><b>League API / agent gateway</b>"]
+    git["External system<br/><b>Git repositories</b><br/>Pinned submodule commits"]
+
+    user -->|browser interaction| web
+    web -->|JSON + ephemeral local token| controller
+    controller --> jobs
+    jobs -->|fixed argv only| trainer
+    jobs -->|bootstrap: sync, build, start| git
+    jobs -->|prepare package| pixi
+    jobs -->|build/start process| engine
+    trainer <--> files
+    trainer --> sdk
+    sdk -->|local HTTP/WebSocket| engine
+    sdk -->|Bearer API key; never sent to React| league
+    controller -->|account-scoped catalog| league
+```
+
+The browser is presentation-only. It cannot choose a command, repository path,
+or revision. The controller derives every path from the project root and every
+revision from the current Learner gitlinks.
+
 ## Boundaries
 
 ```text
@@ -44,10 +121,11 @@ docs/                         beginner, ML, and product contracts
 - `GET /api/v1/jobs/{id}` - job metadata and bounded logs.
 - `POST /api/v1/jobs/{id}/stop` - graceful termination request.
 
-The initial job kinds are `training.smoke`, `training.dataset`,
-`playtest.agent`, `dependency.engine.start`, `dependency.pixi.prepare`, and
-`dependency.sync`. `training.decks` and `training.hosted` are returned by status
-as unsupported until their versioned capability contracts exist.
+The job kinds are `training.smoke`, `training.dataset`, `playtest.agent`,
+`matchmaking.agent`, `dependency.stack.prepare`, `dependency.engine.start`,
+`dependency.pixi.prepare`, and `dependency.sync`. `training.decks` and
+`training.hosted` are returned by status as unsupported until their versioned
+capability contracts exist.
 
 ## Job execution
 
@@ -82,9 +160,17 @@ local executable when available and otherwise lets Cargo build before starting.
 The Engine process remains a controller-owned long-running job; Pixi is a build
 artifact consumed by the visual-client flow, not a second game server.
 
+`dependency.stack.prepare` is the normal entry point. One controller-owned child
+first refuses any dirty dependency, initializes/synchronizes only stale gitlinks,
+prepares Pixi only when its revision marker is stale, and finally starts Engine
+only when its loopback health endpoint is unavailable. Keeping the sequence in
+one job makes it resume-visible after a browser refresh and prevents the browser
+from racing Engine start against submodule initialization.
+
 ## Failure handling
 
-- Missing dependency: prevent launch and provide the exact setup action.
+- Missing dependency: the primary setup action initializes it; a failed Git
+  operation retains bounded diagnostics and preserves the target directory.
 - Dirty dependency: prevent sync and preserve every local file.
 - Missing Rust/Node toolchain: fail the bounded setup job with the missing tool.
 - Browser disconnect during build/start: the controller retains job ownership.

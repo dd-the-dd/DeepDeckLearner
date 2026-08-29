@@ -9,14 +9,21 @@ editorial visual language. A dark burgundy application rail, denser controls,
 status chips, and the persistent `LOCAL WORKBENCH` badge distinguish it as a
 local desktop-like tool rather than another hosted site page.
 
-The default screen uses three workflow cards: **Train locally**, **Test locally**,
-and **Join matchmaking**. Hosted training remains available from the Train page
-as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`, `Running`, or
-`Unavailable` before the user enters a form.
+The default screen is an intent router, not a dashboard. It asks one question:
+**What do you want to do?** The three answers are **Train an agent**, **Test an
+agent locally**, and **Send an agent to the League**. A first-run callout explains
+that training is the shortest path and does not require Engine, Pixi, decks, or
+an account key. Hosted training remains a secondary `Hosted (later)` option on
+the Train screen and cannot be mistaken for the recommended start.
+
+After an intent is selected, a three-step journey remains above the working
+area. Readiness is contextual: Engine/Pixi appear for local play, the account key
+appears for League matchmaking, and neither distracts from local training.
 
 ## Information architecture
 
-- Overview: dependency health, quick starts, recent jobs.
+- Home: intent cards, recommended first action, contextual workspace summary,
+  and recent activity only when activity exists.
 - Train: local/online segmented control, beginner fields, advanced disclosure.
 - Playtest: local agent and deck-session configuration plus visual client.
 - Matchmaking: account-key checklist, public deck search, agent configuration,
@@ -28,20 +35,27 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 
 ```text
 +-----------------------------------------------------------------------+
-| DeepDeckLearner  LOCAL WORKBENCH       Engine ready | Pixi ready       |
+| DeepDeckLearner  LOCAL WORKBENCH                 Workbench ready       |
 +-------------------+---------------------------------------------------+
-| Overview          | Start from what you know                          |
-| Train             | [ Train locally ] [ Train online ] [ Test local ] |
+| Home              | What do you want to do?                          |
+| Train             | New here? Start with Train an agent.             |
 | Playtest          |                                                   |
-| Matchmaking       | Account key -> Find deck -> Join queue             |
-| Representation    | Configure                                        |
-| Models            | Model [V12]  Compute [GPU preferred] [Start]      |
-|                   | > Advanced settings                               |
-|                   |                                                   |
-|                   | Recent jobs                                      |
-|                   | V12 smoke   Running ...                           |
+| Matchmaking       | [ Train ] [ Test locally ] [ Send to League ]     |
+| Representation    |                                                   |
+| Models            | Workspace: Training ready | Local play setup     |
 +-------------------+---------------------------------------------------+
 ```
+
+Local play then narrows to one sequence:
+
+```text
+Prepare Engine + Pixi  ->  Choose agent and decks  ->  Launch behavior test
+       [Set up Engine + Pixi]
+       1 Sources   2 Pixi build   3 Engine running
+       > Technical details and recovery controls
+```
+
+Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
 
 ## Interaction details
 
@@ -56,10 +70,13 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 - CUDA is the visible default and falls back to CPU without blocking beginners.
 - Hosted deck and competition discovery is disabled until the local controller
   detects an account API key; the controller also enforces this boundary.
-- A compact **Local runtime** panel appears on Overview and Playtest. Each row
-  shows the current and compatible short revisions plus one primary lifecycle
-  action and one synchronization action. The panel-level `Start local stack`
-  action skips components that are already ready.
+- Local runtime appears only in Playtest. `Set up Engine + Pixi` is the single
+  normal action: it initializes missing gitlinks, synchronizes stale gitlinks,
+  prepares Pixi, and starts Engine. Its three stages remain visible across
+  browser refreshes because the controller owns the composite job.
+- Current/compatible revisions and individual synchronization/start controls are
+  inside `Technical details and individual controls`. They are recovery tools,
+  not prerequisite choices for a beginner.
 - Pixi uses `Prepare` rather than a misleading server verb: it is a renderer
   package built for the local visual client, while Engine is the process that
   actually starts and remains running.
@@ -69,6 +86,9 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 - Start buttons use a nearby blocker list instead of a generic disabled cursor.
 - Job output is a bounded log region with pause-scroll and copy controls.
 - Destructive stop actions request confirmation only for an active job.
+- Home never embeds a workflow form. Selecting a card changes the page and moves
+  focus to the workflow heading; the browser Back action is a future routing
+  enhancement because the current workbench stores navigation in React state.
 
 ## States
 
@@ -80,6 +100,9 @@ as an explicitly unavailable capability. Each card shows `Ready`, `Needs setup`,
 - Unsupported: visible roadmap reason; no inert primary action.
 - Dependency update: current/compatible revisions, progress in Recent jobs, and
   an actionable dirty-worktree or toolchain error without losing page state.
+- Composite setup: stage 1 sources, stage 2 renderer, and stage 3 Engine each
+  show pending/active/complete text and symbols. A dirty dependency disables the
+  main action and explicitly promises that no files were overwritten.
 - No deck results: keep the query and format visible, explain that no legal deck
   matched, and offer another search without falling back to a raw identifier.
 

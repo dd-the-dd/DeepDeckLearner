@@ -67,3 +67,47 @@ def test_prepare_pixi_uses_fixed_commands_and_records_revision(
     assert (
         tmp_path / ".deepdeck" / "dependencies" / "pixi-build-revision"
     ).read_text("utf-8") == "abc123\n"
+
+
+def test_bootstrap_syncs_missing_sources_prepares_pixi_and_starts_engine(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(dependencies, "has_local_changes", lambda root, dependency: False)
+    monkeypatch.setattr(dependencies, "current_revision", lambda root, dependency: None)
+    monkeypatch.setattr(dependencies, "pinned_revision", lambda root, dependency: "pinned")
+    monkeypatch.setattr(
+        dependencies,
+        "sync_dependency",
+        lambda root, dependency: calls.append(("sync", dependency)),
+    )
+    monkeypatch.setattr(dependencies, "pixi_build_current", lambda root: False)
+    monkeypatch.setattr(
+        dependencies, "prepare_pixi", lambda root: calls.append(("prepare", "pixi"))
+    )
+    monkeypatch.setattr(dependencies, "engine_healthy", lambda: False)
+    monkeypatch.setattr(
+        dependencies, "start_engine", lambda root: calls.append(("start", "engine"))
+    )
+
+    dependencies.bootstrap_local_stack(tmp_path)
+
+    assert calls == [
+        ("sync", "engine"),
+        ("sync", "pixi"),
+        ("prepare", "pixi"),
+        ("start", "engine"),
+    ]
+
+
+def test_bootstrap_refuses_dirty_dependency_before_any_sync(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        dependencies,
+        "has_local_changes",
+        lambda root, dependency: dependency == "pixi",
+    )
+
+    with pytest.raises(DependencyTaskError, match="pixi contains local changes"):
+        dependencies.bootstrap_local_stack(tmp_path)

@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title description">
+  <title id="title">DeepDeckLearner intent-first workflow wireframe</title>
+  <desc id="description">Home chooses train, local test, or League matchmaking. Local test then prepares Engine and Pixi before deck selection.</desc>
+  <rect width="1200" height="720" fill="#f2ede5"/>
+  <rect width="220" height="720" fill="#572028"/>
+  <text x="28" y="55" fill="#f6eee3" font-family="Georgia, serif" font-size="24">DeepDeckLearner</text>
+  <text x="28" y="105" fill="#e7c8aa" font-family="Arial, sans-serif" font-size="13">HOME</text>
+  <text x="28" y="150" fill="#f6eee3" font-family="Arial, sans-serif" font-size="13">TRAIN</text>
+  <text x="28" y="195" fill="#f6eee3" font-family="Arial, sans-serif" font-size="13">PLAYTEST</text>
+  <text x="28" y="240" fill="#f6eee3" font-family="Arial, sans-serif" font-size="13">MATCHMAKING</text>
+  <text x="270" y="75" fill="#762b36" font-family="Arial, sans-serif" font-size="12" letter-spacing="2">CHOOSE AN OUTCOME</text>
+  <text x="270" y="120" fill="#17191c" font-family="Georgia, serif" font-size="38">What do you want to do?</text>
+  <rect x="270" y="160" width="880" height="58" fill="#e7e3dd" stroke="#586f81"/>
+  <text x="292" y="186" fill="#762b36" font-family="Arial, sans-serif" font-size="11">NEW HERE?</text>
+  <text x="292" y="205" fill="#17191c" font-family="Arial, sans-serif" font-size="14">Start with Train an agent — no Engine, Pixi, deck, or API key needed.</text>
+  <g font-family="Arial, sans-serif">
+    <rect x="270" y="250" width="275" height="170" fill="#f7f2eb" stroke="#586f81" stroke-width="3"/>
+    <text x="292" y="282" fill="#762b36" font-size="11">RECOMMENDED</text>
+    <text x="292" y="320" fill="#17191c" font-family="Georgia, serif" font-size="23">Train an agent</text>
+    <text x="292" y="350" fill="#77716c" font-size="13">Choose V12 or V11.</text>
+    <text x="292" y="390" fill="#55745a" font-size="11">READY TO CONTINUE →</text>
+    <rect x="570" y="250" width="275" height="170" fill="#f7f2eb" stroke="#762b36" stroke-width="3"/>
+    <text x="592" y="282" fill="#762b36" font-size="11">WATCH BEHAVIOR</text>
+    <text x="592" y="320" fill="#17191c" font-family="Georgia, serif" font-size="23">Test locally</text>
+    <text x="592" y="350" fill="#77716c" font-size="13">Setup is handled next.</text>
+    <text x="592" y="390" fill="#762b36" font-size="11">GUIDED SETUP →</text>
+    <rect x="870" y="250" width="280" height="170" fill="#f7f2eb" stroke="#55745a" stroke-width="3"/>
+    <text x="892" y="282" fill="#762b36" font-size="11">COMPETE</text>
+    <text x="892" y="320" fill="#17191c" font-family="Georgia, serif" font-size="23">Send to League</text>
+    <text x="892" y="350" fill="#77716c" font-size="13">Connect account and deck.</text>
+    <text x="892" y="390" fill="#762b36" font-size="11">GUIDED SETUP →</text>
+  </g>
+  <text x="270" y="485" fill="#762b36" font-family="Arial, sans-serif" font-size="12" letter-spacing="2">LOCAL PLAY JOURNEY</text>
+  <g font-family="Arial, sans-serif">
+    <rect x="270" y="520" width="280" height="110" fill="#f7f2eb" stroke="#c8bcaf"/>
+    <circle cx="305" cy="555" r="17" fill="#586f81"/>
+    <text x="300" y="560" fill="white" font-size="13">1</text>
+    <text x="335" y="553" fill="#17191c" font-size="15">Prepare tools</text>
+    <text x="335" y="577" fill="#77716c" font-size="12">One Engine + Pixi button</text>
+    <rect x="575" y="520" width="280" height="110" fill="#f7f2eb" stroke="#c8bcaf"/>
+    <circle cx="610" cy="555" r="17" fill="#f2ede5" stroke="#c8bcaf"/>
+    <text x="606" y="560" fill="#77716c" font-size="13">2</text>
+    <text x="640" y="553" fill="#17191c" font-size="15">Choose matchup</text>
+    <text x="640" y="577" fill="#77716c" font-size="12">Agent, format, two decks</text>
+    <rect x="880" y="520" width="270" height="110" fill="#f7f2eb" stroke="#c8bcaf"/>
+    <circle cx="915" cy="555" r="17" fill="#f2ede5" stroke="#c8bcaf"/>
+    <text x="911" y="560" fill="#77716c" font-size="13">3</text>
+    <text x="945" y="553" fill="#17191c" font-size="15">Launch</text>
+    <text x="945" y="577" fill="#77716c" font-size="12">Inspect bounded activity</text>
+  </g>
+</svg>
