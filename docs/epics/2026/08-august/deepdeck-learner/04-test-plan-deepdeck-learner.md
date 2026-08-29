@@ -16,6 +16,9 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - Dependency names and actions are allowlisted; paths cannot be supplied by React.
 - Engine build freshness compares the executable with its Rust inputs.
 - Synchronization refuses a dirty dependency and checks out only its gitlink.
+- Composite setup refuses every dirty dependency before synchronizing either one.
+- Composite setup initializes both sources, prepares Pixi, and starts Engine in
+  that order when the workspace is fresh.
 
 ## Integration tests
 
@@ -28,6 +31,8 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - The default project trajectory path and empty file are created idempotently.
 - Pixi preparation runs fixed install/build commands and records the built revision.
 - Starting an already-built Engine uses the executable without recompiling it.
+- One-click setup skips compatible sources and already-built Pixi, and exits
+  successfully when Engine is already healthy.
 
 ## Contract tests
 
@@ -41,6 +46,11 @@ On Windows and Linux, follow the README from a fresh clone, launch the workbench
 complete a V12 smoke run, and inspect the resulting checkpoint. With a local
 Engine running, launch a random-agent playtest and reach the visual client or an
 actionable headless-success state.
+
+From a non-recursive clone, open Playtest and press `Set up Engine + Pixi` once.
+Both gitlinks must initialize, Pixi must build, Engine must become healthy, and
+the browser must retain progress while the controller job continues. Home must
+show outcome choices without an embedded training form.
 
 ## CI gates
 

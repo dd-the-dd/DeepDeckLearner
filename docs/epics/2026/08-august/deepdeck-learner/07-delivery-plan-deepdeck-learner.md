@@ -15,3 +15,14 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 8. Follow with trajectory-v1, deck synchronization, hosted learning, resource
    quotas, and signed dependency releases as separate reviewed work.
 
+## Guided workflow correction
+
+1. [#11](https://github.com/dd-the-dd/DeepDeckLearner/issues/11): replace the
+   mixed dashboard with outcome-first navigation and workflow progress.
+2. [#12](https://github.com/dd-the-dd/DeepDeckLearner/issues/12): ship the
+   controller-owned composite Engine + Pixi bootstrap with fresh-clone tests.
+3. [#13](https://github.com/dd-the-dd/DeepDeckLearner/issues/13): publish the C4
+   system-context and container views and reconcile README terminology.
+4. Run the full Python/frontend suites, exercise the already-ready and
+   fresh-clone setup paths, and merge only after protected CI succeeds.
+

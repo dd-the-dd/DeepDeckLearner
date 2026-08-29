@@ -23,6 +23,7 @@ DEPENDENCY_KINDS = {
     "dependency.engine.start",
     "dependency.pixi.prepare",
     "dependency.sync",
+    "dependency.stack.prepare",
 }
 SUPPORTED_KINDS = TRAINING_KINDS | {PLAYTEST_KIND, MATCHMAKING_KIND} | DEPENDENCY_KINDS
 
@@ -114,11 +115,22 @@ class JobManager:
             ):
                 raise JobValidationError("Only one training job may run at a time.")
             dependency = self._dependency_for(kind, raw)
-            if dependency and any(
-                candidate.kind in DEPENDENCY_KINDS
-                and dependency in candidate.label.lower()
-                and candidate.status in {"queued", "running"}
+            active_dependency_jobs = [
+                candidate
                 for candidate in self._jobs.values()
+                if candidate.kind in DEPENDENCY_KINDS
+                and candidate.status in {"queued", "running"}
+            ]
+            if dependency == "stack" and active_dependency_jobs:
+                raise JobValidationError("A local runtime task is already running.")
+            if dependency and any(
+                candidate.kind == "dependency.stack.prepare"
+                for candidate in active_dependency_jobs
+            ):
+                raise JobValidationError("The local runtime setup is already running.")
+            if dependency and any(
+                dependency in candidate.label.lower()
+                for candidate in active_dependency_jobs
             ):
                 raise JobValidationError(f"A {dependency} dependency task is already running.")
             self._jobs[job.id] = job
@@ -156,11 +168,26 @@ class JobManager:
         if kind == "dependency.sync":
             dependency = str(raw.get("dependency", ""))
             return dependency if dependency in {"engine", "pixi"} else None
+        if kind == "dependency.stack.prepare":
+            return "stack"
         return None
 
     def _dependency_command(
         self, kind: str, raw: dict[str, Any]
     ) -> tuple[list[str], str, None]:
+        if kind == "dependency.stack.prepare":
+            return (
+                [
+                    sys.executable,
+                    "-m",
+                    "deepdeck_learner.dependencies",
+                    "bootstrap",
+                    "--root",
+                    str(self.root),
+                ],
+                "Local Engine + Pixi setup",
+                None,
+            )
         if kind == "dependency.engine.start":
             manifest = self.root / "external" / "deepdeck-engine" / "Cargo.toml"
             if not manifest.is_file():
@@ -390,7 +417,7 @@ class JobManager:
         job.started_at = utc_now()
         try:
             environment = self._child_environment()
-            if job.kind == "dependency.engine.start":
+            if job.kind in {"dependency.engine.start", "dependency.stack.prepare"}:
                 engine_environment = self._engine_environment()
                 environment.update(engine_environment)
                 if engine_environment:

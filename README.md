@@ -29,15 +29,19 @@ Open the workbench:
 .\.venv\Scripts\deepdeck-learner.exe
 ```
 
-It opens `http://127.0.0.1:8765`. Start with **Train locally → V12 → Start
-training**. The beginner form selects the built-in smoke trajectory for you. It
-verifies the complete encoder, model, optimizer, and checkpoint path without
-requiring a deck or dataset.
+It opens `http://127.0.0.1:8765`. Home first asks whether you want to **Train an
+agent**, **Test an agent locally**, or **Send an agent to the League**. Start with
+**Train an agent → V12 → Train V12 now**. The beginner form selects the built-in
+smoke trajectory for you. It verifies the complete encoder, model, optimizer,
+and checkpoint path without requiring Engine, Pixi, a deck, a dataset, or an API
+key.
 
-The **Local runtime** panel can synchronize the reviewed Engine/Pixi revisions,
-prepare Pixi, and start a sleeping Engine. **Start local stack** skips anything
-already ready. Synchronization never follows a floating branch and refuses to
-overwrite local changes inside either public dependency.
+For local play, press **Set up Engine + Pixi** once. The controller initializes
+missing submodules, synchronizes the reviewed revisions, prepares Pixi, builds
+Engine when necessary, and starts a sleeping Engine. Technical revisions and
+individual recovery controls stay under a disclosure. Synchronization never
+follows a floating branch and refuses to overwrite local changes inside either
+public dependency.
 
 The browser UI cannot launch arbitrary commands. A loopback-only Python
 controller validates a small allowlist of training and playtest jobs. It never
@@ -88,10 +92,11 @@ After importing two decks into its local catalog, open **Playtest** and provide
 their Engine deck-session IDs. The first seat uses your selected example; the
 second uses Engine's `ai-random` controller by default.
 
-The initial workbench starts and monitors the local agent. A complete visual
-playtest additionally needs a Pixi local-client host and a concrete session
-trace; that integration is deliberately tracked after `trajectory-v1`, rather
-than fabricating game state in React.
+The workbench starts and monitors the local agent. Pixi is a renderer package,
+not a second server: the setup button prepares it, while a complete visual
+playtest still needs its local-client host and a concrete session trace. That
+remaining integration is shown honestly rather than fabricating game state in
+React.
 
 ## Public examples
 
@@ -134,6 +139,10 @@ git submodule update --init --recursive
 Engine, Pixi, and Agent revisions are pinned so an experiment remains
 reproducible. Updates are reviewed through pull requests and CI, rather than
 following a floating `main` branch at runtime.
+
+The [C4 architecture views](docs/epics/2026/08-august/deepdeck-learner/06-architecture-deepdeck-learner.md)
+show the system context, local containers, protocol boundaries, and the exact
+roles of Learner, Engine, Pixi, Agent, and the hosted League.
 
 ## Develop
 

@@ -33,6 +33,12 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
    running local app never advances Engine or Pixi to an unreviewed remote head.
 7. Pixi has a prepare/build lifecycle rather than a standalone server lifecycle.
    Engine remains the long-running local process owned by a controller job.
+8. A missing or stale submodule is a setup condition, not a reason to reject the
+   primary setup action. The controller owns one composite allowlisted bootstrap
+   command; browser-side sequencing is rejected because a refresh could abandon
+   the sequence between jobs.
+9. The home screen is an intent router. Capability diagnostics belong inside the
+   workflow that consumes them, not in a global prerequisite dashboard.
 
 ## Options considered
 

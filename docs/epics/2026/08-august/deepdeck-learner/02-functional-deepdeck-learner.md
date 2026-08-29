@@ -66,10 +66,19 @@ session identifiers only in submitted controller payloads and job arguments.
 ### F10 - Manage the local runtime (Must)
 
 The workbench reports whether the pinned Engine and Pixi sources are installed,
-synchronized, locally modified, built, and running or ready. It can synchronize
-either dependency to the reviewed commit pinned by DeepDeckLearner, build Pixi,
-start Engine, or prepare both through one guided action. Runtime updates never
-follow an upstream floating branch and never overwrite local submodule changes.
+synchronized, locally modified, built, and running or ready. One primary action
+initializes both missing submodules, synchronizes both reviewed commits, builds
+Pixi when stale, builds Engine when stale, and starts Engine. Individual controls
+remain available only as recovery tools. Runtime updates never follow an upstream
+floating branch and never overwrite local submodule changes.
+
+### F11 - Choose an outcome first (Must) — [#11](https://github.com/dd-the-dd/DeepDeckLearner/issues/11)
+
+The first screen asks whether the user wants to train an agent, test an agent
+locally, or send an agent to League matchmaking. It does not embed a training
+form or expose dependency internals before that choice. Each selected workflow
+has a three-step journey, one primary next action, and only the readiness state
+relevant to that outcome.
 
 ## User stories and acceptance criteria
 
@@ -125,16 +134,31 @@ As a Magic player, I choose decks by name instead of copying identifiers.
 - Local playtest choices come from the Engine's legal decks for that format.
 - Empty, loading, unavailable, and no-result states do not expose an ID field.
 
-### Story G - One-click local stack
+### Story G - One-click local stack — [#12](https://github.com/dd-the-dd/DeepDeckLearner/issues/12)
 
 As a Magic player, I can prepare and start the compatible local game stack
 without copying terminal commands.
 
 - Engine and Pixi expose installed, update-required, build-required, ready,
   running, local-changes, and failed states.
-- `Start local stack` starts Engine when sleeping and prepares Pixi when stale.
+- `Set up Engine + Pixi` initializes missing sources, synchronizes stale sources,
+  prepares Pixi, and starts Engine without separate prerequisite buttons.
 - Synchronization checks out only the commits pinned by DeepDeckLearner.
 - Dirty submodules are never overwritten and explain how the user can recover.
 - Every operation is an allowlisted controller job with bounded logs and stop
   behavior; the browser cannot submit a command or repository path.
+
+### Story H - Intent-first onboarding — [#11](https://github.com/dd-the-dd/DeepDeckLearner/issues/11)
+
+As a Magic player, I choose what I want to accomplish before seeing technical
+configuration.
+
+- Home presents the three supported outcomes in plain Magic-oriented language.
+- Training explicitly states that Engine, Pixi, decks, and an account key are not
+  needed for the first checkpoint.
+- Local play reveals runtime setup before matchup selection and unlocks the next
+  step when both dependencies are ready.
+- Matchmaking starts with account connection, then deck choice, then queueing.
+- Technical revisions and individual dependency controls remain available under
+  progressive disclosure.
 

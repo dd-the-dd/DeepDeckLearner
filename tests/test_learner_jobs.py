@@ -102,6 +102,9 @@ def test_dependency_commands_are_allowlisted(
     sync, sync_label, _ = manager._dependency_command(  # noqa: SLF001
         "dependency.sync", {"dependency": "pixi"}
     )
+    stack, stack_label, _ = manager._dependency_command(  # noqa: SLF001
+        "dependency.stack.prepare", {}
+    )
 
     assert engine[:2] == ["cargo", "run"]
     assert engine_label == "DeepDeckEngine local server"
@@ -109,3 +112,5 @@ def test_dependency_commands_are_allowlisted(
     assert pixi_label == "Prepare DeepDeckPixi"
     assert sync[-2:] == ["--dependency", "pixi"]
     assert sync_label == "Sync DeepDeckPixi"
+    assert stack[2:5] == ["deepdeck_learner.dependencies", "bootstrap", "--root"]
+    assert stack_label == "Local Engine + Pixi setup"
