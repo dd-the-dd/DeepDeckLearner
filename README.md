@@ -13,28 +13,46 @@ submodules. It does not copy their code.
 
 ## Quick start for a Magic player
 
-Requirements: Git, Python 3.10+, Node.js 22.13+, PowerShell 7, and a Rust
-toolchain for the first local Engine build. On Windows, install the Visual C++
-Build Tools when the bundled Rust linker cannot use an installed Windows SDK.
+Requirements: Git, Python 3.10+, Node.js 22.13+, and a Rust toolchain for the
+first local Engine build. PowerShell is optional. On Windows, install the Visual
+C++ Build Tools when the bundled Rust linker cannot use an installed Windows
+SDK. On macOS, install the Xcode command-line tools. On Linux, install your
+distribution's C/C++ build tools and OpenSSL development package.
+
+### Windows
 
 ```powershell
 git clone --recurse-submodules https://github.com/dd-the-dd/DeepDeckLearner.git
 cd DeepDeckLearner
-pwsh ./scripts/setup.ps1
+py scripts/workbench.py setup
+py scripts/workbench.py start
 ```
 
-Open the workbench:
+The PowerShell convenience wrapper remains available as
+`pwsh ./scripts/setup.ps1`.
 
-```powershell
-.\.venv\Scripts\deepdeck-learner.exe
+### macOS and Linux
+
+```sh
+git clone --recurse-submodules https://github.com/dd-the-dd/DeepDeckLearner.git
+cd DeepDeckLearner
+python3 scripts/workbench.py setup
+python3 scripts/workbench.py start
 ```
+
+The POSIX setup shortcut is also available as `sh scripts/setup.sh`.
 
 It opens `http://127.0.0.1:8765`. Home first asks whether you want to **Train an
-agent**, **Test an agent locally**, or **Send an agent to the League**. Start with
-**Train an agent → V12 → Train V12 now**. The beginner form selects the built-in
-smoke trajectory for you. It verifies the complete encoder, model, optimizer,
-and checkpoint path without requiring Engine, Pixi, a deck, a dataset, or an API
-key.
+agent**, **Test an agent locally**, or **Send an agent to the League**. The Train
+screen asks for the model, format, and one or more legal decks before its
+deck-training action. It never starts a run or silently substitutes sample data
+before that selection. Deck-driven training remains visibly blocked until
+Engine publishes the versioned `trajectory-v1` collector.
+
+The **Advanced trainer validation** disclosure can still verify the encoder,
+model, optimizer, and checkpoint pipeline with a tiny built-in sample or an
+existing JSONL trajectory. It is deliberately labelled as validation and does
+not claim to use the selected deck pool.
 
 For local play, press **Set up Engine + Pixi** once. The controller initializes
 missing submodules, synchronizes the reviewed revisions, prepares Pixi, builds
@@ -65,10 +83,12 @@ substitute smoke data or call inference “training.”
 
 ### Magic-first
 
-Choose the model family and start. A V12 smoke run is the safe first action. The
-trajectory selector, project-relative `.deepdeck/trajectories/decisions.jsonl`
-path, and optimizer controls stay under Advanced. The workbench creates that
-ignored local trajectory file and its parent directory when it starts.
+Choose the model family, format, and legal training decks. The primary action
+stays blocked until the real deck trajectory collector is present. To verify an
+installation today, open Advanced trainer validation and run the V12 sample.
+The project-relative `.deepdeck/trajectories/decisions.jsonl` path and optimizer
+controls stay there. The workbench creates that ignored local trajectory file
+and its parent directory when it starts.
 
 ### ML-first
 
@@ -84,7 +104,7 @@ representation, dataset schema, checkpoint contract, and extension points.
 
 Start the public Rust server in a second terminal:
 
-```powershell
+```sh
 cargo run --manifest-path external/deepdeck-engine/Cargo.toml --locked --bin mtg-engine-server
 ```
 
@@ -108,7 +128,7 @@ React.
 
 The original command-line interfaces remain available:
 
-```powershell
+```sh
 deepdeck-train v12 --smoke --epochs 2 --output runs/v12-smoke
 deepdeck-example v12 --target local --checkpoint runs/v12-smoke
 deepdeck-example alexios --target ddl --speed 1s
@@ -130,10 +150,16 @@ assumed to satisfy that contract.
 
 ## Dependency updates
 
-Clone with `--recurse-submodules` or run:
+The workbench applies only revisions pinned by this repository. It never follows
+a floating dependency branch. After pulling a reviewed DeepDeckLearner update,
+apply its pinned Engine, Pixi, and Agent revisions with:
 
-```powershell
-git submodule update --init --recursive
+```sh
+# Windows
+py scripts/workbench.py update
+
+# macOS / Linux
+python3 scripts/workbench.py update
 ```
 
 Engine, Pixi, and Agent revisions are pinned so an experiment remains
@@ -146,8 +172,8 @@ roles of Learner, Engine, Pixi, Agent, and the hosted League.
 
 ## Develop
 
-```powershell
-.\.venv\Scripts\Activate.ps1
+```sh
+# Run from the project root after setup, on every supported OS.
 ruff check .
 mypy
 pytest

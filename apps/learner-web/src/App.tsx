@@ -54,7 +54,7 @@ const workflowCopy: Record<
     title: "Train an agent",
     kicker: "Recommended first step",
     description:
-      "Create a V11 or V12 checkpoint with safe defaults. No deck or game server is required.",
+      "Choose a V11 or V12 model, format, and training deck pool before launching a run.",
   },
   "online-training": {
     title: "Train online",
@@ -479,7 +479,54 @@ function TrainingForm({
   const [learningRate, setLearningRate] = useState(0.0003);
   const [device, setDevice] = useState("cuda");
   const [error, setError] = useState("");
+  const [format, setFormat] = useState("legacy");
+  const [decks, setDecks] = useState<LocalDeck[]>([]);
+  const [selectedDecks, setSelectedDecks] = useState<string[]>([]);
+  const [deckError, setDeckError] = useState("");
+  const [loadingDecks, setLoadingDecks] = useState(false);
   const blockers = workflowBlockers(status, "local-training");
+  const deckTrainingAvailable = Boolean(status?.workflows.training_decks);
+
+  useEffect(() => {
+    if (!status?.engine.healthy) {
+      setDecks([]);
+      return;
+    }
+    let active = true;
+    setLoadingDecks(true);
+    setDeckError("");
+    void loadLocalDecks(format, status.engine.url)
+      .then((items) => {
+        if (!active) return;
+        setDecks(items);
+        setSelectedDecks((current) =>
+          current.filter((id) => items.some((deck) => deck.deckSessionId === id)),
+        );
+      })
+      .catch((reason) => {
+        if (!active) return;
+        setDecks([]);
+        setDeckError(
+          reason instanceof Error
+            ? reason.message
+            : "Unable to load legal decks from Engine.",
+        );
+      })
+      .finally(() => {
+        if (active) setLoadingDecks(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [format, status?.engine.healthy, status?.engine.url]);
+
+  function toggleDeck(deckSessionId: string) {
+    setSelectedDecks((current) =>
+      current.includes(deckSessionId)
+        ? current.filter((id) => id !== deckSessionId)
+        : [...current, deckSessionId],
+    );
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -505,11 +552,11 @@ function TrainingForm({
     <form className="panel configure" onSubmit={submit}>
       <div className="section-heading">
         <div>
-          <span className="eyebrow">Step 1 · choose a model</span>
-          <h2>Create your first checkpoint</h2>
+          <span className="eyebrow">Steps 1–2 · configure the training run</span>
+          <h2>Choose a model and its training decks</h2>
           <p className="section-lead">
-            V12 is the recommended two-player start. The workbench supplies a
-            tiny built-in training sample.
+            Select the actual pool the agent should learn from before starting.
+            V12 is the recommended two-player model.
           </p>
         </div>
         <span className="step">01</span>
@@ -525,11 +572,98 @@ function TrainingForm({
             <option value="v11">V11 · multiplayer</option>
           </select>
         </label>
+        <label>
+          Format
+          <select
+            value={format}
+            onChange={(event) => {
+              setFormat(event.target.value);
+              setSelectedDecks([]);
+            }}
+          >
+            <option value="legacy">Legacy</option>
+            <option value="commander">Commander</option>
+          </select>
+        </label>
         <div className="automatic-setting">
           <span>Compute</span>
           <strong>GPU preferred</strong>
           <small>Automatically uses CPU when CUDA is unavailable.</small>
         </div>
+      </div>
+      <fieldset className="training-pool">
+        <legend>Training pool</legend>
+        <div className="training-pool-heading">
+          <div>
+            <strong>Select one or more decks</strong>
+            <small>
+              {selectedDecks.length
+                ? `${selectedDecks.length} deck${selectedDecks.length === 1 ? "" : "s"} selected`
+                : "No deck selected — training cannot start"}
+            </small>
+          </div>
+        </div>
+        {!status?.engine.healthy ? (
+          <div className="notice warning" role="status">
+            <strong>Deck catalog unavailable</strong>
+            <span>
+              Prepare and start DeepDeckEngine from Playtest, then return here
+              to choose legal decks.
+            </span>
+          </div>
+        ) : loadingDecks ? (
+          <p className="deck-pool-empty" role="status">Loading legal decks…</p>
+        ) : deckError ? (
+          <p className="form-error" role="alert">{deckError}</p>
+        ) : decks.length === 0 ? (
+          <p className="deck-pool-empty">
+            Engine has no legal {format} decks. Import a deck, then refresh this
+            page.
+          </p>
+        ) : (
+          <div className="training-deck-grid" aria-label="Training decks">
+            {decks.map((deck) => {
+              const selected = selectedDecks.includes(deck.deckSessionId);
+              return (
+                <button
+                  key={deck.deckSessionId}
+                  type="button"
+                  aria-pressed={selected}
+                  className={selected ? "selected" : ""}
+                  onClick={() => toggleDeck(deck.deckSessionId)}
+                >
+                  <span aria-hidden="true">{selected ? "✓" : "+"}</span>
+                  <strong>{deck.deckName}</strong>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </fieldset>
+      <div className="notice warning" role="status">
+        <strong>Deck training is not available yet</strong>
+        <span>
+          Your pool can be configured here, but Engine does not publish the
+          trajectory-v1 collector yet. DeepDeckLearner will not replace your
+          chosen decks with sample data.
+        </span>
+      </div>
+      <div className="form-actions">
+        <button
+          className="primary"
+          type="button"
+          disabled={
+            blockers.length > 0 ||
+            selectedDecks.length === 0 ||
+            !deckTrainingAvailable
+          }
+        >
+          Train {model.toUpperCase()} on selected decks <span>→</span>
+        </button>
+        <small>
+          Select decks first. This action unlocks only when the real trajectory
+          collector is available.
+        </small>
       </div>
       <button
         className="advanced-toggle"
@@ -537,10 +671,15 @@ function TrainingForm({
         aria-expanded={advanced}
         onClick={() => setAdvanced(!advanced)}
       >
-        <span>{advanced ? "−" : "+"}</span> Advanced settings
+        <span>{advanced ? "−" : "+"}</span> Advanced trainer validation
       </button>
       {advanced && (
-        <div className="advanced-fields">
+        <div className="advanced-fields trainer-validation">
+          <p className="advanced-explanation">
+            This separately validates the encoder, optimizer and checkpoint
+            pipeline. It uses sample or existing JSONL data—not the decks
+            selected above.
+          </p>
           <label>
             Training input
             <select
@@ -623,14 +762,14 @@ function TrainingForm({
           {error}
         </p>
       )}
-      <div className="form-actions">
-        <button className="primary" disabled={blockers.length > 0}>
-          Train {model.toUpperCase()} now <span>→</span>
-        </button>
-        <small>
-          No Engine, Pixi, deck, or API key is needed for this first run.
-        </small>
-      </div>
+      {advanced && (
+        <div className="form-actions validation-actions">
+          <button className="secondary" disabled={blockers.length > 0}>
+            Validate {model.toUpperCase()} trainer
+          </button>
+          <small>This does not train on the selected deck pool.</small>
+        </div>
+      )}
     </form>
   );
 }
@@ -1341,8 +1480,8 @@ export default function App() {
                 <span>New here?</span>
                 <strong>Start with Train an agent.</strong>
                 <p>
-                  You can create a real checkpoint before installing or starting
-                  the game tools.
+                  Choose the model and decks it should learn before starting a
+                  real training run.
                 </p>
               </div>
               <div className="workflow-grid">
@@ -1373,8 +1512,8 @@ export default function App() {
             <WorkflowJourney
               active={trainingStep}
               steps={[
-                { label: "Choose", detail: "Pick V12 or V11" },
-                { label: "Train", detail: "Create a checkpoint" },
+                { label: "Configure", detail: "Model, format, and decks" },
+                { label: "Train", detail: "Collect trajectories and learn" },
                 { label: "Test", detail: "Watch its decisions" },
               ]}
             />

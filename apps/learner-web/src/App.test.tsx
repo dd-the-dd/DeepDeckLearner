@@ -128,4 +128,58 @@ describe("guided onboarding", () => {
       });
     });
   });
+
+  test("requires an explicit deck pool and never substitutes smoke training", async () => {
+    const trainingStatus: CapabilityStatus = {
+      ...status,
+      engine: {
+        ...status.engine,
+        source_available: true,
+        synced: true,
+        built: true,
+        healthy: true,
+      },
+      workflows: { training_decks: false },
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/status")) return response(trainingStatus);
+      if (url.includes("/api/v1/catalog/local-decks"))
+        return response([
+          { deckSessionId: "deck-1", deckName: "Legacy Reanimator" },
+          { deckSessionId: "deck-2", deckName: "Death and Taxes" },
+        ]);
+      return response([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Train an agent/i }),
+    );
+
+    const launch = await screen.findByRole("button", {
+      name: /Train V12 on selected decks/i,
+    });
+    expect(launch).toBeDisabled();
+    expect(screen.getByText(/No deck selected/i)).toBeInTheDocument();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Legacy Reanimator/i }),
+    );
+    expect(screen.getByText("1 deck selected")).toBeInTheDocument();
+    expect(launch).toBeDisabled();
+    expect(
+      screen.getByText(/will not replace your chosen decks with sample data/i),
+    ).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) => {
+        const [input, init] = call as unknown as [
+          RequestInfo | URL,
+          RequestInit?,
+        ];
+        return String(input).endsWith("/api/v1/jobs") && init?.method === "POST";
+      }),
+    ).toBe(false);
+  });
 });

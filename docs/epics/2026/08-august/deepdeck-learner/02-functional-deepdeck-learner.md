@@ -11,17 +11,19 @@ trajectory-contract readiness. Every blocker includes a corrective action.
 
 ### F2 - Train locally (Must)
 
-The user chooses V11 or V12 and either a JSONL trajectory dataset or the built-in
-smoke sample. Beginner mode exposes model, input, and output only. Advanced mode
-adds epochs, batch size, learning rate, seed, device, and checkpoint location.
-The UI previews the allowlisted command, starts it, streams job state, and can
-request a graceful stop.
+The user chooses V11 or V12, a format, and one or more decks before a real
+deck-driven run can start. Smoke and existing JSONL execution remain a separate
+advanced trainer-validation path. They never claim to consume the selected deck
+pool. Advanced controls add epochs, learning rate, seed, device, and checkpoint
+location. The UI starts allowlisted commands, streams job state, and can request
+a graceful stop.
 
 ### F3 - Configure deck-driven training (Should)
 
-The user chooses one or more legal decks and a format. Until the collector
-contract is implemented, the workbench preserves this configuration but marks
-the run blocked instead of silently substituting smoke data.
+The user chooses one or more legal decks and a format in the Train window. No
+deck is selected automatically. Until the collector contract is implemented,
+the workbench preserves the current configuration in the view but marks the run
+blocked instead of silently substituting smoke data.
 
 ### F4 - Train from hosted play (Should)
 
@@ -82,12 +84,17 @@ relevant to that outcome.
 
 ## User stories and acceptance criteria
 
-### Story A - First smoke run
+### Story A - Configure training and validate the trainer
 
-As a Magic player, I can select V12, choose the smoke sample, and start training.
+As a Magic player, I select V12, a format, and training decks before a real run,
+and can separately validate the trainer with sample data.
 
-- The start action is disabled with a reason when Python dependencies are absent.
-- A successful run creates a checkpoint and the UI exposes its local path.
+- No deck is selected or trained automatically.
+- The deck-training action remains disabled with a reason while `trajectory-v1`
+  is unavailable, including after decks are selected.
+- Advanced validation identifies that smoke/JSONL data does not use the selected
+  decks.
+- A successful validation creates a checkpoint and the UI exposes its local path.
 - Refreshing the browser does not terminate the controller-owned job.
 
 ### Story B - Dataset run
