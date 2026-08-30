@@ -52,9 +52,9 @@ excluded.
 ### F8 - Configure League access step by step (Must)
 
 The workbench links directly to the Autonomous agents section of the user's
-Deep Deck League account, explains that the generated `.env` line is shown only
-once, and reports whether the restarted controller detected the key. The key
-value stays in the controller environment and is never returned to React.
+Deep Deck League account, explains that the generated key is shown only once,
+and lets the host paste, verify, and save it from Settings. The key value is
+never returned to React after submission.
 
 ### F9 - Select decks by name (Must)
 
@@ -118,7 +118,7 @@ As an AI developer, I cannot accidentally mistake online inference for training.
 ### Story E - Guided matchmaking access
 
 As a Magic player, I can find the exact account section that creates my API key
-and understand where its `.env` line belongs.
+and save it from the workbench without editing an `.env` file.
 
 - The workbench links to `/account#autonomous-agents` on Deep Deck League.
 - The UI reports configured/not configured without exposing the key.
@@ -165,28 +165,27 @@ configuration.
 ### F12 - Secure local and LAN access (Must)
 
 The workbench defaults to loopback access. Settings can enable a LAN listener
-and persist its port, after which the controller restarts. A LAN browser must
-pair with a rotating code before it can read controller state or start jobs.
-Only a browser running on the host may change the account key, network listener,
-pairing code, or trusted sessions.
+and persist its port, after which the controller restarts. Browsers on that
+trusted private network receive an in-memory session and open the workbench
+directly. Only a browser running on the host may change the account key or
+network listener, including when it uses one of the host's own LAN addresses.
 
 ### F13 - Configure the account key in the workbench (Must)
 
 The host user pastes an account key into a masked Settings field. The controller
 validates its shape, verifies it with Deep Deck League, stores it in the system
-credential vault with an ignored `.env` fallback, and returns only configured and
-provider metadata. The UI supports replacement and disconnection without ever
+credential vault, and returns only configured and provider metadata. The UI
+never writes `.env` and supports replacement and disconnection without ever
 reading the stored value.
 
 ### Story I - Secure LAN workbench
 
-As a local user, I can opt into LAN access and control which devices may operate
-my workbench.
+As a local user, I can opt into access from my trusted private LAN without
+configuring the League key on every browser.
 
 - Loopback remains the default and LAN mode requires an explicit host action.
-- Every LAN device enters the current pairing code and receives a revocable,
-  in-memory session rather than the League API key.
-- Regenerating the pairing code revokes all paired sessions.
+- Every trusted LAN browser receives an in-memory session rather than the League
+  API key and opens the workbench directly.
 - Untrusted browser origins and unauthenticated controller APIs are rejected.
 - API-key and network mutations remain restricted to the host computer.
 

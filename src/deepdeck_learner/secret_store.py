@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,19 +97,22 @@ class AccountSecretStore:
                 "DEEPDECK_API_KEY is managed by the process environment. Remove it there "
                 "before replacing it in the workbench."
             )
-        if keyring is not None:
-            try:
-                keyring.set_password(SERVICE_NAME, ACCOUNT_NAME, secret)
-                self._remove_dotenv_secret()
-                os.environ["DEEPDECK_API_KEY"] = secret
-                os.environ[RUNTIME_SOURCE] = "system"
-                return SecretStatus(True, "system", False)
-            except Exception:
-                pass
-        self._write_dotenv_secret(secret)
+        if keyring is None:
+            raise RuntimeError(
+                "The operating-system credential vault is unavailable. "
+                "DeepDeckLearner did not write the key to .env."
+            )
+        try:
+            keyring.set_password(SERVICE_NAME, ACCOUNT_NAME, secret)
+        except Exception as error:
+            raise RuntimeError(
+                "The operating-system credential vault rejected the key. "
+                "DeepDeckLearner did not write it to .env."
+            ) from error
+        self._remove_dotenv_secret()
         os.environ["DEEPDECK_API_KEY"] = secret
-        os.environ[RUNTIME_SOURCE] = "dotenv"
-        return SecretStatus(True, "dotenv", False)
+        os.environ[RUNTIME_SOURCE] = "system"
+        return SecretStatus(True, "system", False)
 
     def delete(self) -> SecretStatus:
         current = self.status()
@@ -125,25 +127,6 @@ class AccountSecretStore:
         os.environ.pop("DEEPDECK_API_KEY", None)
         os.environ.pop(RUNTIME_SOURCE, None)
         return SecretStatus(False, None, False)
-
-    def _write_dotenv_secret(self, secret: str) -> None:
-        lines = (
-            self.dotenv_path.read_text("utf-8").splitlines() if self.dotenv_path.is_file() else []
-        )
-        filtered = [line for line in lines if line.partition("=")[0].strip() != "DEEPDECK_API_KEY"]
-        filtered.append(f"DEEPDECK_API_KEY={secret}")
-        self.dotenv_path.parent.mkdir(parents=True, exist_ok=True)
-        handle, temporary_name = tempfile.mkstemp(
-            dir=self.dotenv_path.parent, prefix="dotenv-", suffix=".tmp", text=True
-        )
-        temporary = Path(temporary_name)
-        try:
-            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write("\n".join(filtered).rstrip() + "\n")
-            os.chmod(temporary, 0o600)
-            temporary.replace(self.dotenv_path)
-        finally:
-            temporary.unlink(missing_ok=True)
 
     def _remove_dotenv_secret(self) -> None:
         if not self.dotenv_path.is_file():

@@ -25,6 +25,7 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
    system-context and container views and reconcile README terminology.
 4. Run the full Python/frontend suites, exercise the already-ready and
    fresh-clone setup paths, and merge only after protected CI succeeds.
-5. Add host-managed key storage, an opt-in LAN listener, device pairing,
-   revocation, origin enforcement, restart ownership, and the Settings UI.
+5. Add vault-only host-managed key storage, an opt-in trusted-LAN listener,
+   restricted LAN sessions, origin enforcement, restart ownership, and the
+   Settings UI.
 

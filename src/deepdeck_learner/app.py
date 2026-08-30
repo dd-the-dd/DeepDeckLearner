@@ -10,7 +10,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .access import LocalAccessManager, request_is_loopback
+from .access import LocalAccessManager, request_is_host
 from .catalogs import (
     CatalogAuthenticationError,
     CatalogError,
@@ -98,7 +98,6 @@ def create_app(root: Path | None = None) -> FastAPI:
         public_paths = {
             "/api/v1/health",
             "/api/v1/session",
-            "/api/v1/session/pair",
         }
         if request.url.path.startswith("/api/v1/") and request.url.path not in public_paths:
             session = access.resolve(request.headers.get("x-deepdeck-token"))
@@ -111,7 +110,7 @@ def create_app(root: Path | None = None) -> FastAPI:
 
     def require_owner(request: Request) -> None:
         session = getattr(request.state, "local_session", None)
-        if session is None or session.role != "owner" or not request_is_loopback(request):
+        if session is None or session.role != "owner" or not request_is_host(request):
             raise HTTPException(
                 status_code=403,
                 detail="This setting can only be changed from this computer.",
@@ -126,20 +125,8 @@ def create_app(root: Path | None = None) -> FastAPI:
         existing = access.resolve(request.headers.get("x-deepdeck-token"))
         if existing is not None:
             return {"token": existing.token, "session": existing.public()}
-        if not request_is_loopback(request):
-            raise HTTPException(status_code=401, detail="Pair this LAN device to continue.")
-        owner = access.issue_owner()
-        return {"token": owner.token, "session": owner.public()}
-
-    @app.post("/api/v1/session/pair")
-    async def pair_session(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=422, detail="Invalid pairing request.")
-        paired = access.pair(str(payload.get("code", "")), str(payload.get("label", "")))
-        if paired is None:
-            raise HTTPException(status_code=403, detail="The pairing code is not valid.")
-        return {"token": paired.token, "session": paired.public()}
+        issued = access.issue_owner() if request_is_host(request) else access.issue_lan()
+        return {"token": issued.token, "session": issued.public()}
 
     @app.get("/api/v1/status")
     def status(engine_url: str = "http://127.0.0.1:8787") -> dict[str, Any]:
@@ -163,8 +150,6 @@ def create_app(root: Path | None = None) -> FastAPI:
             },
             "access": {
                 "role": session.role,
-                "pairing_code": access.pairing_code if session.role == "owner" else None,
-                "sessions": access.sessions() if session.role == "owner" else [],
             },
         }
 
@@ -238,18 +223,6 @@ def create_app(root: Path | None = None) -> FastAPI:
             )
         background_tasks.add_task(callback)
         return {"status": "restarting"}
-
-    @app.post("/api/v1/settings/pairing-code")
-    def regenerate_pairing_code(request: Request) -> dict[str, str]:
-        require_owner(request)
-        return {"pairing_code": access.regenerate_pairing_code()}
-
-    @app.delete("/api/v1/settings/sessions/{session_id}")
-    def revoke_session(session_id: str, request: Request) -> dict[str, bool]:
-        require_owner(request)
-        if not access.revoke(session_id):
-            raise HTTPException(status_code=404, detail="Local session not found.")
-        return {"revoked": True}
 
     @app.get("/api/v1/jobs")
     def jobs() -> list[dict[str, Any]]:

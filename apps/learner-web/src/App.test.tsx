@@ -84,23 +84,25 @@ afterEach(() => {
 });
 
 describe("guided onboarding", () => {
-  test("asks a LAN browser for the host pairing code", async () => {
+  test("opens directly for a trusted LAN browser", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ detail: "Pair this LAN device to continue." }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-          }),
-        ),
-      ),
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/v1/session"))
+          return response({
+            token: "lan-token",
+            session: { ...ownerSession, id: "lan-session", role: "lan" },
+          });
+        return url.endsWith("/api/v1/status") ? response(status) : response([]);
+      }),
     );
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Pair this device" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Pairing code")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "What do you want to do?" }),
+    ).toBeInTheDocument();
   });
 
   test("starts with outcomes instead of an embedded training form", async () => {

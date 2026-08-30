@@ -45,8 +45,8 @@ public dependency.
 
 The browser UI cannot launch arbitrary commands. A local Python controller
 validates a small allowlist of training and playtest jobs. It never sends your
-API key back to React. Loopback is the default; opt-in LAN access requires a
-pairing code and gives each device a revocable in-memory session.
+API key back to React. Loopback is the default; opt-in LAN access is intended
+for a trusted private network and gives each browser an in-memory session.
 
 ## What works now
 
@@ -118,18 +118,20 @@ deepdeck-example alexios --target ddl --speed 1s
 ## Hosted inference and future online training
 
 Open **Settings**, paste the account-owned key shown once by Deep Deck League,
-and press **Save and verify**. DeepDeckLearner prefers the operating-system
-credential vault and falls back to the ignored project `.env` when no vault is
-available. The key identifies the account; the agent manifest remains free to
+and press **Save and verify**. DeepDeckLearner verifies the key and stores it in
+the operating-system credential vault. The browser never stores the key and
+this workflow never writes it to `.env`. The key identifies the account; the
+agent manifest remains free to
 describe its own model/version. No browser login or `gcloud auth login` is
 required. Advanced users may still provide `DEEPDECK_API_KEY` directly in the
 environment.
 
 Settings also chooses **This computer only** or **Local network**. LAN mode
-persists the selected port, restarts the packaged controller, and displays the
-private-network URLs and current pairing code. Configure the Windows firewall
-for the Private profile only. API-key, listener, pairing, and session-management
-changes remain available only from the host computer.
+persists the selected port, restarts the packaged controller, and displays its
+private-network URLs. Browsers on that trusted network open the workbench
+directly. Configure the Windows firewall for the Private profile only. API-key
+and listener changes remain available only from the host computer, including
+when the host opens the app through its own LAN address.
 
 Playing a hosted match currently performs inference only. Training from hosted
 play will require a compatible trajectory capability containing observations,

@@ -4,9 +4,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from deepdeck_learner import access, secret_store
 from deepdeck_learner import app as learner_app
-from deepdeck_learner import secret_store
 from deepdeck_learner.app import create_app
+from deepdeck_learner.settings import NetworkSettings, save_network_settings
 
 
 def local_client(app):
@@ -69,22 +70,36 @@ def test_platform_catalog_requires_account_api_key(tmp_path: Path, monkeypatch) 
     assert client.get("/api/v1/catalog/competitions", headers=headers).status_code == 401
 
 
-def test_lan_device_must_pair_before_using_controller(tmp_path: Path) -> None:
+def test_trusted_lan_device_opens_without_pairing(tmp_path: Path) -> None:
     application = create_app(tmp_path)
     client = TestClient(application, client=("192.168.2.44", 52101))
 
-    assert client.get("/api/v1/session").status_code == 401
     assert client.get("/api/v1/status").status_code == 403
-    paired = client.post(
-        "/api/v1/session/pair",
-        json={"code": application.state.access.pairing_code, "label": "Kitchen tablet"},
-    )
-    assert paired.status_code == 200
-    token = paired.json()["token"]
+    connected = client.get("/api/v1/session")
+    assert connected.status_code == 200
+    token = connected.json()["token"]
     assert client.get("/api/v1/status", headers=authorized(token)).status_code == 200
     settings = client.get("/api/v1/settings", headers=authorized(token)).json()
-    assert settings["access"]["role"] == "paired"
-    assert settings["access"]["pairing_code"] is None
+    assert settings["access"]["role"] == "lan"
+
+
+def test_host_can_use_its_own_lan_address_without_pairing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        access,
+        "local_host_addresses",
+        lambda: {"127.0.0.1", "192.168.2.10"},
+    )
+    save_network_settings(tmp_path, NetworkSettings(mode="lan", port=8765))
+    client = TestClient(create_app(tmp_path), client=("192.168.2.10", 52102))
+
+    response = client.get(
+        "/api/v1/session", headers={"Origin": "http://192.168.2.10:5174"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session"]["role"] == "owner"
 
 
 def test_untrusted_browser_origin_is_rejected(tmp_path: Path) -> None:
@@ -94,9 +109,22 @@ def test_untrusted_browser_origin_is_rejected(tmp_path: Path) -> None:
 
 
 def test_owner_can_store_key_without_returning_secret(tmp_path: Path, monkeypatch) -> None:
+    class MemoryKeyring:
+        value: str | None = None
+
+        def get_password(self, service: str, account: str) -> str | None:
+            return self.value
+
+        def set_password(self, service: str, account: str, value: str) -> None:
+            self.value = value
+
+        def delete_password(self, service: str, account: str) -> None:
+            self.value = None
+
     monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
     monkeypatch.delenv("DEEPDECK_LEARNER_API_KEY_SOURCE", raising=False)
-    monkeypatch.setattr(secret_store, "keyring", None)
+    memory_keyring = MemoryKeyring()
+    monkeypatch.setattr(secret_store, "keyring", memory_keyring)
     monkeypatch.setattr(learner_app, "verify_account_api_key", lambda value: None)
     client = local_client(create_app(tmp_path))
     headers = authorized(local_token(client))
@@ -107,11 +135,26 @@ def test_owner_can_store_key_without_returning_secret(tmp_path: Path, monkeypatc
     assert response.status_code == 200
     assert value not in response.text
     assert value not in client.get("/api/v1/settings", headers=headers).text
-    assert (tmp_path / ".env").read_text("utf-8").strip() == f"DEEPDECK_API_KEY={value}"
+    assert not (tmp_path / ".env").exists()
+    assert memory_keyring.value == value
+    assert secret_store.AccountSecretStore(tmp_path).status().provider == "system"
+
+
+def test_ui_never_falls_back_to_writing_dotenv(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
     monkeypatch.delenv("DEEPDECK_LEARNER_API_KEY_SOURCE", raising=False)
-    restarted = secret_store.AccountSecretStore(tmp_path).load_into_environment()
-    assert restarted.provider == "dotenv"
-    assert restarted.externally_managed is False
+    monkeypatch.setattr(secret_store, "keyring", None)
+    monkeypatch.setattr(learner_app, "verify_account_api_key", lambda value: None)
+    client = local_client(create_app(tmp_path))
+
+    response = client.put(
+        "/api/v1/settings/api-key",
+        headers=authorized(local_token(client)),
+        json={"api_key": "ddl_agent_abcdefghijklmnopqrstuvwxyz"},
+    )
+
+    assert response.status_code == 409
+    assert not (tmp_path / ".env").exists()
 
 
 def test_network_mode_is_persisted_and_requires_restart(tmp_path: Path) -> None:

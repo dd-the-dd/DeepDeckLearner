@@ -140,14 +140,16 @@ owned by Pixi.
 
 ## Secure local settings
 
-Settings contains League connection, local/LAN listener, pairing code, and
-revocable device sessions. The host receives a masked `Save and verify` field;
-the value is cleared after submission and never rendered again. A LAN browser
-that has not paired sees a focused pairing screen instead of the workbench.
+Settings contains the League connection and local/LAN listener. The host
+receives a masked `Save and verify` field for the real `ddl_agent_...` key; the
+value is cleared after submission and never rendered again. A trusted LAN
+browser opens the workbench directly and never receives that key. Opening the
+workbench through one of the host computer's own LAN addresses still yields the
+owner experience, so the host can configure the key from that browser URL.
 
 Network mode uses two explicit choices: `This computer only` and `Local
 network`. A changed listener exposes `Restart now`, detected LAN addresses, and
-Windows Private-network firewall guidance. A paired device can operate normal
+Windows Private-network firewall guidance. A LAN device can operate normal
 workflows but sees an explanation in Settings instead of disabled secret and
 security controls.
 

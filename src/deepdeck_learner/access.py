@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import ipaddress
 import secrets
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from fastapi import Request
-
-PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
 
 @dataclass(frozen=True)
@@ -39,41 +38,40 @@ def _loopback(value: str | None) -> bool:
         return False
 
 
-def request_is_loopback(request: Request) -> bool:
+def local_host_addresses() -> set[str]:
+    addresses = {"127.0.0.1", "::1"}
+    try:
+        for result in socket.getaddrinfo(socket.gethostname(), None):
+            addresses.add(str(result[4][0]).split("%")[0])
+    except OSError:
+        pass
+    return addresses
+
+
+def request_is_host(request: Request) -> bool:
     client_host = request.client.host if request.client else None
     forwarded = request.headers.get("x-forwarded-for", "")
     if _loopback(client_host) and forwarded:
         client_host = forwarded.split(",")[-1].strip()
+    host_addresses = local_host_addresses()
+    client_is_host = _loopback(client_host) or client_host in host_addresses
     origin = request.headers.get("origin")
     if origin:
         origin_host = urlsplit(origin).hostname
-        if not _loopback(origin_host):
+        if not _loopback(origin_host) and origin_host not in host_addresses:
             return False
-    return _loopback(client_host)
+    return client_is_host
 
 
 class LocalAccessManager:
     def __init__(self) -> None:
-        self._pairing_code = self._new_pairing_code()
         self._sessions: dict[str, LocalSession] = {}
-
-    @staticmethod
-    def _new_pairing_code() -> str:
-        return "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(8))
-
-    @property
-    def pairing_code(self) -> str:
-        return self._pairing_code
 
     def issue_owner(self) -> LocalSession:
         return self._issue("This computer", "owner")
 
-    def pair(self, code: str, label: str) -> LocalSession | None:
-        normalized = code.strip().upper().replace("-", "")
-        if not secrets.compare_digest(normalized, self._pairing_code):
-            return None
-        clean_label = " ".join(label.strip().split())[:80] or "LAN device"
-        return self._issue(clean_label, "paired")
+    def issue_lan(self) -> LocalSession:
+        return self._issue("Trusted LAN browser", "lan")
 
     def _issue(self, label: str, role: str) -> LocalSession:
         session = LocalSession(
@@ -93,20 +91,3 @@ class LocalAccessManager:
             if secrets.compare_digest(candidate, token):
                 return session
         return None
-
-    def sessions(self) -> list[dict[str, str]]:
-        return [session.public() for session in self._sessions.values()]
-
-    def revoke(self, session_id: str) -> bool:
-        for token, session in list(self._sessions.items()):
-            if secrets.compare_digest(session.id, session_id):
-                del self._sessions[token]
-                return True
-        return False
-
-    def regenerate_pairing_code(self) -> str:
-        self._pairing_code = self._new_pairing_code()
-        self._sessions = {
-            token: session for token, session in self._sessions.items() if session.role == "owner"
-        }
-        return self._pairing_code

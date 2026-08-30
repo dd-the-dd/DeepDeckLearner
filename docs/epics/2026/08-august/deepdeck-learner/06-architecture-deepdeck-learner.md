@@ -184,18 +184,21 @@ from racing Engine start against submodule initialization.
 
 Non-secret defaults are stored atomically in `.deepdeck/learner.json`. API keys
 are read from an explicit `DEEPDECK_API_KEY`, the operating-system credential
-vault, or a local `.env` ignored by Git in that order. Status reports configured,
-provider, and external-management metadata, never the key or an environment dump.
+vault, or a manually managed local `.env` ignored by Git in that order. Keys
+submitted through the UI are written only to the credential vault. Status
+reports configured, provider, and external-management metadata, never the key
+or an environment dump.
 
 The HTTP listener defaults to `127.0.0.1`. Host Settings may persist an opt-in
-`0.0.0.0` LAN listener and port. Loopback requests receive an owner session; LAN
-requests exchange a rotating pairing code for an in-memory paired session. Every
-controller route except health and pairing requires a session. Only an owner
-request whose effective client and browser origin are loopback may mutate keys,
-network settings, pairing codes, or sessions. The CLI owns restart and reloads
-the persisted listener only after the settings response completes.
+`0.0.0.0` LAN listener and port. Requests originating from the host, including
+through one of its own LAN addresses, receive an owner session. Other trusted
+LAN requests receive a restricted in-memory session directly. Every controller
+route except health and session creation requires a session. Only an owner
+request originating from the host may mutate keys or network settings. The CLI
+owns restart and reloads the persisted listener only after the settings response
+completes.
 
 Account-key input travels once from React to the local controller, is verified
 against the authenticated competition catalog, and is then cleared. It is never
-returned by an API. Paired LAN sessions can operate allowlisted jobs but cannot
+returned by an API. Restricted LAN sessions can operate allowlisted jobs but cannot
 read or replace the key.

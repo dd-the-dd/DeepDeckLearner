@@ -63,12 +63,12 @@ show outcome choices without an embedded training form.
 
 - Account-key validation rejects malformed and upstream-rejected keys; responses,
   settings, job metadata, and logs never contain the submitted value.
-- LAN requests cannot obtain an owner session and must pair before accessing any
-  non-health controller route.
-- Untrusted browser origins are rejected, pairing-code rotation revokes paired
-  sessions, and paired sessions cannot mutate host-only settings.
+- Trusted LAN requests receive a non-owner in-memory session and can access
+  normal workbench routes without an app-specific pairing step.
+- Untrusted browser origins are rejected, and LAN sessions cannot mutate
+  host-only settings.
 - Network configuration accepts only `local|lan` and ports 1024-65535, persists
   atomically, and reports when a restart is required.
 - The CLI reloads persisted listener settings after an in-app restart request.
-- System credential storage is preferred; an unavailable credential backend
-  writes only the ignored project `.env` with restrictive permissions.
+- Browser-submitted keys are stored only in the system credential vault; an
+  unavailable credential backend fails safely and never writes `.env`.

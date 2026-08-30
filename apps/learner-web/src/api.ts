@@ -46,7 +46,7 @@ export type LocalDeck = { deckSessionId: string; deckName: string };
 export type LocalSession = {
   id: string;
   label: string;
-  role: 'owner' | 'paired';
+  role: 'owner' | 'lan';
   created_at: string;
 };
 
@@ -63,9 +63,7 @@ export type LearnerSettings = {
     externally_managed: boolean;
   };
   access: {
-    role: 'owner' | 'paired';
-    pairing_code: string | null;
-    sessions: LocalSession[];
+    role: 'owner' | 'lan';
   };
 };
 
@@ -87,8 +85,9 @@ async function token(): Promise<string> {
     sessionToken = window.sessionStorage.getItem(sessionStorageKey) ?? '';
   }
   if (!sessionToken) {
-    const connected = await connectLocalSession();
-    if (!connected) throw new Error('Pair this device to continue.');
+    await connectLocalSession();
+    sessionToken = window.sessionStorage.getItem(sessionStorageKey) ?? '';
+    if (!sessionToken) throw new Error('Unable to open a local session.');
   }
   return sessionToken;
 }
@@ -99,7 +98,7 @@ async function authorizedHeaders(extra?: HeadersInit): Promise<Headers> {
   return headers;
 }
 
-export async function connectLocalSession(): Promise<LocalSession | null> {
+export async function connectLocalSession(): Promise<LocalSession> {
   const existing = sessionToken || window.sessionStorage.getItem(sessionStorageKey) || '';
   const response = await fetch('/api/v1/session', {
     headers: existing ? { 'X-DeepDeck-Token': existing } : undefined,
@@ -107,22 +106,9 @@ export async function connectLocalSession(): Promise<LocalSession | null> {
   if (response.status === 401 || response.status === 403) {
     sessionToken = '';
     window.sessionStorage.removeItem(sessionStorageKey);
-    return null;
+    throw new Error('This browser origin is not allowed to open DeepDeckLearner.');
   }
   const connected = await json<{ token: string; session: LocalSession }>(response);
-  sessionToken = connected.token;
-  window.sessionStorage.setItem(sessionStorageKey, sessionToken);
-  return connected.session;
-}
-
-export async function pairLocalDevice(code: string, label: string): Promise<LocalSession> {
-  const connected = await json<{ token: string; session: LocalSession }>(
-    await fetch('/api/v1/session/pair', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, label }),
-    }),
-  );
   sessionToken = connected.token;
   window.sessionStorage.setItem(sessionStorageKey, sessionToken);
   return connected.session;
@@ -209,25 +195,6 @@ export async function restartWorkbench(): Promise<void> {
   await json(
     await fetch('/api/v1/settings/restart', {
       method: 'POST',
-      headers: await authorizedHeaders(),
-    }),
-  );
-}
-
-export async function regeneratePairingCode(): Promise<string> {
-  const result = await json<{ pairing_code: string }>(
-    await fetch('/api/v1/settings/pairing-code', {
-      method: 'POST',
-      headers: await authorizedHeaders(),
-    }),
-  );
-  return result.pairing_code;
-}
-
-export async function revokeLocalSession(id: string): Promise<void> {
-  await json(
-    await fetch(`/api/v1/settings/sessions/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
       headers: await authorizedHeaders(),
     }),
   );

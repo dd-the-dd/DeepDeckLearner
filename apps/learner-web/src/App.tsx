@@ -8,10 +8,7 @@ import {
   loadStatus,
   connectLocalSession,
   deleteApiKey,
-  pairLocalDevice,
-  regeneratePairingCode,
   restartWorkbench,
-  revokeLocalSession,
   saveApiKey,
   saveNetworkSettings,
   searchDecks,
@@ -1140,6 +1137,7 @@ function MatchmakingForm({
   );
 }
 
+/*
 function PairingScreen({ onPaired }: { onPaired: (session: LocalSession) => void }) {
   const [code, setCode] = useState("");
   const [label, setLabel] = useState("My LAN device");
@@ -1166,15 +1164,16 @@ function PairingScreen({ onPaired }: { onPaired: (session: LocalSession) => void
           <img src={leagueLogoUrl} alt="Deep Deck League" />
           <span>Learner</span>
         </a>
-        <span className="eyebrow">Local network access</span>
-        <h1>Pair this device</h1>
+        <span className="eyebrow">Pair a LAN device</span>
+        <h1>Enter the local pairing code</h1>
         <p>
-          Enter the eight-character code shown by DeepDeckLearner on the host computer.
-          The League API key never leaves that computer.
+          <strong>This is not your <code>ddl_agent_â€¦</code> API key.</strong> On the
+          host computer, open <code>http://127.0.0.1:5174</code>, then choose Settings
+          â†’ LAN pairing and copy the eight-character code shown there.
         </p>
         <form onSubmit={submit}>
           <label>
-            Pairing code
+            8-character pairing code
             <input
               autoFocus
               autoComplete="one-time-code"
@@ -1185,6 +1184,10 @@ function PairingScreen({ onPaired }: { onPaired: (session: LocalSession) => void
               required
             />
           </label>
+          <small className="pairing-help">
+            Your League API key is configured later in host Settings and is never
+            sent to this LAN device.
+          </small>
           <label>
             Device name
             <input
@@ -1203,6 +1206,7 @@ function PairingScreen({ onPaired }: { onPaired: (session: LocalSession) => void
     </main>
   );
 }
+*/
 
 function SettingsPanel({
   session,
@@ -1307,11 +1311,11 @@ function SettingsPanel({
   if (session.role !== "owner") {
     return (
       <section className="panel configure">
-        <span className="eyebrow">Paired LAN device</span>
+        <span className="eyebrow">Trusted LAN browser</span>
         <h2>Settings stay on the host computer</h2>
         <p>
           This device can operate the workbench, but only the host can change the League
-          key, network listener, pairing code, or trusted sessions.
+          key or network listener.
         </p>
       </section>
     );
@@ -1403,7 +1407,7 @@ function SettingsPanel({
             <label className={mode === "lan" ? "network-choice selected" : "network-choice"}>
               <input type="radio" name="network-mode" value="lan" checked={mode === "lan"} onChange={() => setMode("lan")} />
               <strong>Local network</strong>
-              <small>Other devices must enter the pairing code.</small>
+              <small>Other devices on your trusted private LAN open directly.</small>
             </label>
           </div>
           <label className="port-field">
@@ -1438,6 +1442,7 @@ function SettingsPanel({
         )}
       </section>
 
+      {/* LAN pairing controls were intentionally removed: the private LAN is trusted.
       <section className="panel configure settings-card wide-settings-card">
         <div className="section-heading">
           <div>
@@ -1476,6 +1481,7 @@ function SettingsPanel({
           Generate a new pairing code
         </button>
       </section>
+      */}
       {(notice || error) && <p className={error ? "controller-error" : "settings-notice"} role="status">{error || notice}</p>}
     </div>
   );
@@ -1618,7 +1624,7 @@ export default function App() {
     return <main className="pairing-shell"><p>Opening the local workbenchâ€¦</p></main>;
   }
   if (!localSession) {
-    return <PairingScreen onPaired={setLocalSession} />;
+    return <main className="pairing-shell"><p>{loadError || "Unable to open the local workbench."}</p></main>;
   }
 
   return (

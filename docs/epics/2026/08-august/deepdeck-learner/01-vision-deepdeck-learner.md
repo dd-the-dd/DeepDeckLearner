@@ -33,9 +33,9 @@ The first release provides one local workbench with three honest workflows:
   are shown as blockers before a job can start.
 - Versioned sources of truth: Engine and Pixi are pinned dependencies and are
   updated through reviewed pull requests, never a floating production `main`.
-- Local-first secrets: API keys remain in the operating-system credential vault
-  or an ignored permission-restricted `.env` fallback and are never persisted by
-  the browser.
+- Local-first secrets: API keys saved through the workbench remain in the
+  operating-system credential vault and are never persisted by the browser or
+  written to `.env`.
 - Rust stays authoritative for Oracle parsing, legal actions, and mutation.
 
 ## Success measures

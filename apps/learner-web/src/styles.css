@@ -1361,6 +1361,15 @@ input:focus {
 .pairing-card p {
   margin: 0;
 }
+.pairing-card p strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #762b36;
+}
+.pairing-help {
+  color: #77716c;
+  line-height: 1.5;
+}
 .pairing-card form,
 .settings-card form {
   display: grid;

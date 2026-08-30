@@ -60,11 +60,12 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 
 ## LAN and secret decisions
 
-1. LAN access is opt-in. It uses short-lived in-memory device sessions and a
-   rotating pairing code; it never distributes the account API key to clients.
-2. Secret configuration is a host-only controller operation. Use the platform
-   credential vault first and an ignored permission-restricted `.env` only when
-   the operating system has no available keyring backend.
+1. LAN access is opt-in and assumes a trusted private network. It issues
+   in-memory browser sessions directly and never distributes the account API key
+   to LAN clients.
+2. Secret configuration is a host-only controller operation. Browser-submitted
+   keys use the platform credential vault; if it is unavailable, saving fails
+   safely instead of writing `.env`.
 3. The local API rejects non-private browser origins. HTTPS remains the future
    choice for operation beyond a trusted private LAN; LAN mode is not a
    public-network deployment mode.

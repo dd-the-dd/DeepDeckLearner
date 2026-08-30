@@ -49,7 +49,7 @@ def main() -> None:
 
         application.state.restart_callback = restart
         if host == "0.0.0.0":
-            print(f"LAN pairing code: {application.state.access.pairing_code}")
+            print(f"Trusted LAN mode enabled on port {port}.")
         if first_start and not arguments.no_browser:
             threading.Timer(1.0, lambda target=url: webbrowser.open(target)).start()
         first_start = False
