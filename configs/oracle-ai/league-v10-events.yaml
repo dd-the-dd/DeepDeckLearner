@@ -1,0 +1,141 @@
+seed: 20260810
+trainingSeed: 1035792468
+device: cuda
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 300
+candidateModelName: ia-v10-in-training
+analyticsPilotId: ia-v10-in-training
+initialGroundTruthAnalyticsPilotId: ia-v10-s0
+deckSource: database
+outputDir: runs/oracle-ai-league-v10-from-scratch
+resumeCheckpoint: runs/oracle-ai-league-v10-from-scratch/pilots/ia-v10-step-94266
+resumeCheckpointOptional: true
+upgradeResumeArchitecture: true
+resumeLeagueState: true
+initialGroundTruthMode: learner-step-zero
+continuous: true
+groundTruthEvaluationEvery: 10
+modelEvaluationEvery: 100
+checkpointEvery: 20
+maxCheckpoints: 3
+serviceRefreshEvery: 2
+maxConsecutiveErrors: 50
+maxStateTokens: 768
+multiplayerRewardMode: centeredWinner
+noWinnerReward: -0.25
+parallelGameWorkers: 4
+rolloutBatchGames: 4
+
+model:
+  architecture: structured-v10
+  d_model: 384
+  layers: 6
+  heads: 8
+  feedforward_dim: 1536
+  action_layers: 2
+  plan_layers: 2
+  dropout: 0.10
+  max_words: 64
+  max_relative_players: 8
+  max_deck_cards: 128
+  semantic_dim: 64
+  semantic_layers: 1
+  semantic_heads: 4
+  max_events: 24
+  root_search_simulations: 8
+  puct_coefficient: 1.5
+  search_temperature: 1.0
+  root_value_weight: 0.25
+  root_dirichlet_alpha: 0.3
+  root_exploration_fraction: 0.25
+  future_horizons: 4
+  future_player_slots: 4
+  future_feature_dim: 23
+  minimum_log_variance: -6.0
+  maximum_log_variance: 3.0
+  event_codebook_size: 128
+  event_latent_dim: 96
+  latent_action_value_weight: 0.35
+  multiplayer_value_slots: 4
+  isolate_prediction_gradients: true
+
+ppo:
+  gamma: 0.999
+  gae_lambda: 0.97
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.01
+  learning_rate: 0.00005
+  epochs: 4
+  max_grad_norm: 1.0
+  minibatch_size: 8
+  observation_token_dropout: 0.03
+  observation_word_dropout: 0.05
+  observation_numeric_dropout: 0.03
+  action_value_coefficient: 0.35
+  value_clip_ratio: 0.2
+  target_kl: 0.02
+  ppo_policy_coefficient: 1.0
+  search_policy_coefficient: 0.10
+  future_prediction_coefficient: 0.08
+  belief_coefficient: 0.025
+  plan_coefficient: 0.01
+  multiplayer_value_coefficient: 0.20
+  event_reconstruction_coefficient: 0.10
+  event_codebook_coefficient: 0.05
+  event_commitment_coefficient: 0.0125
+  latent_value_coefficient: 0.20
+
+trainingScenarioRandomizer:
+  formats: [training, training2, free, commander]
+  formatSampling: roundRobin
+  playerCounts: [2, 3, 4]
+  maxTurns: 80
+  free:
+    startingLifeRange: [20, 40]
+    freeMulliganRange: [0, 2]
+  training:
+    freeMulligans: 3
+    maxMulligans: 3
+  matchmaking:
+    enabled: true
+    randomFloor: 0.20
+    eloScale: 10
+    underplayedStrength: 0.35
+    matchPrior: 10
+
+evaluation:
+  seed: 845621937
+  gamesPerScenario: 2
+  perfectPeriodsForPromotion: 3
+  championPort: 8796
+  candidatePort: 8795
+  device: cuda
+  championDevice: cpu
+  candidateDevice: cpu
+  benchmarkOpponents:
+    - id: ia-v6-step-230101
+      checkpoint: runs/oracle-ai-league-v6-alpha-zero-warm-start-step-230209/live/ia-in-training
+      port: 8797
+      device: cpu
+      everyPeriods: 1
+  scenarioMatrix:
+    formats: [training, training2, free, commander]
+    playerCounts: [2, 3, 4]
+    maxTurns: 80
+
+groundTruthEvaluation:
+  minimumConfidence: 1
+  deterministicDecisionType: fastDeterministicWin
+  deterministicScenarioPaths:
+    - .local-app/omnath-mana-scenarios.json
+    - .local-app/punching-bag-scenarios.json
+  deterministicScenarioIds:
+    - omnath-cube-draw-one
+    - omnath-cube-mill-one
+    - omnath-cube-damage-one
+    - omnath-cube-draw-damage-two
+    - omnath-cube-mill-three
+    - omnath-cube-damage-three
+    - omnath-awakening-every-upkeep-damage-three
+    - punching-bag-exhibition-tidecaller

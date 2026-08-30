@@ -1,0 +1,179 @@
+seed: 20260814
+trainingSeed: 1182394701
+device: cuda
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 300
+candidateModelName: ia-v11-in-training
+analyticsPilotId: ia-v11-in-training
+initialGroundTruthAnalyticsPilotId: ia-v11-s0
+deckSource: database
+outputDir: runs/oracle-ai-league-v11-alphastar
+resumeCheckpoint: runs/oracle-ai-league-v11-alphastar/live/ia-v11-in-training
+resumeCheckpointOptional: true
+resumeLeagueState: true
+initialGroundTruthMode: learner-step-zero
+continuous: true
+modelEvaluationEnabled: false
+groundTruthEvaluationEnabled: false
+groundTruthEvaluationEvery: 10
+modelEvaluationEvery: 100
+checkpointEvery: 20
+maxCheckpoints: 3
+serviceRefreshEvery: 2
+maxConsecutiveErrors: 50
+maxStateTokens: 896
+multiplayerRewardMode: plackettLuce
+noWinnerReward: -0.25
+parallelGameWorkers: 1
+rolloutBatchGames: 1
+
+trainingOpponentMix:
+  self: 1.00
+v10OpponentUrl: http://127.0.0.1:8795
+v10OpponentControllerId: ia-v10-in-training
+anchorDeadlineRounds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+anchorOpeningHandPoolSizes: [20, 40, 60, 80, 100]
+anchorPlayerCounts: [2, 3, 4]
+anchorCalibrationGames: 5000
+anchorCalibrationSeed: 20260815
+trainingLeaderboardLabels:
+  v10: V10 · AlphaZero + VQ-VAE
+  v11: V11 · AlphaStar
+
+model:
+  architecture: structured-v11
+  d_model: 384
+  layers: 6
+  heads: 8
+  feedforward_dim: 1536
+  action_layers: 2
+  plan_layers: 2
+  difference_layers: 2
+  dropout: 0.10
+  max_words: 64
+  max_relative_players: 8
+  max_deck_cards: 128
+  max_delta_tokens: 96
+  max_commander_cards: 8
+  semantic_dim: 64
+  semantic_layers: 1
+  semantic_heads: 4
+  max_events: 24
+  root_search_simulations: 1
+  puct_coefficient: 1.5
+  search_temperature: 1.0
+  root_value_weight: 0.25
+  root_dirichlet_alpha: 0.3
+  root_exploration_fraction: 0.0
+  future_horizons: 4
+  future_player_slots: 4
+  future_feature_dim: 23
+  minimum_log_variance: -6.0
+  maximum_log_variance: 3.0
+  multiplayer_value_slots: 4
+  isolate_prediction_gradients: true
+
+ppo:
+  gamma: 0.999
+  gae_lambda: 0.97
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.015
+  learning_rate: 0.00005
+  epochs: 4
+  max_grad_norm: 1.0
+  minibatch_size: 8
+  observation_token_dropout: 0.03
+  observation_word_dropout: 0.05
+  observation_numeric_dropout: 0.03
+  action_value_coefficient: 0.35
+  value_clip_ratio: 0.2
+  target_kl: 0.02
+  ppo_policy_coefficient: 1.0
+  search_policy_coefficient: 0.0
+  future_prediction_coefficient: 0.08
+  belief_coefficient: 0.025
+  plan_coefficient: 0.01
+  multiplayer_value_coefficient: 0.30
+
+trainingScenarioRandomizer:
+  formats: [commander]
+  formatSampling: roundRobin
+  playerCounts: [2, 3, 4]
+  decks:
+    - Aang
+    - Alexios
+    - Sexy and undead
+    - "Landlord's dream (Landfall)"
+    - Omnath
+    - Yenna
+    - "Sek'tuar"
+    - Kellan the kid
+    - Sokrate
+    - Mobilize
+    - Toph
+    - Katara
+    - Tatyova
+    - Sen Triplets
+    - Azlask blink token
+    - Sefris
+  maxTurns: 80
+  free:
+    startingLifeRange: [20, 40]
+    freeMulliganRange: [0, 2]
+  training:
+    freeMulligans: 3
+    maxMulligans: 3
+  matchmaking:
+    enabled: true
+    randomFloor: 0.20
+    ratingScale: 2
+    underplayedStrength: 0.35
+    matchPrior: 10
+
+evaluation:
+  seed: 845621938
+  gamesPerScenario: 2
+  perfectPeriodsForPromotion: 3
+  championPort: 8802
+  candidatePort: 8803
+  device: cpu
+  championDevice: cpu
+  candidateDevice: cpu
+  scenarioMatrix:
+    formats: [commander]
+    playerCounts: [2, 3, 4]
+    decks:
+      - Aang
+      - Alexios
+      - Sexy and undead
+      - "Landlord's dream (Landfall)"
+      - Omnath
+      - Yenna
+      - "Sek'tuar"
+      - Kellan the kid
+      - Sokrate
+      - Mobilize
+      - Toph
+      - Katara
+      - Tatyova
+      - Sen Triplets
+      - Azlask blink token
+      - Sefris
+    maxTurns: 80
+
+groundTruthEvaluation:
+  minimumConfidence: 1
+  deterministicDecisionType: fastDeterministicWin
+  deterministicScenarioPaths:
+    - .local-app/omnath-mana-scenarios.json
+    - .local-app/punching-bag-scenarios.json
+  deterministicScenarioIds:
+    - omnath-cube-draw-one
+    - omnath-cube-mill-one
+    - omnath-cube-damage-one
+    - omnath-cube-draw-damage-two
+    - omnath-cube-mill-three
+    - omnath-cube-damage-three
+    - omnath-awakening-every-upkeep-damage-three
+    - punching-bag-exhibition-tidecaller

@@ -1,0 +1,43 @@
+seed: 20260729
+device: cpu
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 30
+outputDir: runs/oracle-ai-v1
+episodes: 1000
+checkpointEvery: 100
+maxStateTokens: 512
+smokeHorizon: 8
+
+model:
+  feature_dim: 256
+  d_model: 256
+  layers: 4
+  heads: 8
+  feedforward_dim: 1024
+  dropout: 0.1
+
+ppo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.01
+  learning_rate: 0.0003
+  epochs: 4
+  max_grad_norm: 1.0
+
+# Replace these setup stubs with versioned GameSetup payloads exported by Rust.
+# Each matchup is sampled during training and seat order is swapped every episode.
+matchups:
+  - id: 4c-control-mirror-v1
+    learnerPlayerId: player-1
+    opponentPlayerId: player-2
+    maxTurns: 200
+    setup:
+      players: []
+  - id: sek-kuar-vs-4c-control-v1
+    learnerPlayerId: player-1
+    opponentPlayerId: player-2
+    maxTurns: 200
+    setup:
+      players: []

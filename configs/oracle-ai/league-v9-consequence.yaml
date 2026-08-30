@@ -1,0 +1,98 @@
+seed: 20260809
+trainingSeed: 975318642
+device: cuda
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 300
+candidateModelName: ia-v9-in-training
+analyticsPilotId: ia-v9-in-training
+initialGroundTruthAnalyticsPilotId: ia-v9-s0
+deckSource: database
+outputDir: runs/oracle-ai-league-v9-consequence
+resumeCheckpoint: runs/oracle-ai-league-v9-consequence/live/ia-v9-in-training
+resumeCheckpointOptional: true
+resumeLeagueState: true
+initialGroundTruthMode: learner-step-zero
+continuous: true
+evaluationEvery: 20
+checkpointEvery: 20
+maxCheckpoints: 3
+serviceRefreshEvery: 2
+maxConsecutiveErrors: 50
+maxStateTokens: 768
+multiplayerRewardMode: centeredWinner
+
+model:
+  architecture: structured-v9
+  d_model: 384
+  layers: 6
+  heads: 8
+  feedforward_dim: 1536
+  action_layers: 2
+  plan_layers: 2
+  dropout: 0.10
+  max_words: 64
+  max_relative_players: 8
+  max_deck_cards: 128
+  semantic_dim: 64
+  semantic_layers: 1
+  semantic_heads: 4
+  max_events: 24
+  root_search_simulations: 1
+  future_horizons: 4
+  future_player_slots: 4
+  future_feature_dim: 23
+  minimum_log_variance: -6.0
+  maximum_log_variance: 3.0
+
+ppo:
+  gamma: 0.999
+  gae_lambda: 0.97
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.005
+  learning_rate: 0.00005
+  epochs: 4
+  max_grad_norm: 1.0
+  minibatch_size: 4
+  observation_token_dropout: 0.03
+  observation_word_dropout: 0.05
+  observation_numeric_dropout: 0.03
+  action_value_coefficient: 0.5
+  value_clip_ratio: 0.2
+  target_kl: 0.0
+  ppo_policy_coefficient: 1.0
+  search_policy_coefficient: 0.0
+  future_prediction_coefficient: 0.10
+  belief_coefficient: 0.025
+  plan_coefficient: 0.01
+
+trainingScenarioRandomizer:
+  formats: [training]
+  playerCounts: [2, 3, 4]
+  maxTurns: 80
+  matchmaking:
+    enabled: true
+    randomFloor: 0.20
+    eloScale: 10
+    underplayedStrength: 0.35
+    matchPrior: 10
+
+evaluation:
+  seed: 456498132
+  gamesPerScenario: 2
+  perfectPeriodsForPromotion: 3
+  championPort: 8793
+  candidatePort: 8792
+  device: cuda
+  championDevice: cpu
+  candidateDevice: cuda
+  benchmarkOpponents:
+    - id: ia-v8-step-18587
+      checkpoint: runs/oracle-ai-league-v8-simplified/live/ia-in-training
+      port: 8794
+      device: cpu
+      everyPeriods: 2
+  scenarioMatrix:
+    formats: [training]
+    playerCounts: [2, 3, 4]
+    maxTurns: 80
