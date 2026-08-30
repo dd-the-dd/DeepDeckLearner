@@ -8,6 +8,8 @@ import {
   loadSettings,
   loadStatus,
   loadTrainingProfile,
+  loadTrainingLots,
+  downloadTrainingLot,
   connectLocalSession,
   deleteApiKey,
   restartWorkbench,
@@ -26,6 +28,7 @@ import {
   type LocalDeck,
   type LocalSession,
   type TrainingProfile,
+  type TrainingLot,
 } from "./api";
 import { workflowBlockers, type Workflow } from "./readiness";
 
@@ -492,6 +495,8 @@ function TrainingProfilePanel({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<DeckSummary[]>([]);
   const [bundles, setBundles] = useState<DeckBundle[]>([]);
+  const [trainingLots, setTrainingLots] = useState<TrainingLot[]>([]);
+  const [loadingLot, setLoadingLot] = useState("");
   const [applyingBundle, setApplyingBundle] = useState("");
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -514,6 +519,35 @@ function TrainingProfilePanel({
       active = false;
     };
   }, [draft.format]);
+  useEffect(() => {
+    if (!accountReady) { setTrainingLots([]); return; }
+    let active = true;
+    void loadTrainingLots().then((items) => {
+      if (active) setTrainingLots(items);
+    }).catch((reason) => {
+      if (active) setError(reason instanceof Error ? reason.message : "Unable to load your training lots.");
+    });
+    return () => { active = false; };
+  }, [accountReady]);
+
+  function dataSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+
+  async function applyTrainingLot(lot: TrainingLot) {
+    if (!accountReady || loadingLot) return;
+    setLoadingLot(lot.id); setError(""); setNotice("");
+    try {
+      const loaded = await downloadTrainingLot(lot.id);
+      setDraft((current) => ({ ...current, format: loaded.format, decks: loaded.decks }));
+      setResults([]);
+      setNotice(`${loaded.name} loaded: ${loaded.decks.length} decks, ${dataSize(loaded.downloadedBytes)} downloaded. Saved to ${loaded.path}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load this training lot.");
+    } finally { setLoadingLot(""); }
+  }
 
   async function findDecks(event?: FormEvent) {
     event?.preventDefault();
@@ -639,6 +673,20 @@ function TrainingProfilePanel({
               <option value="commander">Commander</option>
             </select>
           </label>
+        </div>
+        <div className="bundle-section personal-lots">
+          <div className="pool-heading">
+            <div><span className="eyebrow">My League training lots</span><h3>Load your saved deck pool</h3></div>
+            <small>The displayed size is the uncompressed manifest download; card images are excluded.</small>
+          </div>
+          {trainingLots.length > 0 ? <div className="bundle-grid">
+            {trainingLots.map((lot) => <article key={lot.id}>
+              <div className="bundle-title"><div><strong>{lot.name}</strong><small>{lot.format} · updated {new Date(lot.updatedAt).toLocaleDateString()}</small></div><span>{dataSize(lot.downloadBytes)}</span></div>
+              <p>{lot.deckCount} decks · {lot.cardCount} cards · {lot.uniqueCardCount} unique cards</p>
+              <div className="bundle-archetypes">{lot.decks.slice(0, 8).map((deck) => <span key={deck.id}>{deck.name}</span>)}{lot.decks.length > 8 && <span>+{lot.decks.length - 8} more</span>}</div>
+              <div className="bundle-actions"><button type="button" className="primary" disabled={Boolean(loadingLot)} onClick={() => void applyTrainingLot(lot)}>{loadingLot === lot.id ? `Loading ${dataSize(lot.downloadBytes)}…` : `Use this lot · ${dataSize(lot.downloadBytes)}`}</button><small>Replaces the current pool and switches to {lot.format}.</small></div>
+            </article>)}
+          </div> : <div className="empty-inline">No saved lot yet. Create one in Deep Deck League under Training lots.</div>}
         </div>
         <div className="bundle-section">
           <div className="pool-heading">

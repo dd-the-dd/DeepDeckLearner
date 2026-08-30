@@ -75,6 +75,31 @@ def active_competitions() -> dict[str, Any]:
     return data
 
 
+def platform_training_lots() -> list[dict[str, Any]]:
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(
+            f"{_platform_url()}/agents/training-lots",
+            headers={"Authorization": f"Bearer {account_api_key()}"},
+        )
+    data = _data(response)
+    if not isinstance(data, list):
+        raise CatalogError("The training lot catalog did not return a list.")
+    return [lot for lot in data if isinstance(lot, dict)]
+
+
+def download_training_lot(lot_id: str) -> tuple[dict[str, Any], int]:
+    with httpx.Client(timeout=30.0) as client:
+        response = client.get(
+            f"{_platform_url()}/agents/training-lots/{lot_id}/manifest",
+            headers={"Authorization": f"Bearer {account_api_key()}"},
+        )
+    downloaded_bytes = len(response.content)
+    data = _data(response)
+    if not isinstance(data, dict) or data.get("schema") != "deepdeck-training-lot/v1":
+        raise CatalogError("The training lot manifest uses an unsupported schema.")
+    return data, downloaded_bytes
+
+
 def verify_account_api_key(api_key: str) -> None:
     with httpx.Client(timeout=10.0) as client:
         response = client.get(

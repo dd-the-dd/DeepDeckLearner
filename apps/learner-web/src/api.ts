@@ -59,6 +59,27 @@ export type DeckBundle = {
   archetypes: Array<{ name: string; queries: string[] }>;
 };
 
+export type TrainingLot = {
+  id: string;
+  name: string;
+  format: 'legacy' | 'commander';
+  deckCount: number;
+  cardCount: number;
+  uniqueCardCount: number;
+  downloadBytes: number;
+  updatedAt: string;
+  decks: Array<{ id: string; name: string; version: number; cardCount: number }>;
+};
+
+export type DownloadedTrainingLot = {
+  id: string;
+  name: string;
+  format: 'legacy' | 'commander';
+  decks: DeckSummary[];
+  downloadedBytes: number;
+  path: string;
+};
+
 export type LocalSession = {
   id: string;
   label: string;
@@ -176,6 +197,22 @@ export async function loadDeckBundles(format: string): Promise<DeckBundle[]> {
   return (await json<Page<DeckBundle>>(
     await fetch(`/api/v1/catalog/deck-bundles?${query}`, { headers: await authorizedHeaders() }),
   )).items;
+}
+
+export async function loadTrainingLots(): Promise<TrainingLot[]> {
+  const page = await json<Partial<Page<TrainingLot>>>(
+    await fetch('/api/v1/catalog/training-lots', { headers: await authorizedHeaders() }),
+  );
+  return page.items ?? [];
+}
+
+export async function downloadTrainingLot(id: string): Promise<DownloadedTrainingLot> {
+  return json<DownloadedTrainingLot>(
+    await fetch(`/api/v1/catalog/training-lots/${encodeURIComponent(id)}/download`, {
+      method: 'POST',
+      headers: await authorizedHeaders(),
+    }),
+  );
 }
 
 export async function loadTrainingProfile(): Promise<TrainingProfile> {

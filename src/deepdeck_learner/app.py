@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import socket
+import uuid
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
@@ -17,8 +19,10 @@ from .catalogs import (
     CatalogError,
     account_api_key,
     active_competitions,
+    download_training_lot,
     local_legal_decks,
     platform_decks,
+    platform_training_lots,
     verify_account_api_key,
 )
 from .jobs import JobManager, JobValidationError
@@ -290,6 +294,56 @@ def create_app(root: Path | None = None) -> FastAPI:
         if format not in {"legacy", "commander"}:
             raise HTTPException(status_code=422, detail="Format must be legacy or commander.")
         return {"items": deck_bundles(format)}
+
+    @app.get("/api/v1/catalog/training-lots")
+    def training_lot_catalog() -> dict[str, Any]:
+        try:
+            account_api_key()
+            return {"items": platform_training_lots()}
+        except CatalogAuthenticationError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.post("/api/v1/catalog/training-lots/{lot_id}/download")
+    def load_training_lot(lot_id: str) -> dict[str, Any]:
+        try:
+            normalized_id = str(uuid.UUID(lot_id))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Training lot id is invalid.") from error
+        try:
+            account_api_key()
+            manifest, downloaded_bytes = download_training_lot(normalized_id)
+        except CatalogAuthenticationError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        destination = resolved_root / ".deepdeck" / "training-lots" / f"{normalized_id}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        decks = [
+            {
+                "id": deck.get("id"),
+                "name": deck.get("name"),
+                "version": deck.get("version"),
+                "format": manifest.get("format"),
+                "playableCardCount": sum(
+                    int(card.get("quantity", 0)) for card in deck.get("cards", [])
+                    if isinstance(card, dict)
+                ),
+            }
+            for deck in manifest.get("decks", []) if isinstance(deck, dict)
+        ]
+        return {
+            "id": manifest.get("id"),
+            "name": manifest.get("name"),
+            "format": manifest.get("format"),
+            "decks": decks,
+            "downloadedBytes": downloaded_bytes,
+            "path": str(destination),
+        }
 
     @app.get("/api/v1/catalog/competitions")
     def competition_catalog() -> dict[str, Any]:

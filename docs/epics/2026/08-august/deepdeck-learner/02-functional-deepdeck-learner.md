@@ -221,3 +221,17 @@ archetype that is unavailable instead of silently substituting another deck.
 The first bundle covers the leading August 2026 Legacy archetypes; bundle data
 is versioned so later metagame updates remain reviewable.
 
+### F16 - Personal League training lots (Must)
+
+An authenticated player can create a named, format-specific training lot on
+Deep Deck League by selecting one to 100 deck versions. The League owns the
+lot and exposes it only to the browser session or an account API key belonging
+to the same user. `considering` cards are excluded from its training manifest.
+
+DeepDeckLearner lists those personal lots separately from public curated
+bundles. Each lot shows deck count, playable-card count, unique-card count and
+the exact uncompressed manifest size before download. Loading one downloads
+the versioned card-and-zone manifest without images, stores it below
+`.deepdeck/training-lots/`, switches format, and replaces the current pool.
+Completion reports the bytes actually received and the local path.
+

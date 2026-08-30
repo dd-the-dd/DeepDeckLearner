@@ -36,6 +36,11 @@ a named training-deck pool, and **Use** offers Playtest against AI, Train, and
 Run in the League. The saved non-secret agent profile survives controller
 restarts.
 
+Agent setup can load a curated metagame bundle or one of your private training
+lots created on Deep Deck League. A personal lot shows its deck/card counts and
+manifest size before download, excludes card images, and is cached under
+`.deepdeck/training-lots/` after you choose it.
+
 For local play, press **Set up Engine + Pixi** once. The controller initializes
 missing submodules, synchronizes the reviewed revisions, prepares Pixi, builds
 Engine when necessary, and starts a sleeping Engine. Technical revisions and

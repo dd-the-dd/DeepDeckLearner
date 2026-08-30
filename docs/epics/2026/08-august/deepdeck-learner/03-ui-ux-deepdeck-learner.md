@@ -73,6 +73,11 @@ Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
   sources, and one `Add bundle to pool` action. While resolving, format changes
   and other bundle actions are disabled. Completion reports missing catalog
   archetypes while keeping every successful addition editable.
+- Personal League training lots appear before curated bundles because they are
+  deliberate pools owned by the signed-in user. A card shows format, update
+  date, deck/card/unique-card counts, deck names, and manifest size. The primary
+  action repeats the download size and states that the lot replaces the current
+  pool and switches format; curated bundles continue to append instead.
 - Setup completion advances the first-run emphasis to Agent setup but never
   interrupts a user who deliberately navigates back to Setup.
 - Local runtime appears only in Playtest. `Set up Engine + Pixi` is the single
@@ -112,6 +117,10 @@ Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
   matched, and offer another search without falling back to a raw identifier.
 - Partial bundle: retain resolved decks, list unresolved archetypes by name, and
   leave Save under explicit user control.
+- No personal lots: point toward the League Training lots page without making a
+  curated bundle look like account data.
+- Personal lot failure: retain the full unsaved pool and show the API/network
+  error inline. Success shows actual received bytes and the local manifest path.
 
 ## Responsive behavior
 

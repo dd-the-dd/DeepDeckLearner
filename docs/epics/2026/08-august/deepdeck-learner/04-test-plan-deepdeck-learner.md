@@ -81,3 +81,7 @@ show outcome choices without an embedded training form.
 - Legacy bundle metadata exposes its date, sources, and eight named archetypes;
   applying it preserves existing selections, deduplicates resolved deck
   versions, and reports catalog misses.
+- Personal lots require the account API key, expose manifest size before load,
+  persist below `.deepdeck/training-lots/`, and atomically replace the pool only
+  after a complete response. The UI confirms actual bytes received; malformed
+  identifiers and failed downloads leave the existing profile unchanged.

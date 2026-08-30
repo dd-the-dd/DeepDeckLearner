@@ -75,6 +75,49 @@ def test_legacy_bundle_exposes_named_archetypes_and_sources(tmp_path: Path) -> N
     assert all(archetype["queries"] for archetype in bundle["archetypes"])
 
 
+def test_training_lot_download_is_saved_and_returns_training_decks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DEEPDECK_API_KEY", "ddl_agent_test")
+    lot_id = "7f4fe914-b1ce-4cef-8e4d-09190026289c"
+    monkeypatch.setattr(
+        learner_app,
+        "platform_training_lots",
+        lambda: [{"id": lot_id, "name": "Legacy field", "downloadBytes": 321}],
+    )
+    monkeypatch.setattr(
+        learner_app,
+        "download_training_lot",
+        lambda selected: (
+            {
+                "schema": "deepdeck-training-lot/v1",
+                "id": selected,
+                "name": "Legacy field",
+                "format": "legacy",
+                "decks": [
+                    {
+                        "id": "deck-v1",
+                        "name": "Reanimator",
+                        "version": 4,
+                        "cards": [{"quantity": 4}, {"quantity": 56}],
+                    }
+                ],
+            },
+            321,
+        ),
+    )
+    client = local_client(create_app(tmp_path))
+    headers = authorized(local_token(client))
+
+    catalog = client.get("/api/v1/catalog/training-lots", headers=headers)
+    loaded = client.post(f"/api/v1/catalog/training-lots/{lot_id}/download", headers=headers)
+
+    assert catalog.json()["items"][0]["downloadBytes"] == 321
+    assert loaded.json()["downloadedBytes"] == 321
+    assert loaded.json()["decks"][0]["playableCardCount"] == 60
+    assert (tmp_path / ".deepdeck" / "training-lots" / f"{lot_id}.json").exists()
+
+
 def test_platform_catalog_requires_account_api_key(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
     def missing_key() -> str:

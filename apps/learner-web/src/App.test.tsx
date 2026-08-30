@@ -212,4 +212,25 @@ describe("guided onboarding", () => {
     expect(screen.getByLabelText("Remove Dimir Tempo")).toBeInTheDocument();
     expect(screen.getByLabelText("Remove Reanimator")).toBeInTheDocument();
   });
+
+  test("loads a personal training lot and shows its data size", async () => {
+    const lot = { id: "lot-1", name: "My Legacy lot", format: "legacy", deckCount: 1, cardCount: 75, uniqueCardCount: 52, downloadBytes: 2048, updatedAt: "2026-08-29T00:00:00Z", decks: [{ id: "deck-1", name: "Reanimator", version: 3, cardCount: 75 }] };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) return response({ token: "local-token", session: ownerSession });
+      if (url.endsWith("/api/v1/status")) return response(configuredStatus);
+      if (url.endsWith("/api/v1/settings")) return response({ ...settings, account: { ...settings.account, configured: true } });
+      if (url.endsWith("/api/v1/training-profile")) return response(profile);
+      if (url.endsWith("/api/v1/catalog/training-lots")) return response({ items: [lot] });
+      if (url.includes("/api/v1/catalog/training-lots/lot-1/download")) return response({ ...lot, decks: [{ id: "deck-1", name: "Reanimator", version: 3, format: "legacy", playableCardCount: 75 }], downloadedBytes: 2048, path: ".deepdeck/training-lots/lot-1.json" });
+      if (url.includes("/api/v1/catalog/deck-bundles")) return response({ items: [] });
+      return response([]);
+    }));
+
+    render(<App />);
+    expect(await screen.findByText("2.0 KiB")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use this lot · 2.0 KiB" }));
+    expect(await screen.findByLabelText("Remove Reanimator")).toBeInTheDocument();
+    expect(screen.getByText(/2.0 KiB downloaded/)).toBeInTheDocument();
+  });
 });
