@@ -26,9 +26,9 @@ def account_api_key() -> str:
 
 
 def _platform_url() -> str:
-    return os.getenv(
-        "DEEPDECK_PLATFORM_URL", "https://staging.deepdeckleague.com/api/v1"
-    ).rstrip("/")
+    return os.getenv("DEEPDECK_PLATFORM_URL", "https://staging.deepdeckleague.com/api/v1").rstrip(
+        "/"
+    )
 
 
 def _data(response: httpx.Response) -> Any:
@@ -73,6 +73,18 @@ def active_competitions() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise CatalogError("The competition catalog did not return a page.")
     return data
+
+
+def verify_account_api_key(api_key: str) -> None:
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(
+            f"{_platform_url()}/agents/catalog/competitions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params={"status": "active", "page": 1, "page_size": 1},
+        )
+    if response.status_code in {401, 403}:
+        raise CatalogAuthenticationError("Deep Deck League rejected this API key.")
+    _data(response)
 
 
 def local_legal_decks(engine_url: str, game_format: str) -> list[dict[str, str]]:

@@ -13,6 +13,7 @@ authors = [{ name = "Deep Deck League" }]
 dependencies = [
   "deepdeck-agent-sdk>=0.1.0",
   "fastapi>=0.116,<0.117",
+  "keyring>=25,<26",
   "python-dotenv>=1.0,<2",
   "uvicorn>=0.35,<0.36",
 ]

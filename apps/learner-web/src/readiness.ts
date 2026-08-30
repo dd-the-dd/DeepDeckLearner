@@ -9,14 +9,14 @@ export function workflowBlockers(status: CapabilityStatus | null, workflow: Work
   }
   if (workflow === 'online-training') {
     const blockers: string[] = [];
-    if (!status.hosted.api_key_configured) blockers.push('Add DEEPDECK_API_KEY to your .env.');
+    if (!status.hosted.api_key_configured) blockers.push('Connect your League account in Settings.');
     if (!status.hosted.trajectory_training) blockers.push(status.hosted.reason);
     return blockers;
   }
   if (workflow === 'matchmaking') {
     const blockers: string[] = [];
     if (!status.sdk.ready) blockers.push('Install DeepDeckAgent SDK.');
-    if (!status.hosted.api_key_configured) blockers.push('Create your account API key and add it to the project .env.');
+    if (!status.hosted.api_key_configured) blockers.push('Create your account API key and save it in Settings.');
     return blockers;
   }
   const blockers: string[] = [];

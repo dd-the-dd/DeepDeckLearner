@@ -179,3 +179,23 @@ from racing Engine start against submodule initialization.
 - Browser disconnect: job continues; reconnection reads controller state.
 - Controller stop: child processes receive graceful termination, then a bounded
   forced termination only when necessary.
+
+## Secure listener and credential extension
+
+Non-secret defaults are stored atomically in `.deepdeck/learner.json`. API keys
+are read from an explicit `DEEPDECK_API_KEY`, the operating-system credential
+vault, or a local `.env` ignored by Git in that order. Status reports configured,
+provider, and external-management metadata, never the key or an environment dump.
+
+The HTTP listener defaults to `127.0.0.1`. Host Settings may persist an opt-in
+`0.0.0.0` LAN listener and port. Loopback requests receive an owner session; LAN
+requests exchange a rotating pairing code for an in-memory paired session. Every
+controller route except health and pairing requires a session. Only an owner
+request whose effective client and browser origin are loopback may mutate keys,
+network settings, pairing codes, or sessions. The CLI owns restart and reloads
+the persisted listener only after the settings response completes.
+
+Account-key input travels once from React to the local controller, is verified
+against the authenticated competition catalog, and is then cleared. It is never
+returned by an API. Paired LAN sessions can operate allowlisted jobs but cannot
+read or replace the key.

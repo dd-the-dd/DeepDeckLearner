@@ -21,14 +21,14 @@ describe('workflowBlockers', () => {
 
   it('does not confuse hosted inference with training', () => {
     expect(workflowBlockers(ready, 'online-training')).toEqual([
-      'Add DEEPDECK_API_KEY to your .env.',
+      'Connect your League account in Settings.',
       'Not published.',
     ]);
   });
 
   it('guides matchmaking to the account key without requiring hosted training', () => {
     expect(workflowBlockers(ready, 'matchmaking')).toEqual([
-      'Create your account API key and add it to the project .env.',
+      'Create your account API key and save it in Settings.',
     ]);
   });
 });

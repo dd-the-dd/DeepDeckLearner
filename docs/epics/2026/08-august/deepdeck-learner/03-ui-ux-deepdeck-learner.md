@@ -138,3 +138,16 @@ an application capability.
 The release does not create AI imagery. Engine-rendered card imagery remains
 owned by Pixi.
 
+## Secure local settings
+
+Settings contains League connection, local/LAN listener, pairing code, and
+revocable device sessions. The host receives a masked `Save and verify` field;
+the value is cleared after submission and never rendered again. A LAN browser
+that has not paired sees a focused pairing screen instead of the workbench.
+
+Network mode uses two explicit choices: `This computer only` and `Local
+network`. A changed listener exposes `Restart now`, detected LAN addresses, and
+Windows Private-network firewall guidance. A paired device can operate normal
+workflows but sees an explanation in Settings instead of disabled secret and
+security controls.
+

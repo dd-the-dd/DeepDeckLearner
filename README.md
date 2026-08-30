@@ -43,9 +43,10 @@ individual recovery controls stay under a disclosure. Synchronization never
 follows a floating branch and refuses to overwrite local changes inside either
 public dependency.
 
-The browser UI cannot launch arbitrary commands. A loopback-only Python
-controller validates a small allowlist of training and playtest jobs. It never
-sends your API key to React.
+The browser UI cannot launch arbitrary commands. A local Python controller
+validates a small allowlist of training and playtest jobs. It never sends your
+API key back to React. Loopback is the default; opt-in LAN access requires a
+pairing code and gives each device a revocable in-memory session.
 
 ## What works now
 
@@ -116,12 +117,19 @@ deepdeck-example alexios --target ddl --speed 1s
 
 ## Hosted inference and future online training
 
-Copy `.env.example` to `.env`, then set your account-owned
-`DEEPDECK_API_KEY`. The Matchmaking screen finds competitions and account-visible
-decks by name, so users do not enter version identifiers. Catalog requests are
-refused locally without the key and send it to Deep Deck League as a Bearer token.
-The key identifies the account; the agent manifest remains free to describe its
-own model/version. No browser login or `gcloud auth login` is required.
+Open **Settings**, paste the account-owned key shown once by Deep Deck League,
+and press **Save and verify**. DeepDeckLearner prefers the operating-system
+credential vault and falls back to the ignored project `.env` when no vault is
+available. The key identifies the account; the agent manifest remains free to
+describe its own model/version. No browser login or `gcloud auth login` is
+required. Advanced users may still provide `DEEPDECK_API_KEY` directly in the
+environment.
+
+Settings also chooses **This computer only** or **Local network**. LAN mode
+persists the selected port, restarts the packaged controller, and displays the
+private-network URLs and current pairing code. Configure the Windows firewall
+for the Private profile only. API-key, listener, pairing, and session-management
+changes remain available only from the host computer.
 
 Playing a hosted match currently performs inference only. Training from hosted
 play will require a compatible trajectory capability containing observations,

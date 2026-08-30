@@ -162,3 +162,31 @@ configuration.
 - Technical revisions and individual dependency controls remain available under
   progressive disclosure.
 
+### F12 - Secure local and LAN access (Must)
+
+The workbench defaults to loopback access. Settings can enable a LAN listener
+and persist its port, after which the controller restarts. A LAN browser must
+pair with a rotating code before it can read controller state or start jobs.
+Only a browser running on the host may change the account key, network listener,
+pairing code, or trusted sessions.
+
+### F13 - Configure the account key in the workbench (Must)
+
+The host user pastes an account key into a masked Settings field. The controller
+validates its shape, verifies it with Deep Deck League, stores it in the system
+credential vault with an ignored `.env` fallback, and returns only configured and
+provider metadata. The UI supports replacement and disconnection without ever
+reading the stored value.
+
+### Story I - Secure LAN workbench
+
+As a local user, I can opt into LAN access and control which devices may operate
+my workbench.
+
+- Loopback remains the default and LAN mode requires an explicit host action.
+- Every LAN device enters the current pairing code and receives a revocable,
+  in-memory session rather than the League API key.
+- Regenerating the pairing code revokes all paired sessions.
+- Untrusted browser origins and unauthenticated controller APIs are rejected.
+- API-key and network mutations remain restricted to the host computer.
+

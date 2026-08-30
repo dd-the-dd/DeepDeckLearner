@@ -58,3 +58,14 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 - Add self-play worker limits for CPU, memory, games, and concurrent learners.
 - Publish signed Engine binaries and the Pixi package from protected tags.
 
+## LAN and secret decisions
+
+1. LAN access is opt-in. It uses short-lived in-memory device sessions and a
+   rotating pairing code; it never distributes the account API key to clients.
+2. Secret configuration is a host-only controller operation. Use the platform
+   credential vault first and an ignored permission-restricted `.env` only when
+   the operating system has no available keyring backend.
+3. The local API rejects non-private browser origins. HTTPS remains the future
+   choice for operation beyond a trusted private LAN; LAN mode is not a
+   public-network deployment mode.
+

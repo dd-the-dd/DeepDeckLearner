@@ -4,7 +4,16 @@ import {
   loadCompetitions,
   loadJobs,
   loadLocalDecks,
+  loadSettings,
   loadStatus,
+  connectLocalSession,
+  deleteApiKey,
+  pairLocalDevice,
+  regeneratePairingCode,
+  restartWorkbench,
+  revokeLocalSession,
+  saveApiKey,
+  saveNetworkSettings,
   searchDecks,
   startJob,
   stopJob,
@@ -12,7 +21,9 @@ import {
   type CompetitionSummary,
   type DeckSummary,
   type Job,
+  type LearnerSettings,
   type LocalDeck,
+  type LocalSession,
 } from "./api";
 import { workflowBlockers, type Workflow } from "./readiness";
 
@@ -22,7 +33,8 @@ type Page =
   | "playtest"
   | "compete"
   | "representation"
-  | "models";
+  | "models"
+  | "settings";
 
 const pages: Array<{ id: Page; label: string; glyph: string }> = [
   { id: "overview", label: "Home", glyph: "⌂" },
@@ -31,6 +43,7 @@ const pages: Array<{ id: Page; label: string; glyph: string }> = [
   { id: "compete", label: "Matchmaking", glyph: "◎" },
   { id: "representation", label: "Representation", glyph: "◇" },
   { id: "models", label: "Models", glyph: "◎" },
+  { id: "settings", label: "Settings", glyph: "S" },
 ];
 
 const pageHeadings: Record<Page, string> = {
@@ -40,6 +53,7 @@ const pageHeadings: Record<Page, string> = {
   compete: "Send an agent to the League",
   representation: "Understand the tensor",
   models: "Choose a model family",
+  settings: "Connect and secure this workbench",
 };
 
 const leagueUrl = "https://staging.deepdeckleague.com";
@@ -958,12 +972,12 @@ function MatchmakingForm({
           <span>2</span>
           <div>
             <strong>
-              Add the copied line to <code>.env</code>
+              Paste it safely in Settings
             </strong>
             <p>
               Save <code>DEEPDECK_API_KEY=ddl_agent_…</code> in the
-              DeepDeckLearner project root, then restart the workbench. The
-              browser never receives the secret.
+              Settings â†’ Account connection. The controller verifies it, stores
+              it in the operating-system vault, and never returns it.
             </p>
           </div>
         </li>
@@ -1126,6 +1140,347 @@ function MatchmakingForm({
   );
 }
 
+function PairingScreen({ onPaired }: { onPaired: (session: LocalSession) => void }) {
+  const [code, setCode] = useState("");
+  const [label, setLabel] = useState("My LAN device");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      onPaired(await pairLocalDevice(code, label));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to pair this device.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="pairing-shell">
+      <section className="pairing-card">
+        <a className="brand pairing-brand" href={leagueUrl} target="_blank" rel="noreferrer">
+          <img src={leagueLogoUrl} alt="Deep Deck League" />
+          <span>Learner</span>
+        </a>
+        <span className="eyebrow">Local network access</span>
+        <h1>Pair this device</h1>
+        <p>
+          Enter the eight-character code shown by DeepDeckLearner on the host computer.
+          The League API key never leaves that computer.
+        </p>
+        <form onSubmit={submit}>
+          <label>
+            Pairing code
+            <input
+              autoFocus
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(event) => setCode(event.target.value.toUpperCase())}
+              maxLength={9}
+              placeholder="ABCD-2345"
+              required
+            />
+          </label>
+          <label>
+            Device name
+            <input
+              value={label}
+              onChange={(event) => setLabel(event.target.value)}
+              maxLength={80}
+              required
+            />
+          </label>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button className="primary" disabled={busy || code.length < 8}>
+            {busy ? "Pairingâ€¦" : "Pair device"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function SettingsPanel({
+  session,
+  refresh,
+}: {
+  session: LocalSession;
+  refresh: () => void;
+}) {
+  const [settings, setSettings] = useState<LearnerSettings | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [replacingKey, setReplacingKey] = useState(false);
+  const [mode, setMode] = useState<"local" | "lan">("local");
+  const [port, setPort] = useState(8765);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  async function reload() {
+    try {
+      const next = await loadSettings();
+      setSettings(next);
+      setMode(next.network.mode);
+      setPort(next.network.port);
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load settings.");
+    }
+  }
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  async function connect(event: FormEvent) {
+    event.preventDefault();
+    setBusy("key");
+    setError("");
+    setNotice("");
+    try {
+      await saveApiKey(apiKey);
+      setApiKey("");
+      setReplacingKey(false);
+      setNotice("League key verified and stored on this computer.");
+      await reload();
+      refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the API key.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function disconnect() {
+    setBusy("key");
+    setError("");
+    try {
+      await deleteApiKey();
+      setNotice("League account disconnected from this workbench.");
+      await reload();
+      refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to remove the API key.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveNetwork(event: FormEvent) {
+    event.preventDefault();
+    setBusy("network");
+    setError("");
+    try {
+      const needsRestart = await saveNetworkSettings(mode, port);
+      setRestartRequired(needsRestart);
+      setNotice(needsRestart ? "Network settings saved. Restart to apply them." : "Network settings saved.");
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save network settings.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restart() {
+    setBusy("restart");
+    setError("");
+    try {
+      await restartWorkbench();
+      setNotice("Workbench is restarting. Reconnect in a few seconds.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to restart the workbench.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (!settings) {
+    return <section className="panel configure"><p>{error || "Loading settingsâ€¦"}</p></section>;
+  }
+
+  if (session.role !== "owner") {
+    return (
+      <section className="panel configure">
+        <span className="eyebrow">Paired LAN device</span>
+        <h2>Settings stay on the host computer</h2>
+        <p>
+          This device can operate the workbench, but only the host can change the League
+          key, network listener, pairing code, or trusted sessions.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <div className="settings-grid">
+      <section className="panel configure settings-card">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">Deep Deck League</span>
+            <h2>Account connection</h2>
+            <p>The secret is verified server-side and never returned to React.</p>
+          </div>
+          <StatusDot ready={settings.account.configured} label={settings.account.configured ? "Connected" : "Not connected"} />
+        </div>
+        {settings.account.configured && !replacingKey ? (
+          <div className="connected-account">
+            <div>
+              <strong>Account key configured</strong>
+              <small>
+                Stored by {settings.account.provider === "system" ? "the operating-system vault" : settings.account.provider}.
+              </small>
+            </div>
+            <div className="connected-actions">
+              <button
+                type="button"
+                disabled={busy === "key" || settings.account.externally_managed}
+                onClick={() => setReplacingKey(true)}
+              >
+                Replace key
+              </button>
+              <button
+                className="danger"
+                type="button"
+                disabled={busy === "key" || settings.account.externally_managed}
+                onClick={() => void disconnect()}
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={connect}>
+            <label>
+              Account API key
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="ddl_agent_â€¦"
+                required
+              />
+              <small>Paste the one-time value from Account â†’ Autonomous agents.</small>
+            </label>
+            <div className="form-actions compact-actions">
+              <button className="primary" disabled={busy === "key" || !apiKey.startsWith("ddl_agent_")}>
+                {busy === "key" ? "Verifyingâ€¦" : "Save and verify"}
+              </button>
+              <a href="https://staging.deepdeckleague.com/account#autonomous-agents" target="_blank" rel="noreferrer">
+                Create a key â†—
+              </a>
+              {replacingKey && (
+                <button type="button" onClick={() => { setReplacingKey(false); setApiKey(""); }}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </form>
+        )}
+      </section>
+
+      <section className="panel configure settings-card">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">Network access</span>
+            <h2>Who can open this workbench?</h2>
+          </div>
+        </div>
+        <form onSubmit={saveNetwork}>
+          <div className="network-choice-grid">
+            <label className={mode === "local" ? "network-choice selected" : "network-choice"}>
+              <input type="radio" name="network-mode" value="local" checked={mode === "local"} onChange={() => setMode("local")} />
+              <strong>This computer only</strong>
+              <small>Listens on 127.0.0.1. Recommended default.</small>
+            </label>
+            <label className={mode === "lan" ? "network-choice selected" : "network-choice"}>
+              <input type="radio" name="network-mode" value="lan" checked={mode === "lan"} onChange={() => setMode("lan")} />
+              <strong>Local network</strong>
+              <small>Other devices must enter the pairing code.</small>
+            </label>
+          </div>
+          <label className="port-field">
+            Port
+            <input type="number" min="1024" max="65535" value={port} onChange={(event) => setPort(Number(event.target.value))} />
+          </label>
+          {mode === "lan" && (
+            <div className="notice">
+              <strong>Private networks only</strong>
+              <span>Allow this port only on the Windows Private firewall profile. API-key changes remain restricted to the host.</span>
+            </div>
+          )}
+          <div className="form-actions compact-actions">
+            <button className="primary" disabled={busy === "network"}>Save network access</button>
+            {restartRequired && (
+              <button type="button" disabled={busy === "restart"} onClick={() => void restart()}>
+                {busy === "restart" ? "Restartingâ€¦" : "Restart now"}
+              </button>
+            )}
+          </div>
+        </form>
+        {settings.network.lan_urls.length > 0 && mode === "lan" && (
+          <div className="lan-addresses">
+            <span>LAN addresses after restart</span>
+            {settings.network.lan_urls.map((url) => (
+              <div className="copy-row" key={url}>
+                <code>{url}</code>
+                <button type="button" onClick={() => void navigator.clipboard.writeText(url).then(() => setNotice("LAN address copied."))}>Copy</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="panel configure settings-card wide-settings-card">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">Paired devices</span>
+            <h2>LAN pairing</h2>
+            <p>Regenerating the code immediately revokes every paired LAN session.</p>
+          </div>
+          <div className="pairing-code" aria-label="Current pairing code">
+            <span>Current code</span>
+            <strong>{settings.access.pairing_code}</strong>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(settings.access.pairing_code ?? "").then(() => setNotice("Pairing code copied."))}
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+        <div className="session-list">
+          {settings.access.sessions.filter((item) => item.role === "paired").length === 0 ? (
+            <p className="empty-inline">No LAN device is currently paired.</p>
+          ) : settings.access.sessions.filter((item) => item.role === "paired").map((item) => (
+            <article key={item.id}>
+              <div><strong>{item.label}</strong><small>Paired {new Date(item.created_at).toLocaleString()}</small></div>
+              <button type="button" onClick={() => void revokeLocalSession(item.id).then(reload)}>Revoke</button>
+            </article>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (!window.confirm("Generate a new code and revoke all paired LAN devices?")) return;
+            void regeneratePairingCode().then(() => reload());
+          }}
+        >
+          Generate a new pairing code
+        </button>
+      </section>
+      {(notice || error) && <p className={error ? "controller-error" : "settings-notice"} role="status">{error || notice}</p>}
+    </div>
+  );
+}
+
 function JobsPanel({ jobs, refresh }: { jobs: Job[]; refresh: () => void }) {
   return (
     <section className="panel jobs">
@@ -1174,6 +1529,8 @@ function JobsPanel({ jobs, refresh }: { jobs: Job[]; refresh: () => void }) {
 }
 
 export default function App() {
+  const [localSession, setLocalSession] = useState<LocalSession | null>(null);
+  const [accessLoading, setAccessLoading] = useState(true);
   const [page, setPage] = useState<Page>("overview");
   const [workflow, setWorkflow] = useState<Workflow>("local-training");
   const [status, setStatus] = useState<CapabilityStatus | null>(null);
@@ -1191,16 +1548,27 @@ export default function App() {
       setJobs(nextJobs);
       setLoadError("");
     } catch (reason) {
-      setLoadError(
-        reason instanceof Error ? reason.message : "Controller unavailable.",
-      );
+      const message = reason instanceof Error ? reason.message : "Controller unavailable.";
+      setLoadError(message);
+      if (message.includes("local session is required")) {
+        setLocalSession(null);
+      }
     }
   }
   useEffect(() => {
+    void connectLocalSession()
+      .then(setLocalSession)
+      .catch((reason) => {
+        setLoadError(reason instanceof Error ? reason.message : "Controller unavailable.");
+      })
+      .finally(() => setAccessLoading(false));
+  }, []);
+  useEffect(() => {
+    if (!localSession) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [localSession]);
   useEffect(() => {
     pageHeading.current?.focus();
   }, [page]);
@@ -1244,6 +1612,13 @@ export default function App() {
           ? "compete"
           : "train",
     );
+  }
+
+  if (accessLoading) {
+    return <main className="pairing-shell"><p>Opening the local workbenchâ€¦</p></main>;
+  }
+  if (!localSession) {
+    return <PairingScreen onPaired={setLocalSession} />;
   }
 
   return (
@@ -1497,6 +1872,9 @@ export default function App() {
               </p>
             </article>
           </section>
+        )}
+        {page === "settings" && (
+          <SettingsPanel session={localSession} refresh={refresh} />
         )}
       </main>
     </div>

@@ -70,17 +70,46 @@ function response(body: unknown) {
   );
 }
 
+const ownerSession = {
+  id: "owner-session",
+  label: "This computer",
+  role: "owner" as const,
+  created_at: "2026-08-29T00:00:00Z",
+};
+
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
 describe("guided onboarding", () => {
+  test("asks a LAN browser for the host pairing code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ detail: "Pair this LAN device to continue." }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      ),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Pair this device" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Pairing code")).toBeInTheDocument();
+  });
+
   test("starts with outcomes instead of an embedded training form", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
         const url = String(input);
+        if (url.endsWith("/api/v1/session"))
+          return response({ token: "local-token", session: ownerSession });
         return url.endsWith("/api/v1/status") ? response(status) : response([]);
       }),
     );
@@ -103,7 +132,7 @@ describe("guided onboarding", () => {
       const url = String(input);
       if (url.endsWith("/api/v1/status")) return response(status);
       if (url.endsWith("/api/v1/session"))
-        return response({ token: "local-token" });
+        return response({ token: "local-token", session: ownerSession });
       if (url.endsWith("/api/v1/jobs") && init?.method === "POST")
         return response(stackJob);
       return response([]);
