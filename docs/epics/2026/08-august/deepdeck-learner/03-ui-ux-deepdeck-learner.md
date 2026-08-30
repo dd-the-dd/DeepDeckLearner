@@ -11,10 +11,11 @@ local desktop-like tool rather than another hosted site page.
 
 The default screen is an intent router, not a dashboard. It asks one question:
 **What do you want to do?** The three answers are **Train an agent**, **Test an
-agent locally**, and **Send an agent to the League**. A first-run callout explains
-that training is the shortest path and does not require Engine, Pixi, decks, or
-an account key. Hosted training remains a secondary `Hosted (later)` option on
-the Train screen and cannot be mistaken for the recommended start.
+agent locally**, and **Send an agent to the League**. The Train screen orders
+model, format, and deck-pool selection before its launch action. Because the
+current Engine lacks `trajectory-v1`, that action explains why it is blocked and
+never substitutes smoke data for selected decks. Sample/dataset trainer checks
+live in an explicitly separate Advanced validation disclosure.
 
 After an intent is selected, a three-step journey remains above the working
 area. Readiness is contextual: Engine/Pixi appear for local play, the account key
@@ -24,7 +25,8 @@ appears for League matchmaking, and neither distracts from local training.
 
 - Home: intent cards, recommended first action, contextual workspace summary,
   and recent activity only when activity exists.
-- Train: local/online segmented control, beginner fields, advanced disclosure.
+- Train: local/online segmented control, model/format/deck pool, blocked real-run
+  state, and a separate advanced trainer-validation disclosure.
 - Playtest: local agent and deck-session configuration plus visual client.
 - Matchmaking: account-key checklist, public deck search, agent configuration,
   and queue status.
