@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App";
-import type { CapabilityStatus, Job } from "./api";
+import type { CapabilityStatus, Job, LocalSession } from "./api";
 
 const status: CapabilityStatus = {
   controller: { ready: true, version: "test" },
@@ -77,6 +77,23 @@ const ownerSession = {
   created_at: "2026-08-29T00:00:00Z",
 };
 
+const settings = {
+  network: { mode: "lan", port: 8765, restart_required: false, lan_urls: [] },
+  account: { configured: false, provider: null, externally_managed: false },
+  access: { role: "owner" },
+};
+
+const profile = { model: "v12", format: "legacy", decks: [] };
+
+function route(input: RequestInfo | URL, session: LocalSession = ownerSession) {
+  const url = String(input);
+  if (url.endsWith("/api/v1/session")) return response({ token: "local-token", session });
+  if (url.endsWith("/api/v1/status")) return response(status);
+  if (url.endsWith("/api/v1/settings")) return response(settings);
+  if (url.endsWith("/api/v1/training-profile")) return response(profile);
+  return response([]);
+}
+
 afterEach(() => {
   cleanup();
   window.sessionStorage.clear();
@@ -88,41 +105,31 @@ describe("guided onboarding", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.endsWith("/api/v1/session"))
-          return response({
-            token: "lan-token",
-            session: { ...ownerSession, id: "lan-session", role: "lan" },
-          });
-        return url.endsWith("/api/v1/status") ? response(status) : response([]);
+        return route(input, { ...ownerSession, id: "lan-session", role: "lan" as const });
       }),
     );
 
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "What do you want to do?" }),
+      await screen.findByRole("heading", { name: "Configure this application" }),
     ).toBeInTheDocument();
+    expect(await screen.findByText("Trusted LAN browser")).toBeInTheDocument();
   });
 
-  test("starts with outcomes instead of an embedded training form", async () => {
+  test("starts with application setup before agent configuration", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.endsWith("/api/v1/session"))
-          return response({ token: "local-token", session: ownerSession });
-        return url.endsWith("/api/v1/status") ? response(status) : response([]);
-      }),
+      vi.fn((input: RequestInfo | URL) => route(input)),
     );
 
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "What do you want to do?" }),
+      await screen.findByRole("heading", { name: "Configure this application" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Train an agent/i }),
+      screen.getByRole("button", { name: "Set up Engine + Pixi" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Create your first checkpoint" }),
@@ -135,6 +142,8 @@ describe("guided onboarding", () => {
       if (url.endsWith("/api/v1/status")) return response(status);
       if (url.endsWith("/api/v1/session"))
         return response({ token: "local-token", session: ownerSession });
+      if (url.endsWith("/api/v1/settings")) return response(settings);
+      if (url.endsWith("/api/v1/training-profile")) return response(profile);
       if (url.endsWith("/api/v1/jobs") && init?.method === "POST")
         return response(stackJob);
       return response([]);
@@ -142,12 +151,9 @@ describe("guided onboarding", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Test an agent locally/i }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Set up Engine + Pixi" }),
-    );
+    const setupButton = await screen.findByRole("button", { name: "Set up Engine + Pixi" });
+    await waitFor(() => expect(setupButton).toBeEnabled());
+    fireEvent.click(setupButton);
 
     await waitFor(() => {
       const request = fetchMock.mock.calls.find(

@@ -22,7 +22,14 @@ from .catalogs import (
 )
 from .jobs import JobManager, JobValidationError
 from .secret_store import AccountSecretStore
-from .settings import NetworkSettings, load_network_settings, save_network_settings
+from .settings import (
+    NetworkSettings,
+    load_network_settings,
+    load_training_settings,
+    save_network_settings,
+    save_training_settings,
+    training_settings_from_payload,
+)
 from .status import capability_status, project_root
 
 
@@ -223,6 +230,45 @@ def create_app(root: Path | None = None) -> FastAPI:
             )
         background_tasks.add_task(callback)
         return {"status": "restarting"}
+
+    @app.get("/api/v1/training-profile")
+    def training_profile() -> dict[str, Any]:
+        configured = load_training_settings(resolved_root)
+        return {
+            "model": configured.model,
+            "format": configured.format,
+            "decks": [
+                {
+                    "id": deck.id,
+                    "name": deck.name,
+                    "version": deck.version,
+                    "format": deck.format,
+                }
+                for deck in configured.decks
+            ],
+        }
+
+    @app.put("/api/v1/training-profile")
+    async def update_training_profile(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            configured = training_settings_from_payload(payload)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        save_training_settings(resolved_root, configured)
+        return {
+            "model": configured.model,
+            "format": configured.format,
+            "decks": [
+                {
+                    "id": deck.id,
+                    "name": deck.name,
+                    "version": deck.version,
+                    "format": deck.format,
+                }
+                for deck in configured.decks
+            ],
+        }
 
     @app.get("/api/v1/jobs")
     def jobs() -> list[dict[str, Any]]:

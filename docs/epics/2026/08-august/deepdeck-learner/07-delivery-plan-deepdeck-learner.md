@@ -28,4 +28,7 @@ Parent epic: [#4](https://github.com/dd-the-dd/DeepDeckLearner/issues/4)
 5. Add vault-only host-managed key storage, an opt-in trusted-LAN listener,
    restricted LAN sessions, origin enforcement, restart ownership, and the
    Settings UI.
+6. Reframe onboarding as Setup, Agent setup, and Use; persist the model, format,
+   and authenticated training-deck pool before exposing playtest, training, and
+   League operations.
 

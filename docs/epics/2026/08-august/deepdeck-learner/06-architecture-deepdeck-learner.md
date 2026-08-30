@@ -202,3 +202,9 @@ Account-key input travels once from React to the local controller, is verified
 against the authenticated competition catalog, and is then cleared. It is never
 returned by an API. Restricted LAN sessions can operate allowlisted jobs but cannot
 read or replace the key.
+
+The non-secret agent training profile is stored atomically beside network
+defaults in `.deepdeck/learner.json`. `GET|PUT /api/v1/training-profile` exposes
+only the allowlisted model, format, and named deck-version summaries. The
+controller validates format consistency and uniqueness before persistence; the
+browser never submits arbitrary paths or commands through this contract.

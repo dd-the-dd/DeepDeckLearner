@@ -9,25 +9,20 @@ editorial visual language. A dark burgundy application rail, denser controls,
 status chips, and the persistent `LOCAL WORKBENCH` badge distinguish it as a
 local desktop-like tool rather than another hosted site page.
 
-The default screen is an intent router, not a dashboard. It asks one question:
-**What do you want to do?** The three answers are **Train an agent**, **Test an
-agent locally**, and **Send an agent to the League**. A first-run callout explains
-that training is the shortest path and does not require Engine, Pixi, decks, or
-an account key. Hosted training remains a secondary `Hosted (later)` option on
-the Train screen and cannot be mistaken for the recommended start.
-
-After an intent is selected, a three-step journey remains above the working
-area. Readiness is contextual: Engine/Pixi appear for local play, the account key
-appears for League matchmaking, and neither distracts from local training.
+The default experience is one ordered journey: **Setup → Agent setup → Use**.
+Setup owns the League key and compatible Engine/Pixi runtime. Once those are
+ready, Agent setup becomes the natural landing stage and asks for model, format,
+and a named deck pool. Use then offers **Playtest against AI**, **Train**, and
+**Run in the League**. Technical and ML details remain progressively disclosed.
 
 ## Information architecture
 
-- Home: intent cards, recommended first action, contextual workspace summary,
-  and recent activity only when activity exists.
-- Train: local/online segmented control, beginner fields, advanced disclosure.
-- Playtest: local agent and deck-session configuration plus visual client.
-- Matchmaking: account-key checklist, public deck search, agent configuration,
-  and queue status.
+- Setup: account-key connection, Engine/Pixi synchronization, build and health.
+- Agent setup: model, format, authenticated named-deck search, selected pool,
+  and save state.
+- Use: profile summary and three operation cards; the selected operation reveals
+  its focused form below.
+- Activity: controller-owned jobs, progress, artifacts, and stop actions.
 - Representation: Magic-to-tensor schema, dimensions, masks, and examples.
 - Models: V11/V12 descriptions, checkpoints, and experiment metadata.
 
@@ -37,22 +32,22 @@ appears for League matchmaking, and neither distracts from local training.
 +-----------------------------------------------------------------------+
 | DeepDeckLearner  LOCAL WORKBENCH                 Workbench ready       |
 +-------------------+---------------------------------------------------+
-| Home              | What do you want to do?                          |
-| Train             | New here? Start with Train an agent.             |
-| Playtest          |                                                   |
-| Matchmaking       | [ Train ] [ Test locally ] [ Send to League ]     |
+| 1 Setup           | Configure this application                       |
+| 2 Agent setup     | Model | Format | Training deck pool               |
+| 3 Use             | [ Playtest ] [ Train ] [ Run in League ]          |
+| Activity          |                                                   |
 | Representation    |                                                   |
 | Models            | Workspace: Training ready | Local play setup     |
 +-------------------+---------------------------------------------------+
 ```
 
-Local play then narrows to one sequence:
+The workbench narrows to one sequence:
 
 ```text
-Prepare Engine + Pixi  ->  Choose agent and decks  ->  Launch behavior test
-       [Set up Engine + Pixi]
-       1 Sources   2 Pixi build   3 Engine running
-       > Technical details and recovery controls
+Connect + prepare  ->  Configure agent  ->  Choose how to use it
+  API key              V11 / V12           Playtest against AI
+  Engine + Pixi        Format               Train
+                       Deck pool            Run in the League
 ```
 
 Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
@@ -70,6 +65,11 @@ Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
 - CUDA is the visible default and falls back to CPU without blocking beginners.
 - Hosted deck and competition discovery is disabled until the local controller
   detects an account API key; the controller also enforces this boundary.
+- The Agent setup deck pool uses the authenticated League catalog and dense
+  selectable result rows. Selected decks remain visible as removable chips/cards
+  even when the search query changes.
+- Setup completion advances the first-run emphasis to Agent setup but never
+  interrupts a user who deliberately navigates back to Setup.
 - Local runtime appears only in Playtest. `Set up Engine + Pixi` is the single
   normal action: it initializes missing gitlinks, synchronizes stale gitlinks,
   prepares Pixi, and starts Engine. Its three stages remain visible across

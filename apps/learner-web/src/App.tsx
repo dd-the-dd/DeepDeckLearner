@@ -6,11 +6,13 @@ import {
   loadLocalDecks,
   loadSettings,
   loadStatus,
+  loadTrainingProfile,
   connectLocalSession,
   deleteApiKey,
   restartWorkbench,
   saveApiKey,
   saveNetworkSettings,
+  saveTrainingProfile,
   searchDecks,
   startJob,
   stopJob,
@@ -21,36 +23,34 @@ import {
   type LearnerSettings,
   type LocalDeck,
   type LocalSession,
+  type TrainingProfile,
 } from "./api";
 import { workflowBlockers, type Workflow } from "./readiness";
 
 type Page =
-  | "overview"
-  | "train"
-  | "playtest"
-  | "compete"
+  | "setup"
+  | "agent"
+  | "use"
+  | "activity"
   | "representation"
-  | "models"
-  | "settings";
+  | "models";
 
 const pages: Array<{ id: Page; label: string; glyph: string }> = [
-  { id: "overview", label: "Home", glyph: "⌂" },
-  { id: "train", label: "Train", glyph: "↗" },
-  { id: "playtest", label: "Playtest", glyph: "▶" },
-  { id: "compete", label: "Matchmaking", glyph: "◎" },
+  { id: "setup", label: "1. Setup", glyph: "1" },
+  { id: "agent", label: "2. Agent setup", glyph: "2" },
+  { id: "use", label: "3. Use", glyph: "3" },
+  { id: "activity", label: "Activity", glyph: "◇" },
   { id: "representation", label: "Representation", glyph: "◇" },
   { id: "models", label: "Models", glyph: "◎" },
-  { id: "settings", label: "Settings", glyph: "S" },
 ];
 
 const pageHeadings: Record<Page, string> = {
-  overview: "What do you want to do?",
-  train: "Train an agent",
-  playtest: "Test an agent locally",
-  compete: "Send an agent to the League",
+  setup: "Configure this application",
+  agent: "Configure your training agent",
+  use: "What do you want to do with it?",
+  activity: "Training and agent activity",
   representation: "Understand the tensor",
   models: "Choose a model family",
-  settings: "Connect and secure this workbench",
 };
 
 const leagueUrl = "https://staging.deepdeckleague.com";
@@ -62,8 +62,8 @@ const workflowCopy: Record<
   { title: string; kicker: string; description: string }
 > = {
   "local-training": {
-    title: "Train an agent",
-    kicker: "Recommended first step",
+    title: "Train",
+    kicker: "Improve the selected model",
     description:
       "Create a V11 or V12 checkpoint with safe defaults. No deck or game server is required.",
   },
@@ -74,14 +74,14 @@ const workflowCopy: Record<
       "Connect your account when the versioned hosted trajectory contract is available.",
   },
   "local-playtest": {
-    title: "Test an agent locally",
-    kicker: "I want to test behavior",
+    title: "Playtest against AI",
+    kicker: "Inspect its behavior",
     description:
       "Prepare Engine and Pixi, choose two decks, then launch a local behavior test.",
   },
   matchmaking: {
-    title: "Send an agent to the League",
-    kicker: "I am ready to compete",
+    title: "Run in the League",
+    kicker: "Join matchmaking",
     description:
       "Connect your account key, find a legal deck by name, and join matchmaking.",
   },
@@ -475,15 +475,194 @@ function DependencyPanel({
   );
 }
 
+function TrainingProfilePanel({
+  initial,
+  accountReady,
+  onSaved,
+  onContinue,
+}: {
+  initial: TrainingProfile;
+  accountReady: boolean;
+  onSaved: (profile: TrainingProfile) => void;
+  onContinue: () => void;
+}) {
+  const [draft, setDraft] = useState<TrainingProfile>(initial);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<DeckSummary[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => setDraft(initial), [initial]);
+
+  async function findDecks(event?: FormEvent) {
+    event?.preventDefault();
+    if (!accountReady) return;
+    setSearching(true);
+    setError("");
+    try {
+      setResults(await searchDecks(query, draft.format));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to search decks.");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function addDeck(deck: DeckSummary) {
+    if (draft.decks.some((item) => item.id === deck.id)) return;
+    setDraft({
+      ...draft,
+      decks: [...draft.decks, { ...deck, format: draft.format }],
+    });
+    setNotice("");
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await saveTrainingProfile(draft);
+      onSaved(saved);
+      setNotice("Agent configuration saved.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the agent configuration.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel configure training-profile">
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">Step 2 · agent setup</span>
+          <h2>Choose what this agent will learn</h2>
+          <p className="section-lead">
+            Pick the model family and format, then build a pool of decks it can
+            encounter during training.
+          </p>
+        </div>
+        <span className="step">02</span>
+      </div>
+      <form onSubmit={save}>
+        <div className="field-grid beginner-fields">
+          <label>
+            Model
+            <select
+              value={draft.model}
+              onChange={(event) => setDraft({ ...draft, model: event.target.value as "v11" | "v12" })}
+            >
+              <option value="v12">V12 · two-player policy</option>
+              <option value="v11">V11 · multiplayer policy</option>
+            </select>
+          </label>
+          <label>
+            Format
+            <select
+              value={draft.format}
+              onChange={(event) => {
+                const format = event.target.value as "legacy" | "commander";
+                setDraft({ ...draft, format, decks: [] });
+                setResults([]);
+                setNotice("Deck pool cleared because the format changed.");
+              }}
+            >
+              <option value="legacy">Legacy</option>
+              <option value="commander">Commander</option>
+            </select>
+          </label>
+        </div>
+        <div className="pool-heading">
+          <div>
+            <span className="eyebrow">Training pool</span>
+            <h3>{draft.decks.length} deck{draft.decks.length === 1 ? "" : "s"} selected</h3>
+          </div>
+          <small>Add several archetypes for more varied games.</small>
+        </div>
+        {draft.decks.length > 0 ? (
+          <div className="training-pool" aria-label="Selected training decks">
+            {draft.decks.map((deck) => (
+              <article key={deck.id}>
+                <div>
+                  <strong>{deck.name}</strong>
+                  <small>Version {deck.version} · {draft.format}</small>
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Remove ${deck.name}`}
+                  onClick={() => setDraft({ ...draft, decks: draft.decks.filter((item) => item.id !== deck.id) })}
+                >
+                  Remove
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-inline">No deck selected yet. Search below to build the pool.</div>
+        )}
+        {notice && <p className="settings-notice" role="status">{notice}</p>}
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-actions profile-actions">
+          <button className="primary" disabled={saving || draft.decks.length === 0}>
+            {saving ? "Saving…" : "Save agent configuration"}
+          </button>
+          <button type="button" disabled={draft.decks.length === 0} onClick={onContinue}>
+            Continue to use <span>→</span>
+          </button>
+        </div>
+      </form>
+      <form className="deck-finder pool-search" onSubmit={findDecks}>
+        <label>
+          Search available {draft.format} decks
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Deck name or creator"
+          />
+        </label>
+        <button className="primary" disabled={!accountReady || searching}>
+          {searching ? "Searching…" : "Search decks"}
+        </button>
+      </form>
+      {!accountReady && (
+        <div className="notice warning">
+          <strong>Connect Deep Deck League first</strong>
+          <span>Save your API key in Setup before searching your available decks.</span>
+        </div>
+      )}
+      {results.length > 0 && (
+        <div className="deck-search-results" role="list" aria-label="Available training decks">
+          {results.map((deck) => {
+            const selected = draft.decks.some((item) => item.id === deck.id);
+            return (
+              <button type="button" role="listitem" className={selected ? "selected" : ""} key={deck.id} onClick={() => addDeck(deck)} disabled={selected}>
+                <strong>{deck.name}</strong>
+                <span>{deck.creator ? `by ${deck.creator}` : "Community deck"} · v{deck.version}</span>
+                <small>{selected ? "Added to pool" : `${deck.playableCardCount ?? "Legal"} playable cards · Add`}</small>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TrainingForm({
   status,
   refresh,
+  profile,
 }: {
   status: CapabilityStatus | null;
   refresh: () => void;
+  profile: TrainingProfile;
 }) {
   const [source, setSource] = useState<"smoke" | "dataset">("smoke");
-  const [model, setModel] = useState("v12");
+  const model = profile.model;
   const [dataset, setDataset] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [epochs, setEpochs] = useState(3);
@@ -516,26 +695,21 @@ function TrainingForm({
     <form className="panel configure" onSubmit={submit}>
       <div className="section-heading">
         <div>
-          <span className="eyebrow">Step 1 · choose a model</span>
-          <h2>Create your first checkpoint</h2>
+          <span className="eyebrow">Train · checkpoint settings</span>
+          <h2>Train the configured agent</h2>
           <p className="section-lead">
-            V12 is the recommended two-player start. The workbench supplies a
-            tiny built-in training sample.
+            Start with the smoke trajectory to verify the pipeline, or open
+            advanced settings to train from collected decisions.
           </p>
         </div>
         <span className="step">01</span>
       </div>
       <div className="field-grid beginner-fields">
-        <label>
-          Model
-          <select
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-          >
-            <option value="v12">V12 · two-player</option>
-            <option value="v11">V11 · multiplayer</option>
-          </select>
-        </label>
+        <div className="automatic-setting">
+          <span>Configured model</span>
+          <strong>{model.toUpperCase()} · {profile.format}</strong>
+          <small>{profile.decks.length} training-pool deck{profile.decks.length === 1 ? "" : "s"}.</small>
+        </div>
         <div className="automatic-setting">
           <span>Compute</span>
           <strong>GPU preferred</strong>
@@ -639,7 +813,7 @@ function TrainingForm({
           Train {model.toUpperCase()} now <span>→</span>
         </button>
         <small>
-          No Engine, Pixi, deck, or API key is needed for this first run.
+          The saved deck pool controls game collection; checkpoint training consumes its trajectories.
         </small>
       </div>
     </form>
@@ -678,12 +852,14 @@ function OnlinePanel({ status }: { status: CapabilityStatus | null }) {
 function PlaytestForm({
   status,
   refresh,
+  profile,
 }: {
   status: CapabilityStatus | null;
   refresh: () => void;
+  profile: TrainingProfile;
 }) {
-  const [agent, setAgent] = useState("random");
-  const [format, setFormat] = useState("legacy");
+  const agent = profile.model;
+  const format = profile.format;
   const [ownDeck, setOwnDeck] = useState("");
   const [opponentDeck, setOpponentDeck] = useState("");
   const [deckSearch, setDeckSearch] = useState("");
@@ -748,28 +924,8 @@ function PlaytestForm({
         <span className="step">02</span>
       </div>
       <div className="field-grid">
-        <label>
-          Agent
-          <select
-            value={agent}
-            onChange={(event) => setAgent(event.target.value)}
-          >
-            <option value="random">Random baseline</option>
-            <option value="alexios">Alexios rules</option>
-            <option value="v12">V12 example</option>
-            <option value="v11">V11 example</option>
-          </select>
-        </label>
-        <label>
-          Format
-          <select
-            value={format}
-            onChange={(event) => setFormat(event.target.value)}
-          >
-            <option value="legacy">Legacy</option>
-            <option value="commander">Commander</option>
-          </select>
-        </label>
+        <div className="automatic-setting"><span>Agent</span><strong>{agent.toUpperCase()}</strong><small>From Agent setup</small></div>
+        <div className="automatic-setting"><span>Format</span><strong>{format}</strong><small>From Agent setup</small></div>
       </div>
       <label>
         Search available local decks
@@ -851,16 +1007,18 @@ function MatchmakingForm({
   status,
   jobs,
   refresh,
+  profile,
 }: {
   status: CapabilityStatus | null;
   jobs: Job[];
   refresh: () => void;
+  profile: TrainingProfile;
 }) {
-  const [agent, setAgent] = useState("random");
-  const [format, setFormat] = useState("legacy");
+  const agent = profile.model;
+  const format = profile.format;
   const [query, setQuery] = useState("");
-  const [decks, setDecks] = useState<DeckSummary[]>([]);
-  const [selectedDeck, setSelectedDeck] = useState<DeckSummary | null>(null);
+  const [decks, setDecks] = useState<DeckSummary[]>(profile.decks);
+  const [selectedDeck, setSelectedDeck] = useState<DeckSummary | null>(profile.decks[0] ?? null);
   const [competitions, setCompetitions] = useState<CompetitionSummary[]>([]);
   const [speed, setSpeed] = useState("1s");
   const [continuous, setContinuous] = useState(false);
@@ -990,20 +1148,7 @@ function MatchmakingForm({
         </li>
       </ol>
       <form className="deck-finder" onSubmit={findDecks}>
-        <label>
-          Format
-          <select
-            value={format}
-            onChange={(event) => {
-              setFormat(event.target.value);
-              setDecks([]);
-              setSelectedDeck(null);
-            }}
-          >
-            <option value="legacy">Legacy</option>
-            <option value="commander">Commander</option>
-          </select>
-        </label>
+        <div className="automatic-setting"><span>Configured format</span><strong>{format}</strong></div>
         <label>
           Deck name or creator
           <input
@@ -1041,25 +1186,14 @@ function MatchmakingForm({
                 {deck.creator ? `by ${deck.creator}` : "Community deck"} ·{" "}
                 {deck.format ?? format} · v{deck.version}
               </span>
-              <small>{deck.playableCardCount} playable cards</small>
+              <small>{deck.playableCardCount ?? "Legal deck"}{deck.playableCardCount ? " playable cards" : ""}</small>
             </button>
           ))}
         </div>
       )}
       <form onSubmit={submit}>
         <div className="field-grid">
-          <label>
-            Agent
-            <select
-              value={agent}
-              onChange={(event) => setAgent(event.target.value)}
-            >
-              <option value="random">Random baseline</option>
-              <option value="alexios">Alexios rules</option>
-              <option value="v12">V12 example</option>
-              <option value="v11">V11 example</option>
-            </select>
-          </label>
+          <div className="automatic-setting"><span>Configured agent</span><strong>{agent.toUpperCase()}</strong><small>{format}</small></div>
           <label>
             Decision pace
             <select
@@ -1537,21 +1671,40 @@ function JobsPanel({ jobs, refresh }: { jobs: Job[]; refresh: () => void }) {
 export default function App() {
   const [localSession, setLocalSession] = useState<LocalSession | null>(null);
   const [accessLoading, setAccessLoading] = useState(true);
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>("setup");
   const [workflow, setWorkflow] = useState<Workflow>("local-training");
   const [status, setStatus] = useState<CapabilityStatus | null>(null);
+  const [trainingProfile, setTrainingProfile] = useState<TrainingProfile>({
+    model: "v12",
+    format: "legacy",
+    decks: [],
+  });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadError, setLoadError] = useState("");
   const pageHeading = useRef<HTMLHeadingElement>(null);
+  const initialPageResolved = useRef(false);
 
   async function refresh() {
     try {
-      const [nextStatus, nextJobs] = await Promise.all([
+      const [nextStatus, nextJobs, nextProfile] = await Promise.all([
         loadStatus(),
         loadJobs(),
+        loadTrainingProfile(),
       ]);
       setStatus(nextStatus);
       setJobs(nextJobs);
+      setTrainingProfile(nextProfile);
+      if (!initialPageResolved.current) {
+        const ready = Boolean(
+          nextStatus.hosted.api_key_configured &&
+          nextStatus.engine.synced &&
+          nextStatus.engine.healthy &&
+          nextStatus.pixi.synced &&
+          nextStatus.pixi.built,
+        );
+        setPage(ready ? "agent" : "setup");
+        initialPageResolved.current = true;
+      }
       setLoadError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Controller unavailable.";
@@ -1588,36 +1741,16 @@ export default function App() {
   );
   const stackReady = Boolean(status?.engine.healthy && status?.pixi.built);
   const accountReady = Boolean(status?.hosted.api_key_configured);
-  const trainingStep = jobs.some(
-    (job) => job.kind.startsWith("training.") && job.status === "completed",
-  )
-    ? 3
-    : jobs.some(
-          (job) =>
-            job.kind.startsWith("training.") &&
-            ["queued", "running"].includes(job.status),
-        )
-      ? 2
-      : 1;
-  const playtestStep = jobs.some((job) => job.kind === "playtest.agent")
-    ? 3
-    : stackReady
-      ? 2
-      : 1;
-  const leagueStep = jobs.some((job) => job.kind === "matchmaking.agent")
-    ? 3
-    : accountReady
-      ? 2
-      : 1;
+  const setupReady = Boolean(
+    accountReady &&
+    status?.engine.synced &&
+    status?.engine.healthy &&
+    status?.pixi.synced &&
+    status?.pixi.built,
+  );
   function selectWorkflow(next: Workflow) {
     setWorkflow(next);
-    setPage(
-      next === "local-playtest"
-        ? "playtest"
-        : next === "matchmaking"
-          ? "compete"
-          : "train",
-    );
+    setPage("use");
   }
 
   if (accessLoading) {
@@ -1685,20 +1818,19 @@ export default function App() {
             </h1>
           </div>
           <div className="health">
-            {page === "playtest" ? (
+            {page === "setup" ? (
               <>
                 <StatusDot
                   ready={Boolean(status?.engine.healthy)}
                   label="Engine"
                 />
                 <StatusDot ready={Boolean(status?.pixi.built)} label="Pixi" />
+                <StatusDot ready={accountReady} label="League" />
               </>
-            ) : page === "compete" ? (
-              <StatusDot ready={accountReady} label="League account" />
             ) : (
               <StatusDot
-                ready={Boolean(status?.controller.ready)}
-                label="Workbench"
+                ready={trainingProfile.decks.length > 0}
+                label="Agent profile"
               />
             )}
             {running > 0 && (
@@ -1711,119 +1843,81 @@ export default function App() {
             Local controller: {loadError}
           </p>
         )}
-        {page === "overview" && (
+        {page === "setup" && (
           <>
-            <section className="intro">
-              <p>
-                Choose your outcome. DeepDeckLearner will show only the setup
-                and decisions needed to reach it.
-              </p>
-              <div className="first-run-callout">
-                <span>New here?</span>
-                <strong>Start with Train an agent.</strong>
-                <p>
-                  You can create a real checkpoint before installing or starting
-                  the game tools.
-                </p>
+            <WorkflowJourney
+              active={1}
+              steps={[
+                { label: "Setup", detail: "Connect and prepare" },
+                { label: "Agent", detail: "Model, format, decks" },
+                { label: "Use", detail: "Playtest, train, run" },
+              ]}
+            />
+            <WorkspaceSummary status={status} />
+            <SettingsPanel session={localSession} refresh={refresh} />
+            <DependencyPanel status={status} jobs={jobs} refresh={refresh} />
+            <section className={`panel setup-completion ${setupReady ? "ready" : ""}`}>
+              <div>
+                <span className="eyebrow">Next step</span>
+                <h2>{setupReady ? "Application ready" : "Finish the items above"}</h2>
+                <p>Once the key, Engine, and Pixi are ready, configure the agent you want to train.</p>
               </div>
+              <button className="primary" disabled={!setupReady} onClick={() => setPage("agent")}>
+                Configure agent <span>→</span>
+              </button>
+            </section>
+          </>
+        )}
+        {page === "agent" && (
+          <>
+            <WorkflowJourney
+              active={2}
+              steps={[
+                { label: "Setup", detail: "Connect and prepare" },
+                { label: "Agent", detail: "Model, format, decks" },
+                { label: "Use", detail: "Playtest, train, run" },
+              ]}
+            />
+            <TrainingProfilePanel
+              initial={trainingProfile}
+              accountReady={accountReady}
+              onSaved={setTrainingProfile}
+              onContinue={() => setPage("use")}
+            />
+          </>
+        )}
+        {page === "use" && (
+          <>
+            <WorkflowJourney
+              active={3}
+              steps={[
+                { label: "Setup", detail: "Connect and prepare" },
+                { label: "Agent", detail: "Model, format, decks" },
+                { label: "Use", detail: "Playtest, train, run" },
+              ]}
+            />
+            <section className="panel use-profile-summary">
+              <div>
+                <span className="eyebrow">Current agent</span>
+                <h2>{trainingProfile.model.toUpperCase()} · {trainingProfile.format}</h2>
+                <p>{trainingProfile.decks.length} deck{trainingProfile.decks.length === 1 ? "" : "s"} in its training pool.</p>
+              </div>
+              <button type="button" onClick={() => setPage("agent")}>Edit configuration</button>
+            </section>
+            <section className="intro use-picker">
               <div className="workflow-grid">
-                {(
-                  [
-                    "local-training",
-                    "local-playtest",
-                    "matchmaking",
-                  ] as Workflow[]
-                ).map((item) => (
-                  <WorkflowCard
-                    key={item}
-                    workflow={item}
-                    status={status}
-                    onSelect={selectWorkflow}
-                  />
+                {(["local-playtest", "local-training", "matchmaking"] as Workflow[]).map((item) => (
+                  <WorkflowCard key={item} workflow={item} status={status} onSelect={selectWorkflow} />
                 ))}
               </div>
             </section>
-            <WorkspaceSummary status={status} />
-            {activityJobs.length > 0 && (
-              <JobsPanel jobs={activityJobs} refresh={refresh} />
-            )}
+            {workflow === "local-playtest" && (stackReady ? <PlaytestForm status={status} refresh={refresh} profile={trainingProfile} /> : <LockedNextStep />)}
+            {workflow === "local-training" && <TrainingForm status={status} refresh={refresh} profile={trainingProfile} />}
+            {workflow === "online-training" && <OnlinePanel status={status} />}
+            {workflow === "matchmaking" && <MatchmakingForm status={status} jobs={activityJobs} refresh={refresh} profile={trainingProfile} />}
           </>
         )}
-        {page === "train" && (
-          <>
-            <WorkflowJourney
-              active={trainingStep}
-              steps={[
-                { label: "Choose", detail: "Pick V12 or V11" },
-                { label: "Train", detail: "Create a checkpoint" },
-                { label: "Test", detail: "Watch its decisions" },
-              ]}
-            />
-            {workflow === "online-training" ? (
-              <OnlinePanel status={status} />
-            ) : (
-              <TrainingForm status={status} refresh={refresh} />
-            )}
-            <div className="segmented">
-              <button
-                className={workflow === "local-training" ? "selected" : ""}
-                onClick={() => setWorkflow("local-training")}
-              >
-                Local
-              </button>
-              <button
-                className={workflow === "online-training" ? "selected" : ""}
-                onClick={() => setWorkflow("online-training")}
-              >
-                Hosted (later)
-              </button>
-            </div>
-            {activityJobs.length > 0 && (
-              <JobsPanel jobs={activityJobs} refresh={refresh} />
-            )}
-          </>
-        )}
-        {page === "playtest" && (
-          <>
-            <WorkflowJourney
-              active={playtestStep}
-              steps={[
-                { label: "Prepare", detail: "Engine + Pixi" },
-                { label: "Choose", detail: "Agent and decks" },
-                { label: "Run", detail: "Inspect agent activity" },
-              ]}
-            />
-            <DependencyPanel status={status} jobs={jobs} refresh={refresh} />
-            {stackReady ? (
-              <PlaytestForm status={status} refresh={refresh} />
-            ) : (
-              <LockedNextStep />
-            )}
-            {activityJobs.length > 0 && (
-              <JobsPanel jobs={activityJobs} refresh={refresh} />
-            )}
-          </>
-        )}
-        {page === "compete" && (
-          <>
-            <WorkflowJourney
-              active={leagueStep}
-              steps={[
-                { label: "Connect", detail: "Add your account key" },
-                { label: "Choose", detail: "Agent and legal deck" },
-                { label: "Queue", detail: "Join matchmaking" },
-              ]}
-            />
-            <MatchmakingForm
-              status={status}
-              jobs={activityJobs}
-              refresh={refresh}
-            />
-            {activityJobs.length > 0 && (
-              <JobsPanel jobs={activityJobs} refresh={refresh} />
-            )}
-          </>
-        )}
+        {page === "activity" && <JobsPanel jobs={activityJobs} refresh={refresh} />}
         {page === "representation" && (
           <section className="panel prose">
             <span className="eyebrow">Magic → tensor</span>
@@ -1878,9 +1972,6 @@ export default function App() {
               </p>
             </article>
           </section>
-        )}
-        {page === "settings" && (
-          <SettingsPanel session={localSession} refresh={refresh} />
         )}
       </main>
     </div>

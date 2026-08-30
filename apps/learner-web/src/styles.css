@@ -1490,6 +1490,66 @@ input:focus {
   margin: 0;
   color: #55745a;
 }
+.training-profile {
+  display: grid;
+  gap: 22px;
+}
+.pool-heading,
+.setup-completion,
+.use-profile-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.pool-heading h3,
+.setup-completion h2,
+.use-profile-summary h2 {
+  margin: 4px 0;
+}
+.training-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.training-pool article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #c8bcaf;
+  background: #fffdfa;
+  padding: 12px 14px;
+}
+.training-pool article div {
+  display: grid;
+  gap: 3px;
+}
+.training-pool article small {
+  color: #77716c;
+}
+.pool-search {
+  margin-top: 4px;
+}
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.setup-completion {
+  border-left: 4px solid #9a8e82;
+}
+.setup-completion.ready {
+  border-left-color: #55745a;
+}
+.use-profile-summary {
+  margin-bottom: 16px;
+  background: linear-gradient(110deg, #fffdfa, #f3ece3);
+}
+.use-picker {
+  margin-bottom: 18px;
+}
 @media (max-width: 720px) {
   .first-run-callout,
   .workspace-summary {
@@ -1536,7 +1596,10 @@ input:focus {
   }
   .connected-account,
   .session-list article,
-  .settings-card .section-heading {
+  .settings-card .section-heading,
+  .pool-heading,
+  .setup-completion,
+  .use-profile-summary {
     align-items: flex-start;
     flex-direction: column;
   }

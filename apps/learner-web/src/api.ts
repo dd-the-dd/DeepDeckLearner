@@ -29,8 +29,8 @@ export type DeckSummary = {
   creator?: string;
   version: number;
   format?: string;
-  colors: string[];
-  playableCardCount: number;
+  colors?: string[];
+  playableCardCount?: number;
 };
 
 export type CompetitionSummary = {
@@ -42,6 +42,12 @@ export type CompetitionSummary = {
 };
 
 export type LocalDeck = { deckSessionId: string; deckName: string };
+
+export type TrainingProfile = {
+  model: 'v11' | 'v12';
+  format: 'legacy' | 'commander';
+  decks: DeckSummary[];
+};
 
 export type LocalSession = {
   id: string;
@@ -151,6 +157,22 @@ export async function stopJob(jobId: string): Promise<Job> {
     await fetch(`/api/v1/jobs/${jobId}/stop`, {
       method: 'POST',
       headers: await authorizedHeaders(),
+    }),
+  );
+}
+
+export async function loadTrainingProfile(): Promise<TrainingProfile> {
+  return json<TrainingProfile>(
+    await fetch('/api/v1/training-profile', { headers: await authorizedHeaders() }),
+  );
+}
+
+export async function saveTrainingProfile(profile: TrainingProfile): Promise<TrainingProfile> {
+  return json<TrainingProfile>(
+    await fetch('/api/v1/training-profile', {
+      method: 'PUT',
+      headers: await authorizedHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(profile),
     }),
   );
 }

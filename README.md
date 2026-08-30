@@ -29,12 +29,12 @@ Open the workbench:
 .\.venv\Scripts\deepdeck-learner.exe
 ```
 
-It opens `http://127.0.0.1:8765`. Home first asks whether you want to **Train an
-agent**, **Test an agent locally**, or **Send an agent to the League**. Start with
-**Train an agent → V12 → Train V12 now**. The beginner form selects the built-in
-smoke trajectory for you. It verifies the complete encoder, model, optimizer,
-and checkpoint path without requiring Engine, Pixi, a deck, a dataset, or an API
-key.
+It opens `http://127.0.0.1:8765` in the packaged app; the React development UI
+uses port `5174`. Follow the three workbench stages: **Setup** connects the
+League key and prepares Engine/Pixi, **Agent setup** selects V11/V12, format, and
+a named training-deck pool, and **Use** offers Playtest against AI, Train, and
+Run in the League. The saved non-secret agent profile survives controller
+restarts.
 
 For local play, press **Set up Engine + Pixi** once. The controller initializes
 missing submodules, synchronizes the reviewed revisions, prepares Pixi, builds
@@ -89,9 +89,9 @@ Start the public Rust server in a second terminal:
 cargo run --manifest-path external/deepdeck-engine/Cargo.toml --locked --bin mtg-engine-server
 ```
 
-After importing two decks into its local catalog, open **Playtest** and provide
-their Engine deck-session IDs. The first seat uses your selected example; the
-second uses Engine's `ai-random` controller by default.
+After importing two decks into its local catalog, open **Use → Playtest against
+AI** and choose them by name. The first seat uses the model and format saved in
+Agent setup; the second uses Engine's `ai-random` controller by default.
 
 The workbench starts and monitors the local agent. Pixi is a renderer package,
 not a second server: the setup button prepares it, while a complete visual
@@ -117,7 +117,7 @@ deepdeck-example alexios --target ddl --speed 1s
 
 ## Hosted inference and future online training
 
-Open **Settings**, paste the account-owned key shown once by Deep Deck League,
+Open **Setup**, paste the account-owned key shown once by Deep Deck League,
 and press **Save and verify**. DeepDeckLearner verifies the key and stores it in
 the operating-system credential vault. The browser never stores the key and
 this workflow never writes it to `.env`. The key identifies the account; the
@@ -126,7 +126,7 @@ describe its own model/version. No browser login or `gcloud auth login` is
 required. Advanced users may still provide `DEEPDECK_API_KEY` directly in the
 environment.
 
-Settings also chooses **This computer only** or **Local network**. LAN mode
+Setup also chooses **This computer only** or **Local network**. LAN mode
 persists the selected port, restarts the packaged controller, and displays its
 private-network URLs. Browsers on that trusted network open the workbench
 directly. Configure the Windows firewall for the Private profile only. API-key

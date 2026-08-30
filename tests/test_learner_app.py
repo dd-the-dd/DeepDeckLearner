@@ -67,6 +67,54 @@ def test_platform_catalog_requires_account_api_key(tmp_path: Path, monkeypatch) 
     headers = authorized(local_token(client))
 
     assert client.get("/api/v1/catalog/decks?format=legacy", headers=headers).status_code == 401
+
+
+def test_training_profile_is_validated_and_persisted(tmp_path: Path) -> None:
+    client = local_client(create_app(tmp_path))
+    headers = authorized(local_token(client))
+    profile = {
+        "model": "v11",
+        "format": "commander",
+        "decks": [
+            {
+                "id": "deck-version-1",
+                "name": "Alexios Equipment",
+                "version": 3,
+                "format": "commander",
+            }
+        ],
+    }
+
+    saved = client.put("/api/v1/training-profile", headers=headers, json=profile)
+
+    assert saved.status_code == 200
+    restarted = local_client(create_app(tmp_path))
+    restarted_headers = authorized(local_token(restarted))
+    assert restarted.get("/api/v1/training-profile", headers=restarted_headers).json() == profile
+
+
+def test_training_profile_rejects_decks_from_another_format(tmp_path: Path) -> None:
+    client = local_client(create_app(tmp_path))
+    headers = authorized(local_token(client))
+
+    response = client.put(
+        "/api/v1/training-profile",
+        headers=headers,
+        json={
+            "model": "v12",
+            "format": "legacy",
+            "decks": [
+                {
+                    "id": "commander-deck",
+                    "name": "Alexios",
+                    "version": 1,
+                    "format": "commander",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
     assert client.get("/api/v1/catalog/competitions", headers=headers).status_code == 401
 
 

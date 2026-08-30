@@ -72,3 +72,9 @@ show outcome choices without an embedded training form.
 - The CLI reloads persisted listener settings after an in-app restart request.
 - Browser-submitted keys are stored only in the system credential vault; an
   unavailable credential backend fails safely and never writes `.env`.
+- Agent training profiles accept only V11/V12, Legacy/Commander, unique named
+  decks in the selected format, and at most 100 deck versions. A saved profile
+  survives controller recreation.
+- The UI starts in Setup when required application capabilities are missing,
+  exposes one Engine/Pixi setup action, and presents Agent setup before the
+  Playtest, Train, and League operations.

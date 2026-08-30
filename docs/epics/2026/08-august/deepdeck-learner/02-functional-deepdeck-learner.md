@@ -189,3 +189,26 @@ configuring the League key on every browser.
 - Untrusted browser origins and unauthenticated controller APIs are rejected.
 - API-key and network mutations remain restricted to the host computer.
 
+### F14 - Configure once, then choose an operation (Must)
+
+The primary workbench journey has three ordered stages. Application setup
+connects the League account and prepares the pinned Engine and Pixi revisions.
+Agent setup selects a model family, format, and named training-deck pool and
+persists that non-secret configuration in the local controller. Use then offers
+Playtest against AI, Train, and Run in the League without asking for the same
+model and format again.
+
+### Story J - Persistent agent training profile
+
+As a Magic player, I can prepare the agent I want to improve before choosing
+how to use it.
+
+- The profile selects V11 or V12 and Legacy or Commander.
+- Decks are found by name through the authenticated League catalog; raw deck
+  version identifiers are never beginner inputs.
+- The pool supports multiple decks, removal before saving, empty/loading/error
+  states, and remains available after a controller restart.
+- Changing format clears incompatible unsaved deck selections.
+- The Use stage summarizes the saved profile and offers Playtest against AI,
+  Train, and Run in the League as distinct actions.
+
