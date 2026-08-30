@@ -17,8 +17,8 @@ from .catalogs import (
     platform_decks,
 )
 from .jobs import JobManager, JobValidationError
-from .status import capability_status, project_root
 from .settings import load_api_key, save_api_key
+from .status import capability_status, project_root
 
 
 def create_app(root: Path | None = None) -> FastAPI:
