@@ -5,6 +5,7 @@ import {
   loadJobs,
   loadLocalDecks,
   loadStatus,
+  saveApiKey,
   searchDecks,
   startJob,
   stopJob,
@@ -179,6 +180,50 @@ function WorkspaceSummary({ status }: { status: CapabilityStatus | null }) {
           label="League account"
         />
       </div>
+    </section>
+  );
+}
+
+function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      await saveApiKey(apiKey);
+      setApiKey("");
+      setMessage("API key saved on this computer.");
+      refresh();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to save the API key.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel account-setup">
+      <div>
+        <span className="eyebrow">Application setup</span>
+        <h2>Connect your League account</h2>
+        <p>The key stays on this computer and is never displayed again after saving.</p>
+      </div>
+      {status?.hosted.api_key_configured ? (
+        <div className="notice success" role="status"><strong>Account connected</strong><span>You can search training and matchmaking decks.</span></div>
+      ) : (
+        <form onSubmit={submit}>
+          <label>
+            Deep Deck League API key
+            <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="ddl_agent_…" />
+          </label>
+          <button className="primary" type="submit" disabled={busy || apiKey.trim().length < 24}>{busy ? "Saving…" : "Save API key"}</button>
+        </form>
+      )}
+      {message && <p className={message.startsWith("API key saved") ? "form-success" : "form-error"} role="status">{message}</p>}
     </section>
   );
 }
@@ -1502,6 +1547,7 @@ export default function App() {
               </div>
             </section>
             <WorkspaceSummary status={status} />
+            <AccountSetup status={status} refresh={refresh} />
             {activityJobs.length > 0 && (
               <JobsPanel jobs={activityJobs} refresh={refresh} />
             )}

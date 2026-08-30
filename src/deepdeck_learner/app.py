@@ -18,10 +18,12 @@ from .catalogs import (
 )
 from .jobs import JobManager, JobValidationError
 from .status import capability_status, project_root
+from .settings import load_api_key, save_api_key
 
 
 def create_app(root: Path | None = None) -> FastAPI:
     resolved_root = (root or project_root()).resolve()
+    load_api_key(resolved_root)
     manager = JobManager(resolved_root)
     session_token = secrets.token_urlsafe(32)
     app = FastAPI(title="DeepDeckLearner local controller", version="1.0")
@@ -43,6 +45,17 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.get("/api/v1/status")
     def status(engine_url: str = "http://127.0.0.1:8787") -> dict[str, Any]:
         return capability_status(resolved_root, engine_url)
+
+    @app.post("/api/v1/settings/api-key")
+    def configure_api_key(
+        payload: dict[str, Any], x_deepdeck_token: str | None = Header(default=None)
+    ) -> dict[str, bool]:
+        authorize(x_deepdeck_token)
+        try:
+            save_api_key(resolved_root, str(payload.get("api_key", "")))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"configured": True}
 
     @app.get("/api/v1/jobs")
     def jobs() -> list[dict[str, Any]]:
