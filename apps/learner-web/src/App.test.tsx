@@ -173,9 +173,13 @@ describe("guided onboarding", () => {
       screen.getByText(/will not replace your chosen decks with sample data/i),
     ).toBeInTheDocument();
     expect(
-      fetchMock.mock.calls.some(([input, init]) =>
-        String(input).endsWith("/api/v1/jobs") && init?.method === "POST",
-      ),
+      fetchMock.mock.calls.some((call) => {
+        const [input, init] = call as unknown as [
+          RequestInfo | URL,
+          RequestInit?,
+        ];
+        return String(input).endsWith("/api/v1/jobs") && init?.method === "POST";
+      }),
     ).toBe(false);
   });
 });
