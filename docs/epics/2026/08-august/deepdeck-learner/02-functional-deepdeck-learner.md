@@ -212,3 +212,12 @@ how to use it.
 - The Use stage summarizes the saved profile and offers Playtest against AI,
   Train, and Run in the League as distinct actions.
 
+### F15 - Curated deck bundles (Should)
+
+Agent setup offers dated, sourced bundles that resolve curated archetype names
+against the authenticated League catalog. Applying a bundle appends every
+unique match to the unsaved pool, preserves existing choices, and reports each
+archetype that is unavailable instead of silently substituting another deck.
+The first bundle covers the leading August 2026 Legacy archetypes; bundle data
+is versioned so later metagame updates remain reviewable.
+

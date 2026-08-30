@@ -84,6 +84,12 @@ const settings = {
 };
 
 const profile = { model: "v12", format: "legacy", decks: [] };
+const configuredStatus: CapabilityStatus = {
+  ...status,
+  engine: { ...status.engine, source_available: true, synced: true, built: true, healthy: true },
+  pixi: { ...status.pixi, source_available: true, synced: true, built: true },
+  hosted: { ...status.hosted, api_key_configured: true },
+};
 
 function route(input: RequestInfo | URL, session: LocalSession = ownerSession) {
   const url = String(input);
@@ -169,5 +175,41 @@ describe("guided onboarding", () => {
         ),
       ).toHaveLength(1);
     });
+  });
+
+  test("adds a curated bundle without waiting for manual deck searches", async () => {
+    const bundle = {
+      id: "legacy-meta-test",
+      name: "Legacy Meta",
+      description: "Representative field",
+      format: "legacy",
+      updatedAt: "2026-08-29",
+      sources: ["https://example.com/one", "https://example.com/two"],
+      archetypes: [
+        { name: "Dimir Tempo", queries: ["Dimir Tempo"] },
+        { name: "Reanimator", queries: ["Reanimator"] },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/v1/session")) return response({ token: "local-token", session: ownerSession });
+        if (url.endsWith("/api/v1/status")) return response(configuredStatus);
+        if (url.endsWith("/api/v1/settings")) return response({ ...settings, account: { ...settings.account, configured: true } });
+        if (url.endsWith("/api/v1/training-profile")) return response(profile);
+        if (url.includes("/api/v1/catalog/deck-bundles")) return response({ items: [bundle] });
+        if (url.includes("search=Dimir+Tempo")) return response({ items: [{ id: "dimir", name: "Dimir Tempo", version: 2, format: "legacy", playableCardCount: 75 }] });
+        if (url.includes("search=Reanimator")) return response({ items: [{ id: "reanimator", name: "Reanimator", version: 4, format: "legacy", playableCardCount: 75 }] });
+        return response([]);
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add bundle to pool" }));
+
+    expect(await screen.findByRole("heading", { name: "2 decks selected" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Remove Dimir Tempo")).toBeInTheDocument();
+    expect(screen.getByLabelText("Remove Reanimator")).toBeInTheDocument();
   });
 });

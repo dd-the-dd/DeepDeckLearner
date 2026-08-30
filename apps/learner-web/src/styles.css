@@ -1512,6 +1512,62 @@ input:focus {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
+.bundle-section {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #c8bcaf;
+  border-bottom: 1px solid #c8bcaf;
+  padding: 20px 0;
+}
+.bundle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+.bundle-grid > article {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #a8998a;
+  border-left: 4px solid #81313d;
+  background: linear-gradient(120deg, #fffdfa, #f5eee5);
+  padding: 16px;
+}
+.bundle-grid p {
+  margin: 0;
+}
+.bundle-title,
+.bundle-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.bundle-title > div {
+  display: grid;
+  gap: 2px;
+}
+.bundle-title small,
+.bundle-actions small {
+  color: #77716c;
+}
+.bundle-title > span {
+  border: 1px solid #a8998a;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.bundle-archetypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bundle-archetypes span {
+  border-radius: 3px;
+  background: #e8ded2;
+  padding: 5px 8px;
+  font-size: 11px;
+}
 .training-pool article {
   display: flex;
   align-items: center;
@@ -1599,7 +1655,9 @@ input:focus {
   .settings-card .section-heading,
   .pool-heading,
   .setup-completion,
-  .use-profile-summary {
+  .use-profile-summary,
+  .bundle-title,
+  .bundle-actions {
     align-items: flex-start;
     flex-direction: column;
   }

@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   loadCompetitions,
+  loadDeckBundles,
   loadJobs,
   loadLocalDecks,
   loadSettings,
@@ -19,6 +20,7 @@ import {
   type CapabilityStatus,
   type CompetitionSummary,
   type DeckSummary,
+  type DeckBundle,
   type Job,
   type LearnerSettings,
   type LocalDeck,
@@ -489,12 +491,29 @@ function TrainingProfilePanel({
   const [draft, setDraft] = useState<TrainingProfile>(initial);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<DeckSummary[]>([]);
+  const [bundles, setBundles] = useState<DeckBundle[]>([]);
+  const [applyingBundle, setApplyingBundle] = useState("");
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => setDraft(initial), [initial]);
+  useEffect(() => {
+    let active = true;
+    void loadDeckBundles(draft.format)
+      .then((items) => {
+        if (active) setBundles(items);
+      })
+      .catch((reason) => {
+        if (active) {
+          setError(reason instanceof Error ? reason.message : "Unable to load deck bundles.");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [draft.format]);
 
   async function findDecks(event?: FormEvent) {
     event?.preventDefault();
@@ -517,6 +536,51 @@ function TrainingProfilePanel({
       decks: [...draft.decks, { ...deck, format: draft.format }],
     });
     setNotice("");
+  }
+
+  async function applyBundle(bundle: DeckBundle) {
+    if (!accountReady || applyingBundle) return;
+    const selectedFormat = draft.format;
+    setApplyingBundle(bundle.id);
+    setError("");
+    setNotice("");
+    try {
+      const resolved = await Promise.all(
+        bundle.archetypes.map(async (archetype) => {
+          for (const queryName of archetype.queries) {
+            const candidates = await searchDecks(queryName, selectedFormat);
+            const normalizedQuery = queryName.toLowerCase();
+            const exact = candidates.find(
+              (deck) => deck.name.toLowerCase() === normalizedQuery,
+            );
+            if (exact) return { archetype: archetype.name, deck: exact };
+            if (candidates[0]) return { archetype: archetype.name, deck: candidates[0] };
+          }
+          return { archetype: archetype.name, deck: null };
+        }),
+      );
+      const found = resolved.flatMap((item) => item.deck ? [{ ...item.deck, format: selectedFormat }] : []);
+      const missing = resolved.filter((item) => !item.deck).map((item) => item.archetype);
+      setDraft((current) => {
+        if (current.format !== selectedFormat) return current;
+        const ids = new Set(current.decks.map((deck) => deck.id));
+        const additions = found.filter((deck) => {
+          if (ids.has(deck.id)) return false;
+          ids.add(deck.id);
+          return true;
+        });
+        return { ...current, decks: [...current.decks, ...additions] };
+      });
+      setNotice(
+        missing.length > 0
+          ? `Bundle added. Not found in your League catalog: ${missing.join(", ")}.`
+          : `${bundle.name} added to the training pool.`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to apply this deck bundle.");
+    } finally {
+      setApplyingBundle("");
+    }
   }
 
   async function save(event: FormEvent) {
@@ -562,6 +626,7 @@ function TrainingProfilePanel({
           <label>
             Format
             <select
+              disabled={Boolean(applyingBundle)}
               value={draft.format}
               onChange={(event) => {
                 const format = event.target.value as "legacy" | "commander";
@@ -574,6 +639,43 @@ function TrainingProfilePanel({
               <option value="commander">Commander</option>
             </select>
           </label>
+        </div>
+        <div className="bundle-section">
+          <div className="pool-heading">
+            <div>
+              <span className="eyebrow">Quick start bundles</span>
+              <h3>Add a representative field in one click</h3>
+            </div>
+            <small>Bundles add to your pool; they never remove existing selections.</small>
+          </div>
+          {bundles.length > 0 ? (
+            <div className="bundle-grid">
+              {bundles.map((bundle) => (
+                <article key={bundle.id}>
+                  <div className="bundle-title">
+                    <div><strong>{bundle.name}</strong><small>Updated {bundle.updatedAt}</small></div>
+                    <span>{bundle.archetypes.length} archetypes</span>
+                  </div>
+                  <p>{bundle.description}</p>
+                  <div className="bundle-archetypes">
+                    {bundle.archetypes.map((archetype) => <span key={archetype.name}>{archetype.name}</span>)}
+                  </div>
+                  <div className="bundle-actions">
+                    <button type="button" className="primary" disabled={!accountReady || Boolean(applyingBundle)} onClick={() => void applyBundle(bundle)}>
+                      {applyingBundle === bundle.id ? "Finding League decks…" : "Add bundle to pool"}
+                    </button>
+                    <small>
+                      Sources: {bundle.sources.map((source, index) => (
+                        <span key={source}>{index > 0 ? " · " : ""}<a href={source} target="_blank" rel="noreferrer">{index === 0 ? "MTGGoldfish" : "MTGDecks"}</a></span>
+                      ))}
+                    </small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-inline">No curated bundle is available for {draft.format} yet.</div>
+          )}
         </div>
         <div className="pool-heading">
           <div>

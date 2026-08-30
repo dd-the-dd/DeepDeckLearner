@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .access import LocalAccessManager, request_is_host
+from .bundles import deck_bundles
 from .catalogs import (
     CatalogAuthenticationError,
     CatalogError,
@@ -283,6 +284,12 @@ def create_app(root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail=str(error)) from error
         except CatalogError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/api/v1/catalog/deck-bundles")
+    def bundle_catalog(format: str = "legacy") -> dict[str, Any]:
+        if format not in {"legacy", "commander"}:
+            raise HTTPException(status_code=422, detail="Format must be legacy or commander.")
+        return {"items": deck_bundles(format)}
 
     @app.get("/api/v1/catalog/competitions")
     def competition_catalog() -> dict[str, Any]:

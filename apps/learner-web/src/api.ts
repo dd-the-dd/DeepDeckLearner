@@ -49,6 +49,16 @@ export type TrainingProfile = {
   decks: DeckSummary[];
 };
 
+export type DeckBundle = {
+  id: string;
+  name: string;
+  description: string;
+  format: 'legacy' | 'commander';
+  updatedAt: string;
+  sources: string[];
+  archetypes: Array<{ name: string; queries: string[] }>;
+};
+
 export type LocalSession = {
   id: string;
   label: string;
@@ -159,6 +169,13 @@ export async function stopJob(jobId: string): Promise<Job> {
       headers: await authorizedHeaders(),
     }),
   );
+}
+
+export async function loadDeckBundles(format: string): Promise<DeckBundle[]> {
+  const query = new URLSearchParams({ format });
+  return (await json<Page<DeckBundle>>(
+    await fetch(`/api/v1/catalog/deck-bundles?${query}`, { headers: await authorizedHeaders() }),
+  )).items;
 }
 
 export async function loadTrainingProfile(): Promise<TrainingProfile> {

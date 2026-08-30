@@ -61,12 +61,31 @@ def test_catalog_routes_keep_deck_identifiers_behind_named_results(
     assert response.json()["items"][0]["name"] == "Reanimator"
 
 
+def test_legacy_bundle_exposes_named_archetypes_and_sources(tmp_path: Path) -> None:
+    client = local_client(create_app(tmp_path))
+    headers = authorized(local_token(client))
+
+    response = client.get("/api/v1/catalog/deck-bundles?format=legacy", headers=headers)
+
+    assert response.status_code == 200
+    bundle = response.json()["items"][0]
+    assert bundle["id"] == "legacy-meta-2026-08"
+    assert len(bundle["archetypes"]) == 8
+    assert bundle["sources"]
+    assert all(archetype["queries"] for archetype in bundle["archetypes"])
+
+
 def test_platform_catalog_requires_account_api_key(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
+    def missing_key() -> str:
+        raise learner_app.CatalogAuthenticationError("Configure an API key.")
+
+    monkeypatch.setattr(learner_app, "account_api_key", missing_key)
     client = local_client(create_app(tmp_path))
     headers = authorized(local_token(client))
 
     assert client.get("/api/v1/catalog/decks?format=legacy", headers=headers).status_code == 401
+    assert client.get("/api/v1/catalog/competitions", headers=headers).status_code == 401
 
 
 def test_training_profile_is_validated_and_persisted(tmp_path: Path) -> None:
@@ -115,7 +134,6 @@ def test_training_profile_rejects_decks_from_another_format(tmp_path: Path) -> N
     )
 
     assert response.status_code == 422
-    assert client.get("/api/v1/catalog/competitions", headers=headers).status_code == 401
 
 
 def test_trusted_lan_device_opens_without_pairing(tmp_path: Path) -> None:

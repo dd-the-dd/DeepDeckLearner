@@ -68,6 +68,11 @@ Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
 - The Agent setup deck pool uses the authenticated League catalog and dense
   selectable result rows. Selected decks remain visible as removable chips/cards
   even when the search query changes.
+- Quick start bundles appear between model/format and the selected pool. A
+  bundle card shows its as-of date, archetype count, compact archetype chips,
+  sources, and one `Add bundle to pool` action. While resolving, format changes
+  and other bundle actions are disabled. Completion reports missing catalog
+  archetypes while keeping every successful addition editable.
 - Setup completion advances the first-run emphasis to Agent setup but never
   interrupts a user who deliberately navigates back to Setup.
 - Local runtime appears only in Playtest. `Set up Engine + Pixi` is the single
@@ -105,6 +110,8 @@ Reference wireframe: [guided workflow](assets/guided-workflow-wireframe.svg).
   main action and explicitly promises that no files were overwritten.
 - No deck results: keep the query and format visible, explain that no legal deck
   matched, and offer another search without falling back to a raw identifier.
+- Partial bundle: retain resolved decks, list unresolved archetypes by name, and
+  leave Save under explicit user control.
 
 ## Responsive behavior
 

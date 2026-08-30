@@ -78,3 +78,6 @@ show outcome choices without an embedded training form.
 - The UI starts in Setup when required application capabilities are missing,
   exposes one Engine/Pixi setup action, and presents Agent setup before the
   Playtest, Train, and League operations.
+- Legacy bundle metadata exposes its date, sources, and eight named archetypes;
+  applying it preserves existing selections, deduplicates resolved deck
+  versions, and reports catalog misses.
