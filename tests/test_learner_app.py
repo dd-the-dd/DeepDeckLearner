@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -49,4 +50,27 @@ def test_platform_catalog_requires_account_api_key(tmp_path: Path, monkeypatch) 
 
     assert client.get("/api/v1/catalog/decks?format=legacy").status_code == 401
     assert client.get("/api/v1/catalog/competitions").status_code == 401
+
+
+def test_api_key_can_be_saved_locally_without_being_returned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("DEEPDECK_API_KEY", raising=False)
+    client = TestClient(create_app(tmp_path))
+    token = client.get("/api/v1/session").json()["token"]
+    key = "ddl_agent_complete_local_test_key"
+    try:
+        response = client.post(
+            "/api/v1/settings/api-key",
+            headers={"X-DeepDeck-Token": token},
+            json={"api_key": key},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"configured": True}
+        assert key not in response.text
+        assert client.get("/api/v1/status").json()["hosted"]["api_key_configured"]
+        stored = (tmp_path / ".deepdeck" / "secrets.json").read_text("utf-8")
+        assert key in stored
+    finally:
+        os.environ.pop("DEEPDECK_API_KEY", None)
 

@@ -70,6 +70,16 @@ export async function loadJobs(): Promise<Job[]> {
   return json<Job[]>(await fetch('/api/v1/jobs'));
 }
 
+export async function saveApiKey(apiKey: string): Promise<{ configured: boolean }> {
+  return json<{ configured: boolean }>(
+    await fetch('/api/v1/settings/api-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  );
+}
+
 export async function searchDecks(search: string, format: string): Promise<DeckSummary[]> {
   const query = new URLSearchParams({ search, format });
   return (await json<Page<DeckSummary>>(await fetch(`/api/v1/catalog/decks?${query}`))).items;

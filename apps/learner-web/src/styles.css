@@ -1448,3 +1448,5 @@ input:focus {
     flex: 1;
   }
 }
+.account-setup{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:24px;align-items:center}.account-setup h2{margin:.35rem 0}.account-setup p{color:var(--muted)}.account-setup form{display:grid;gap:12px}.account-setup label{display:grid;gap:7px}.account-setup input{min-height:44px;border:1px solid var(--line);background:var(--paper);padding:10px 12px}.account-setup .notice{margin:0}.form-success{color:var(--green)}
+@media(max-width:760px){.account-setup{grid-template-columns:1fr}}

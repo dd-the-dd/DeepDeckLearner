@@ -5,6 +5,7 @@ import {
   loadJobs,
   loadLocalDecks,
   loadStatus,
+  saveApiKey,
   searchDecks,
   startJob,
   stopJob,
@@ -179,6 +180,50 @@ function WorkspaceSummary({ status }: { status: CapabilityStatus | null }) {
           label="League account"
         />
       </div>
+    </section>
+  );
+}
+
+function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      await saveApiKey(apiKey);
+      setApiKey("");
+      setMessage("API key saved on this computer.");
+      refresh();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to save the API key.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel account-setup">
+      <div>
+        <span className="eyebrow">Application setup</span>
+        <h2>Connect your League account</h2>
+        <p>The key stays on this computer and is never displayed again after saving.</p>
+      </div>
+      {status?.hosted.api_key_configured ? (
+        <div className="notice success" role="status"><strong>Account connected</strong><span>You can search training and matchmaking decks.</span></div>
+      ) : (
+        <form onSubmit={submit}>
+          <label>
+            Deep Deck League API key
+            <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="ddl_agent_…" />
+          </label>
+          <button className="primary" type="submit" disabled={busy || apiKey.trim().length < 24}>{busy ? "Saving…" : "Save API key"}</button>
+        </form>
+      )}
+      {message && <p className={message.startsWith("API key saved") ? "form-success" : "form-error"} role="status">{message}</p>}
     </section>
   );
 }
@@ -480,7 +525,7 @@ function TrainingForm({
   const [device, setDevice] = useState("cuda");
   const [error, setError] = useState("");
   const [format, setFormat] = useState("legacy");
-  const [decks, setDecks] = useState<LocalDeck[]>([]);
+  const [decks, setDecks] = useState<DeckSummary[]>([]);
   const [selectedDecks, setSelectedDecks] = useState<string[]>([]);
   const [deckError, setDeckError] = useState("");
   const [loadingDecks, setLoadingDecks] = useState(false);
@@ -488,19 +533,19 @@ function TrainingForm({
   const deckTrainingAvailable = Boolean(status?.workflows.training_decks);
 
   useEffect(() => {
-    if (!status?.engine.healthy) {
+    if (!status?.hosted.api_key_configured) {
       setDecks([]);
       return;
     }
     let active = true;
     setLoadingDecks(true);
     setDeckError("");
-    void loadLocalDecks(format, status.engine.url)
+    void searchDecks("", format)
       .then((items) => {
         if (!active) return;
         setDecks(items);
         setSelectedDecks((current) =>
-          current.filter((id) => items.some((deck) => deck.deckSessionId === id)),
+          current.filter((id) => items.some((deck) => deck.id === id)),
         );
       })
       .catch((reason) => {
@@ -509,7 +554,7 @@ function TrainingForm({
         setDeckError(
           reason instanceof Error
             ? reason.message
-            : "Unable to load legal decks from Engine.",
+            : "Unable to load training decks from Deep Deck League.",
         );
       })
       .finally(() => {
@@ -518,13 +563,13 @@ function TrainingForm({
     return () => {
       active = false;
     };
-  }, [format, status?.engine.healthy, status?.engine.url]);
+  }, [format, status?.hosted.api_key_configured]);
 
-  function toggleDeck(deckSessionId: string) {
+  function toggleDeck(deckVersionId: string) {
     setSelectedDecks((current) =>
-      current.includes(deckSessionId)
-        ? current.filter((id) => id !== deckSessionId)
-        : [...current, deckSessionId],
+      current.includes(deckVersionId)
+        ? current.filter((id) => id !== deckVersionId)
+        : [...current, deckVersionId],
     );
   }
 
@@ -603,12 +648,12 @@ function TrainingForm({
             </small>
           </div>
         </div>
-        {!status?.engine.healthy ? (
+        {!status?.hosted.api_key_configured ? (
           <div className="notice warning" role="status">
-            <strong>Deck catalog unavailable</strong>
+            <strong>Connect your Deep Deck League account</strong>
             <span>
-              Prepare and start DeepDeckEngine from Playtest, then return here
-              to choose legal decks.
+              Add your account API key in Application setup, then return here
+              to choose decks from your authenticated training pool.
             </span>
           </div>
         ) : loadingDecks ? (
@@ -617,23 +662,23 @@ function TrainingForm({
           <p className="form-error" role="alert">{deckError}</p>
         ) : decks.length === 0 ? (
           <p className="deck-pool-empty">
-            Engine has no legal {format} decks. Import a deck, then refresh this
-            page.
+            Your Deep Deck League account has no available {format} deck.
           </p>
         ) : (
           <div className="training-deck-grid" aria-label="Training decks">
             {decks.map((deck) => {
-              const selected = selectedDecks.includes(deck.deckSessionId);
+              const selected = selectedDecks.includes(deck.id);
               return (
                 <button
-                  key={deck.deckSessionId}
+                  key={deck.id}
                   type="button"
                   aria-pressed={selected}
                   className={selected ? "selected" : ""}
-                  onClick={() => toggleDeck(deck.deckSessionId)}
+                  onClick={() => toggleDeck(deck.id)}
                 >
                   <span aria-hidden="true">{selected ? "✓" : "+"}</span>
-                  <strong>{deck.deckName}</strong>
+                  <strong>{deck.name}</strong>
+                  <small>v{deck.version} · {deck.playableCardCount} cards</small>
                 </button>
               );
             })}
@@ -1502,6 +1547,7 @@ export default function App() {
               </div>
             </section>
             <WorkspaceSummary status={status} />
+            <AccountSetup status={status} refresh={refresh} />
             {activityJobs.length > 0 && (
               <JobsPanel jobs={activityJobs} refresh={refresh} />
             )}
