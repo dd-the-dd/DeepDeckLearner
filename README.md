@@ -1,8 +1,9 @@
 # DeepDeckLearner
 
 DeepDeckLearner is the public AI laboratory for Deep Deck. It combines readable
-rule-based agents, trainable V11/V12 examples, and a local React workbench for
-training and behavior tests. It contains no private model weights.
+rule-based agents, the production Oracle AI model and training code, and a local
+React workbench for training and behavior tests. It contains no private model
+weights.
 
 DeepDeckEngine remains authoritative for Magic rules and legal actions. The
 workbench consumes versioned sources from
@@ -10,6 +11,12 @@ workbench consumes versioned sources from
 [`DeepDeckPixi`](https://github.com/dd-the-dd/DeepDeckPixi), and
 [`DeepDeckAgent`](https://github.com/dd-the-dd/DeepDeckAgent) as pinned Git
 submodules. It does not copy their code.
+
+Oracle AI is owned here rather than by Engine. Its observation encoders, V1–V12
+architectures, PPO loop, self-play environments, checkpoints, evaluation tools,
+League clients, and reproducible configurations live under `src/oracle_ai` and
+`configs/oracle-ai`. Engine remains unaware of PyTorch, model versions, epochs,
+losses, and checkpoints.
 
 ## Quick start for a Magic player
 
@@ -133,6 +140,18 @@ deepdeck-train v12 --smoke --epochs 2 --output runs/v12-smoke
 deepdeck-example v12 --target local --checkpoint runs/v12-smoke
 deepdeck-example alexios --target ddl --speed 1s
 ```
+
+The complete Oracle AI implementation is also installed with the workbench:
+
+```sh
+oracle-ai-train --config configs/oracle-ai/train-smoke.yaml
+oracle-ai-league-train --config configs/oracle-ai/league-v12-legacy.yaml
+oracle-ai-v12-clients --help
+```
+
+See [the Oracle AI reference](docs/oracle-ai.md) for the production model,
+self-play, checkpoint, evaluation, and League-runner contracts. Generated runs,
+weights, trajectories, and local datasets stay under ignored local directories.
 
 ## Hosted inference and future online training
 

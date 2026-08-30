@@ -1,0 +1,172 @@
+seed: 20260805
+trainingSeed: 3581327491
+device: cuda
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 120
+deckCatalog: .tmp/ai-real-decks.json
+outputDir: runs/oracle-ai-league-v5-action
+initialGroundTruthCheckpoint: runs/oracle-ai-league-continuous/champions/ia-gt-0
+resumeCheckpoint: runs/oracle-ai-league-v2/live/ia-in-training
+resumeLeagueState: false
+upgradeResumeArchitecture: true
+continuous: true
+evaluationEvery: 20
+checkpointEvery: 20
+maxCheckpoints: 3
+serviceRefreshEvery: 5
+maxConsecutiveErrors: 20
+maxStateTokens: 512
+
+model:
+  architecture: structured-v5
+  d_model: 384
+  layers: 6
+  heads: 8
+  feedforward_dim: 1536
+  action_layers: 2
+  dropout: 0.10
+  word_vocab_size: 32768
+  max_words: 32
+  max_relative_players: 8
+
+ppo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.01
+  learning_rate: 0.0001
+  epochs: 4
+  max_grad_norm: 1.0
+  minibatch_size: 4
+  observation_token_dropout: 0.05
+  observation_word_dropout: 0.10
+  observation_numeric_dropout: 0.05
+
+trainingMatchups:
+  - id: train-2p-m0-mobilize-sektuar
+    decks: [Mobilize, "Sek'tuar"]
+    startingPlayer: 0
+    freeMulligans: 0
+    maxTurns: 80
+  - id: train-2p-m1-mobilize-sektuar
+    decks: [Mobilize, "Sek'tuar"]
+    startingPlayer: 1
+    freeMulligans: 1
+    maxTurns: 80
+  - id: train-2p-m2-mobilize-sektuar
+    decks: [Mobilize, "Sek'tuar"]
+    startingPlayer: 0
+    freeMulligans: 2
+    maxTurns: 80
+  - id: train-2p-m0-mobilize-4c
+    decks: [Mobilize, "4c Control"]
+    startingPlayer: 1
+    freeMulligans: 0
+    maxTurns: 80
+  - id: train-2p-m1-mobilize-4c
+    decks: [Mobilize, "4c Control"]
+    startingPlayer: 0
+    freeMulligans: 1
+    maxTurns: 80
+  - id: train-2p-m2-mobilize-4c
+    decks: [Mobilize, "4c Control"]
+    startingPlayer: 1
+    freeMulligans: 2
+    maxTurns: 80
+  - id: train-2p-m0-sektuar-4c
+    decks: ["Sek'tuar", "4c Control"]
+    startingPlayer: 0
+    freeMulligans: 0
+    maxTurns: 80
+  - id: train-2p-m1-sektuar-4c
+    decks: ["Sek'tuar", "4c Control"]
+    startingPlayer: 1
+    freeMulligans: 1
+    maxTurns: 80
+  - id: train-2p-m2-sektuar-4c
+    decks: ["Sek'tuar", "4c Control"]
+    startingPlayer: 0
+    freeMulligans: 2
+    maxTurns: 80
+  - id: train-3p-m0-all
+    decks: [Mobilize, "Sek'tuar", "4c Control"]
+    startingPlayer: 0
+    freeMulligans: 0
+    maxTurns: 80
+  - id: train-3p-m1-all-rotated
+    decks: ["Sek'tuar", "4c Control", Mobilize]
+    startingPlayer: 1
+    freeMulligans: 1
+    maxTurns: 80
+  - id: train-3p-m2-all-rotated
+    decks: ["4c Control", Mobilize, "Sek'tuar"]
+    startingPlayer: 2
+    freeMulligans: 2
+    maxTurns: 80
+  - id: train-4p-m0-all
+    decks: [Mobilize, "Sek'tuar", "4c Control", Mobilize]
+    startingPlayer: 2
+    freeMulligans: 0
+    maxTurns: 80
+  - id: train-4p-m1-all-rotated
+    decks: ["Sek'tuar", "4c Control", Mobilize, "Sek'tuar"]
+    startingPlayer: 3
+    freeMulligans: 1
+    maxTurns: 80
+  - id: train-4p-m2-all-rotated
+    decks: ["4c Control", Mobilize, "Sek'tuar", "4c Control"]
+    startingPlayer: 0
+    freeMulligans: 2
+    maxTurns: 80
+
+evaluation:
+  seed: 456498132
+  gamesPerScenario: 1
+  perfectPeriodsForPromotion: 3
+  championPort: 8790
+  candidatePort: 8791
+  device: cpu
+  scenarios:
+    - id: eval-2p-mobilize
+      decks: [Mobilize, "Sek'tuar"]
+      candidatePlayerId: player-1
+      candidateDeck: Mobilize
+      startingPlayer: 0
+      freeMulligans: 1
+      maxTurns: 80
+    - id: eval-2p-sektuar
+      decks: ["4c Control", "Sek'tuar"]
+      candidatePlayerId: player-2
+      candidateDeck: "Sek'tuar"
+      startingPlayer: 1
+      freeMulligans: 1
+      maxTurns: 80
+    - id: eval-3p-4c
+      decks: [Mobilize, "Sek'tuar", "4c Control"]
+      candidatePlayerId: player-3
+      candidateDeck: "4c Control"
+      startingPlayer: 0
+      freeMulligans: 1
+      maxTurns: 80
+    - id: eval-3p-mobilize
+      decks: ["Sek'tuar", Mobilize, "4c Control"]
+      candidatePlayerId: player-2
+      candidateDeck: Mobilize
+      startingPlayer: 2
+      freeMulligans: 1
+      maxTurns: 80
+    - id: eval-4p-sektuar
+      decks: [Mobilize, "4c Control", "Sek'tuar", Mobilize]
+      candidatePlayerId: player-3
+      candidateDeck: "Sek'tuar"
+      startingPlayer: 3
+      freeMulligans: 1
+      maxTurns: 80
+    - id: eval-4p-4c
+      decks: ["4c Control", Mobilize, "Sek'tuar", "4c Control"]
+      candidatePlayerId: player-1
+      candidateDeck: "4c Control"
+      startingPlayer: 1
+      freeMulligans: 1
+      maxTurns: 80

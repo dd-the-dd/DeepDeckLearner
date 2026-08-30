@@ -1,0 +1,89 @@
+seed: 20260806
+trainingSeed: 684193257
+device: cuda
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 300
+analyticsPilotId: ia-v6-in-training
+deckSource: database
+outputDir: runs/oracle-ai-league-v6-alpha-zero
+initialGroundTruthMode: learner-step-zero
+resumeCheckpoint: runs/oracle-ai-league-v6-alpha-zero/live/ia-in-training
+resumeCheckpointOptional: true
+resumeLeagueState: true
+continuous: true
+evaluationEvery: 20
+checkpointEvery: 20
+maxCheckpoints: 3
+serviceRefreshEvery: 2
+maxConsecutiveErrors: 50
+maxStateTokens: 512
+multiplayerRewardMode: centeredWinner
+
+model:
+  architecture: structured-v6
+  d_model: 384
+  layers: 6
+  heads: 8
+  feedforward_dim: 1536
+  action_layers: 2
+  dropout: 0.10
+  max_words: 64
+  max_relative_players: 8
+  semantic_dim: 64
+  semantic_layers: 1
+  semantic_heads: 4
+  max_events: 24
+  root_search_simulations: 32
+  puct_coefficient: 1.5
+  search_temperature: 1.0
+  root_value_weight: 0.25
+  root_dirichlet_alpha: 0.3
+  root_exploration_fraction: 0.25
+
+ppo:
+  gamma: 0.999
+  gae_lambda: 0.97
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.005
+  learning_rate: 0.00005
+  epochs: 4
+  max_grad_norm: 1.0
+  minibatch_size: 4
+  observation_token_dropout: 0.03
+  observation_word_dropout: 0.05
+  observation_numeric_dropout: 0.03
+  action_value_coefficient: 0.5
+  value_clip_ratio: 0.2
+  target_kl: 0.0
+  ppo_policy_coefficient: 0.0
+  search_policy_coefficient: 1.0
+
+trainingScenarioRandomizer:
+  formats: [free, commander]
+  playerCounts: [2, 3, 4]
+  maxTurns: 80
+  matchmaking:
+    enabled: true
+    randomFloor: 0.20
+    eloScale: 10
+    underplayedStrength: 0.35
+    matchPrior: 10
+  free:
+    startingLifeRange: [20, 40]
+    freeMulliganRange: [0, 2]
+
+evaluation:
+  seed: 456498132
+  gamesPerScenario: 2
+  perfectPeriodsForPromotion: 3
+  championPort: 8790
+  candidatePort: 8791
+  device: cuda
+  championDevice: cpu
+  candidateDevice: cuda
+  scenarioMatrix:
+    formats: [free, commander]
+    playerCounts: [2, 3, 4]
+    freeMulligans: [0, 1, 2]
+    maxTurns: 80

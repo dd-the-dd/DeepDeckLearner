@@ -1,0 +1,128 @@
+seed: 20260825
+trainingSeed: 12012027
+device: cuda
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 300
+candidateModelName: ia-v12-1-in-training
+analyticsPilotId: ia-v12-1-in-training
+trainingParticipantId: v12.1
+includeDefaultTrainingLeaderboardParticipants: false
+initialGroundTruthAnalyticsPilotId: ia-v12-1-s0
+initialGroundTruthMode: learner-step-zero
+deckSource: database
+metaLegacyDeckSelection:
+  enabled: true
+  creators: [Meta legacy, oli]
+outputDir: runs/oracle-ai-league-v12-1-legacy
+resumeCheckpoint: runs/oracle-ai-league-v12-legacy/live/ia-v12-in-training
+resumeCheckpointOptional: false
+resumeLeagueState: false
+continuous: true
+modelEvaluationEnabled: false
+groundTruthEvaluationEnabled: false
+groundTruthEvaluationEvery: 10
+modelEvaluationEvery: 100
+checkpointEvery: 20
+maxCheckpoints: 3
+serviceRefreshEvery: 2
+persistentGroundTruthService: false
+maxConsecutiveErrors: 50
+maxStateTokens: 896
+multiplayerRewardMode: alphaStarTwoPlayer
+legacyGameWinReward: 0.25
+legacyMatchWinReward: 1.0
+scaleRewardsByPlackettLuce: true
+noWinnerReward: 0.0
+parallelGameWorkers: 3
+rolloutBatchGames: 3
+
+trainingOpponentMix:
+  self: 1.0
+trainingLeaderboardLabels:
+  v12.1: V12.1 - AlphaStar Legacy
+
+model:
+  architecture: structured-v12
+  d_model: 384
+  layers: 6
+  heads: 8
+  feedforward_dim: 1536
+  action_layers: 2
+  plan_layers: 2
+  difference_layers: 2
+  dropout: 0.10
+  max_words: 64
+  max_relative_players: 2
+  max_deck_cards: 128
+  max_delta_tokens: 96
+  max_commander_cards: 2
+  semantic_dim: 64
+  semantic_layers: 1
+  semantic_heads: 4
+  max_events: 24
+  root_search_simulations: 1
+  puct_coefficient: 1.5
+  search_temperature: 1.0
+  root_value_weight: 0.25
+  root_dirichlet_alpha: 0.3
+  root_exploration_fraction: 0.0
+  future_horizons: 4
+  future_player_slots: 2
+  future_feature_dim: 23
+  minimum_log_variance: -6.0
+  maximum_log_variance: 3.0
+  multiplayer_value_slots: 2
+  isolate_prediction_gradients: true
+
+ppo:
+  gamma: 0.999
+  gae_lambda: 0.97
+  clip_ratio: 0.2
+  value_coefficient: 0.5
+  entropy_coefficient: 0.015
+  learning_rate: 0.00005
+  epochs: 4
+  max_grad_norm: 1.0
+  minibatch_size: 8
+  observation_token_dropout: 0.03
+  observation_word_dropout: 0.05
+  observation_numeric_dropout: 0.03
+  action_value_coefficient: 0.35
+  value_clip_ratio: 0.2
+  target_kl: 0.02
+  ppo_policy_coefficient: 1.0
+  search_policy_coefficient: 0.0
+  future_prediction_coefficient: 0.08
+  belief_coefficient: 0.025
+  plan_coefficient: 0.01
+  multiplayer_value_coefficient: 0.0
+
+trainingScenarioRandomizer:
+  formats: [legacy]
+  formatSampling: roundRobin
+  playerCounts: [2]
+  maxTurns: 80
+  matchmaking:
+    enabled: true
+    randomFloor: 0.20
+    ratingScale: 2
+    underplayedStrength: 0.35
+    matchPrior: 10
+
+evaluation:
+  seed: 12128457
+  gamesPerScenario: 2
+  perfectPeriodsForPromotion: 3
+  championPort: 8822
+  candidatePort: 8823
+  device: cpu
+  championDevice: cpu
+  candidateDevice: cpu
+  scenarioMatrix:
+    formats: [legacy]
+    playerCounts: [2]
+    maxTurns: 80
+
+groundTruthEvaluation:
+  minimumConfidence: 1
+  deterministicDecisionType: fastDeterministicWin
