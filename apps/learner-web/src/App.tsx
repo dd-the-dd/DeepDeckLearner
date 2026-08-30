@@ -1679,6 +1679,7 @@ export default function App() {
     format: "legacy",
     decks: [],
   });
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadError, setLoadError] = useState("");
   const pageHeading = useRef<HTMLHeadingElement>(null);
@@ -1686,14 +1687,12 @@ export default function App() {
 
   async function refresh() {
     try {
-      const [nextStatus, nextJobs, nextProfile] = await Promise.all([
+      const [nextStatus, nextJobs] = await Promise.all([
         loadStatus(),
         loadJobs(),
-        loadTrainingProfile(),
       ]);
       setStatus(nextStatus);
       setJobs(nextJobs);
-      setTrainingProfile(nextProfile);
       if (!initialPageResolved.current) {
         const ready = Boolean(
           nextStatus.hosted.api_key_configured &&
@@ -1724,6 +1723,19 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!localSession) return;
+    void loadTrainingProfile()
+      .then((profile) => {
+        setTrainingProfile(profile);
+        setProfileLoaded(true);
+      })
+      .catch((reason) => {
+        setProfileLoaded(true);
+        setLoadError(
+          reason instanceof Error
+            ? reason.message
+            : "Unable to load the agent configuration.",
+        );
+      });
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => window.clearInterval(timer);
@@ -1878,12 +1890,16 @@ export default function App() {
                 { label: "Use", detail: "Playtest, train, run" },
               ]}
             />
-            <TrainingProfilePanel
-              initial={trainingProfile}
-              accountReady={accountReady}
-              onSaved={setTrainingProfile}
-              onContinue={() => setPage("use")}
-            />
+            {profileLoaded ? (
+              <TrainingProfilePanel
+                initial={trainingProfile}
+                accountReady={accountReady}
+                onSaved={setTrainingProfile}
+                onContinue={() => setPage("use")}
+              />
+            ) : (
+              <section className="panel configure"><p>Loading agent configuration…</p></section>
+            )}
           </>
         )}
         {page === "use" && (

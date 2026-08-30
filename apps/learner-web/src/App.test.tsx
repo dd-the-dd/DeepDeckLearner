@@ -163,6 +163,11 @@ describe("guided onboarding", () => {
       expect(JSON.parse(String(request?.[1]?.body))).toEqual({
         kind: "dependency.stack.prepare",
       });
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).endsWith("/api/v1/training-profile"),
+        ),
+      ).toHaveLength(1);
     });
   });
 });
