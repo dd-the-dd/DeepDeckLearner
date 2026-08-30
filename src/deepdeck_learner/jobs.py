@@ -467,6 +467,7 @@ class JobManager:
             "ProgramW6432",
             "DEEPDECK_API_KEY",
             "DEEPDECK_PLATFORM_URL",
+            "DDL_PLATFORM_API_URL",
         }
         return {key: value for key, value in os.environ.items() if key in allowed}
 

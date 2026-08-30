@@ -139,16 +139,35 @@ describe("guided onboarding", () => {
         built: true,
         healthy: true,
       },
+      hosted: {
+        api_key_configured: true,
+        trajectory_training: false,
+        reason: "Not available yet.",
+      },
       workflows: { training_decks: false },
     };
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/v1/status")) return response(trainingStatus);
-      if (url.includes("/api/v1/catalog/local-decks"))
-        return response([
-          { deckSessionId: "deck-1", deckName: "Legacy Reanimator" },
-          { deckSessionId: "deck-2", deckName: "Death and Taxes" },
-        ]);
+      if (url.includes("/api/v1/catalog/decks"))
+        return response({
+          items: [
+            {
+              id: "deck-1",
+              name: "Legacy Reanimator",
+              version: 1,
+              colors: ["B"],
+              playableCardCount: 60,
+            },
+            {
+              id: "deck-2",
+              name: "Death and Taxes",
+              version: 1,
+              colors: ["W"],
+              playableCardCount: 60,
+            },
+          ],
+        });
       return response([]);
     });
     vi.stubGlobal("fetch", fetchMock);
