@@ -84,7 +84,7 @@ def capability_status(root: Path, engine_url: str) -> dict[str, Any]:
         "workflows": {
             "training_smoke": module_available("torch"),
             "training_dataset": module_available("torch"),
-            "training_decks": False,
+            "training_decks": module_available("torch"),
             "training_hosted": False,
             "playtest_local": module_available("deepdeck_agent"),
         },

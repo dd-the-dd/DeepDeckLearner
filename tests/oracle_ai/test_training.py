@@ -331,6 +331,32 @@ def test_running_trainer_reloads_only_when_the_meta_deck_catalog_changes(
     )
 
 
+def test_learner_resource_plan_resizes_training_workers_between_batches(
+    tmp_path: Path,
+) -> None:
+    resource_path = tmp_path / "learner-resources.json"
+    resource_path.write_text(
+        json.dumps({"trainingMatches": 3, "gpuMemoryMb": 4096}),
+        encoding="utf-8",
+    )
+    trainer = LeagueTrainer.__new__(LeagueTrainer)
+    trainer.resource_plan_path = resource_path
+    trainer.parallel_game_workers = 1
+    trainer.rollout_batch_games = 1
+    trainer.environments = [object()]
+    trainer.environment = trainer.environments[0]
+    trainer.device = torch.device("cpu")
+    trainer.gpu_memory_limit_mb = 0
+    trainer._new_training_environment = object
+
+    trainer._refresh_learner_resources()
+
+    assert trainer.parallel_game_workers == 3
+    assert trainer.rollout_batch_games == 3
+    assert len(trainer.environments) == 3
+    assert trainer.gpu_memory_limit_mb == 4096
+
+
 def test_gameplay_metrics_summarize_early_game_and_suicidal_attacks() -> None:
     setup = {
         "startingPlayer": 1,
@@ -1223,6 +1249,127 @@ def test_v2_encoder_uses_structured_visible_tokens_and_active_player_positions()
     )
     assert torch.equal(
         encoded.state_tokens.word_ids, encoded_variant.state_tokens.word_ids
+    )
+
+    known_state = deepcopy(state)
+    known_card = _structured_test_card("known:opponent", "Known Counterspell")
+    known_card["flags"] = {"knownToViewer": True}
+    known_state["players"][0]["hand"].append(known_card)
+    encoded_known = encoder.encode(
+        known_state,
+        [{"id": "pass:3", "kind": "passPriority", "playerId": "player-3"}],
+    )
+    renamed_known_state = deepcopy(known_state)
+    renamed_known_state["players"][0]["hand"][-1]["definition"]["name"] = (
+        "Known Lightning Bolt"
+    )
+    encoded_renamed_known = encoder.encode(
+        renamed_known_state,
+        [{"id": "pass:4", "kind": "passPriority", "playerId": "player-3"}],
+    )
+    assert not torch.equal(
+        encoded_known.state_tokens.word_ids,
+        encoded_renamed_known.state_tokens.word_ids,
+    )
+
+
+def test_v2_encoder_resolves_casting_decision_card_ids_to_card_semantics() -> None:
+    encoder = StructuredObservationEncoder(
+        word_vocab_size=4096,
+        max_words=32,
+        max_relative_players=4,
+    )
+    state = _structured_test_state()
+    state["players"][2]["hand"].extend(
+        [
+            _structured_test_card("hand:grief", "Grief", mana_cost="{2}{B}{B}"),
+            _structured_test_card(
+                "hand:thoughtseize",
+                "Thoughtseize",
+                mana_cost="{B}",
+                power=None,
+                toughness=None,
+            ),
+        ]
+    )
+    actions = [
+        {
+            "id": "cast:unmask:grief",
+            "kind": "castSpell",
+            "label": "Cast Unmask using the alternative cost",
+            "playerId": "player-3",
+            "cardInstanceId": "hand:acting",
+            "decisions": {
+                "useAlternativeCost": True,
+                "alternativeExileCard": "hand:grief",
+            },
+        },
+        {
+            "id": "cast:unmask:thoughtseize",
+            "kind": "castSpell",
+            "label": "Cast Unmask using the alternative cost",
+            "playerId": "player-3",
+            "cardInstanceId": "hand:acting",
+            "decisions": {
+                "useAlternativeCost": True,
+                "alternativeExileCard": "hand:thoughtseize",
+            },
+        },
+    ]
+
+    grief = state["players"][2]["hand"][1]
+    thoughtseize = state["players"][2]["hand"][2]
+    entities = {
+        "hand:grief": (grief, 0),
+        "hand:thoughtseize": (thoughtseize, 0),
+    }
+    grief_words = list(encoder._action_decision_entity_words(actions[0], entities))
+    thoughtseize_words = list(
+        encoder._action_decision_entity_words(actions[1], entities)
+    )
+    assert len(grief_words) == 1
+    assert grief_words[0].startswith("decision alternativeExileCard Grief ")
+    assert grief_words[0].endswith("{2}{B}{B}")
+    assert len(thoughtseize_words) == 1
+    assert thoughtseize_words[0].startswith(
+        "decision alternativeExileCard Thoughtseize "
+    )
+    assert thoughtseize_words[0].endswith("{B}")
+
+    encoded = encoder.encode(state, actions)
+    assert not torch.equal(
+        encoded.action_tokens.word_ids[0],
+        encoded.action_tokens.word_ids[1],
+    )
+
+    target_actions = [
+        {
+            "id": "target:grief",
+            "kind": "chooseTarget",
+            "label": "Choose target card",
+            "playerId": "player-3",
+            "targets": {
+                "targetCard": {"card": {"instanceId": "hand:grief"}},
+            },
+        },
+        {
+            "id": "target:thoughtseize",
+            "kind": "chooseTarget",
+            "label": "Choose target card",
+            "playerId": "player-3",
+            "targets": {
+                "targetCard": {"card": {"instanceId": "hand:thoughtseize"}},
+            },
+        },
+    ]
+    target_encoded = encoder.encode(state, target_actions)
+    assert "target targetCard Grief" in target_encoded.action_token_labels[0]
+    assert (
+        "target targetCard Thoughtseize" in target_encoded.action_token_labels[1]
+    )
+    assert not torch.equal(
+        target_encoded.action_tokens.word_ids[0],
+        target_encoded.action_tokens.word_ids[1],
     )
 
 

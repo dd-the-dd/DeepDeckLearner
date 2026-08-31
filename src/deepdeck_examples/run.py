@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
+from pathlib import Path
 
+import httpx
 from deepdeck_agent import (
     Agent,
     AgentConfig,
@@ -19,6 +22,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from .alexios import AlexiosAgent
 from .configuration import alexios_config, deep_learning_config, random_config
+from .oracle_checkpoint_agent import OracleCheckpointAgent, is_oracle_checkpoint
 from .random_baseline import build_random_agent
 
 
@@ -98,6 +102,10 @@ def parser() -> argparse.ArgumentParser:
         default=os.getenv("DEEPDECK_LOCAL_OPPONENT_CONTROLLER", "ai-random"),
     )
     result.add_argument(
+        "--local-game-setup",
+        help="Path to an inline local GameSetup prepared by DeepDeckLearner.",
+    )
+    result.add_argument(
         "--local-format",
         choices=("legacy", "commander"),
         default=os.getenv("DEEPDECK_LOCAL_FORMAT"),
@@ -116,6 +124,11 @@ def _agent_and_config(arguments: argparse.Namespace) -> tuple[Agent, AgentConfig
         return build_random_agent(arguments.seed), random_config()
     if arguments.example == "alexios":
         return AlexiosAgent(), alexios_config()
+    if is_oracle_checkpoint(arguments.checkpoint):
+        return (
+            OracleCheckpointAgent(arguments.checkpoint, device=arguments.device),
+            deep_learning_config(arguments.example),
+        )
     try:
         from .deep_learning import build_deep_learning_agent
     except ModuleNotFoundError as error:
@@ -141,7 +154,8 @@ async def _serve_local(runner: AgentRunner, arguments: argparse.Namespace) -> No
     connection = asyncio.create_task(runner.serve())
     try:
         if arguments.start_local_game:
-            missing = [
+            local_game_setup = getattr(arguments, "local_game_setup", None)
+            missing = [] if local_game_setup else [
                 name
                 for name, value in (
                     ("DEEPDECK_LOCAL_DECK_SESSION_ID", arguments.local_deck_session_id),
@@ -162,8 +176,30 @@ async def _serve_local(runner: AgentRunner, arguments: argparse.Namespace) -> No
                     f"{runner.config.name} does not declare {game_format}; supported: {supported}"
                 )
             starting_life = 40 if game_format == "commander" else 20
-            bootstrap = await runner.start_local_game(
-                LocalGame(
+            if local_game_setup:
+                payload = json.loads(
+                    Path(local_game_setup).read_text(encoding="utf-8")
+                )
+                payload["aiControllerByPlayerId"] = {"local-agent": controller_id}
+                headers = (
+                    {"x-mtg-api-key": runner.target.engine_api_key}
+                    if runner.target.engine_api_key
+                    else None
+                )
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(
+                        f"{arguments.engine_url.rstrip('/')}/game/sessions",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if response.is_error:
+                        raise RuntimeError(
+                            f"Engine rejected the local game ({response.status_code}): "
+                            f"{response.text}"
+                        )
+                    bootstrap = response.json()
+            else:
+                bootstrap = await runner.start_local_game(LocalGame(
                     format=game_format,
                     seed=arguments.seed,
                     max_turns=arguments.local_max_turns,
@@ -184,10 +220,19 @@ async def _serve_local(runner: AgentRunner, arguments: argparse.Namespace) -> No
                             starting_life=starting_life,
                         ),
                     ),
-                )
+                ))
+            session = bootstrap.get("session", bootstrap)
+            session_id = (
+                session.get("id") or session.get("sessionId")
+                if isinstance(session, dict)
+                else None
             )
-            session = bootstrap.get("session", {})
-            session_id = session.get("id") if isinstance(session, dict) else None
+            if session_id:
+                print(
+                    "DEEPDECK_PLAYTEST_SESSION "
+                    + json.dumps({"sessionId": session_id, "engineUrl": arguments.engine_url}),
+                    flush=True,
+                )
             logging.getLogger(__name__).info("local game started: %s", session_id or bootstrap)
         await connection
     finally:

@@ -1,44 +1,93 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  FormEvent,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   loadCompetitions,
+  loadDeckStatistics,
   loadJobs,
-  loadLocalDecks,
+  loadModelResources,
+  loadModels,
+  loadResources,
   loadStatus,
+  downloadDeck,
+  loadTrainingDeckPool,
   saveApiKey,
+  saveModelResources,
+  saveTrainingDeckPool,
   searchDecks,
   startJob,
   stopJob,
   type CapabilityStatus,
   type CompetitionSummary,
   type DeckSummary,
+  type DeckStatistic,
   type Job,
-  type LocalDeck,
+  type LocalModel,
+  type ResourcePlan,
+  type ResourceSnapshot,
 } from "./api";
 import { workflowBlockers, type Workflow } from "./readiness";
+
+const LocalPixiTable = lazy(() => import("./LocalPixiTable"));
+
+class PixiErrorBoundary extends Component<
+  { children: ReactNode; onClose: () => void },
+  { error: string }
+> {
+  state = { error: "" };
+
+  static getDerivedStateFromError(reason: unknown) {
+    return {
+      error: reason instanceof Error ? reason.message : "Pixi could not open this table.",
+    };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <section className="pixi-recovery" role="alert">
+        <span className="eyebrow">Local table recovery</span>
+        <h2>Pixi could not display this game</h2>
+        <p>{this.state.error}</p>
+        <button className="primary" type="button" onClick={this.props.onClose}>
+          Return to the workbench
+        </button>
+      </section>
+    );
+  }
+}
 
 type Page =
   | "overview"
   | "train"
   | "playtest"
   | "compete"
+  | "statistics"
   | "representation"
   | "models";
 
 const pages: Array<{ id: Page; label: string; glyph: string }> = [
-  { id: "overview", label: "Home", glyph: "⌂" },
-  { id: "train", label: "Train", glyph: "↗" },
-  { id: "playtest", label: "Playtest", glyph: "▶" },
-  { id: "compete", label: "Matchmaking", glyph: "◎" },
-  { id: "representation", label: "Representation", glyph: "◇" },
-  { id: "models", label: "Models", glyph: "◎" },
+  { id: "train", label: "Train", glyph: "01" },
+  { id: "playtest", label: "Play against your AI", glyph: "02" },
+  { id: "compete", label: "League", glyph: "03" },
+  { id: "statistics", label: "Training statistics", glyph: "04" },
 ];
 
 const pageHeadings: Record<Page, string> = {
   overview: "What do you want to do?",
-  train: "Train an agent",
-  playtest: "Test an agent locally",
-  compete: "Send an agent to the League",
+  train: "Train your agents",
+  playtest: "Play against your AI",
+  compete: "Play in the League",
+  statistics: "Training statistics",
   representation: "Understand the tensor",
   models: "Choose a model family",
 };
@@ -188,6 +237,7 @@ function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; re
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [replacing, setReplacing] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -196,6 +246,7 @@ function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; re
     try {
       await saveApiKey(apiKey);
       setApiKey("");
+      setReplacing(false);
       setMessage("API key saved on this computer.");
       refresh();
     } catch (reason) {
@@ -212,8 +263,13 @@ function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; re
         <h2>Connect your League account</h2>
         <p>The key stays on this computer and is never displayed again after saving.</p>
       </div>
-      {status?.hosted.api_key_configured ? (
-        <div className="notice success" role="status"><strong>Account connected</strong><span>You can search training and matchmaking decks.</span></div>
+      {!status ? (
+        <div className="notice" role="status"><strong>Checking this computer…</strong><span>Looking for a previously saved League account key.</span></div>
+      ) : status.hosted.api_key_configured && !replacing ? (
+        <div className="notice success account-connected" role="status">
+          <div><strong>Account connected</strong><span>Saved in this workbench's private local data folder and restored after restart.</span></div>
+          <button type="button" onClick={() => setReplacing(true)}>Replace key</button>
+        </div>
       ) : (
         <form onSubmit={submit}>
           <label>
@@ -221,6 +277,7 @@ function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; re
             <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="ddl_agent_…" />
           </label>
           <button className="primary" type="submit" disabled={busy || apiKey.trim().length < 24}>{busy ? "Saving…" : "Save API key"}</button>
+          {status.hosted.api_key_configured && <button type="button" onClick={() => { setReplacing(false); setApiKey(""); }}>Cancel</button>}
         </form>
       )}
       {message && <p className={message.startsWith("API key saved") ? "form-success" : "form-error"} role="status">{message}</p>}
@@ -318,13 +375,13 @@ function DependencyPanel({
         <button
           className="primary"
           type="button"
-          disabled={
-            !status || stackReady || Boolean(busy) || Boolean(stackJob) || dirty
-          }
+          disabled={!status || Boolean(busy) || Boolean(stackJob) || dirty}
           onClick={() => void startStack()}
         >
           {stackReady
-            ? "Local tools ready"
+            ? stackJob || busy === "stack"
+              ? "Verifying…"
+              : "Verify & repair Engine + Pixi"
             : stackJob || busy === "stack"
               ? "Setting up…"
               : "Set up Engine + Pixi"}
@@ -509,7 +566,7 @@ function DependencyPanel({
   );
 }
 
-function TrainingForm({
+export function TrainingForm({
   status,
   refresh,
 }: {
@@ -524,7 +581,7 @@ function TrainingForm({
   const [learningRate, setLearningRate] = useState(0.0003);
   const [device, setDevice] = useState("cuda");
   const [error, setError] = useState("");
-  const [format, setFormat] = useState("legacy");
+  const [formats, setFormats] = useState<string[]>(["legacy"]);
   const [decks, setDecks] = useState<DeckSummary[]>([]);
   const [selectedDecks, setSelectedDecks] = useState<string[]>([]);
   const [deckError, setDeckError] = useState("");
@@ -540,9 +597,10 @@ function TrainingForm({
     let active = true;
     setLoadingDecks(true);
     setDeckError("");
-    void searchDecks("", format)
-      .then((items) => {
+    void Promise.all(formats.map((format) => searchDecks("", format)))
+      .then((groups) => {
         if (!active) return;
+        const items = groups.flat();
         setDecks(items);
         setSelectedDecks((current) =>
           current.filter((id) => items.some((deck) => deck.id === id)),
@@ -563,7 +621,18 @@ function TrainingForm({
     return () => {
       active = false;
     };
-  }, [format, status?.hosted.api_key_configured]);
+  }, [formats, status?.hosted.api_key_configured]);
+
+  function toggleFormat(format: string) {
+    setFormats((current) =>
+      current.includes(format)
+        ? current.length === 1
+          ? current
+          : current.filter((item) => item !== format)
+        : [...current, format],
+    );
+    setSelectedDecks([]);
+  }
 
   function toggleDeck(deckVersionId: string) {
     setSelectedDecks((current) =>
@@ -617,19 +686,23 @@ function TrainingForm({
             <option value="v11">V11 · multiplayer</option>
           </select>
         </label>
-        <label>
-          Format
-          <select
-            value={format}
-            onChange={(event) => {
-              setFormat(event.target.value);
-              setSelectedDecks([]);
-            }}
-          >
-            <option value="legacy">Legacy</option>
-            <option value="commander">Commander</option>
-          </select>
-        </label>
+        <fieldset className="format-picker">
+          <legend>Formats</legend>
+          <div>
+            {["legacy", "commander"].map((format) => (
+              <button
+                key={format}
+                type="button"
+                className={formats.includes(format) ? "selected" : ""}
+                aria-pressed={formats.includes(format)}
+                onClick={() => toggleFormat(format)}
+              >
+                {format[0].toUpperCase() + format.slice(1)}
+              </button>
+            ))}
+          </div>
+          <small>Choose one or more formats.</small>
+        </fieldset>
         <div className="automatic-setting">
           <span>Compute</span>
           <strong>GPU preferred</strong>
@@ -662,7 +735,7 @@ function TrainingForm({
           <p className="form-error" role="alert">{deckError}</p>
         ) : decks.length === 0 ? (
           <p className="deck-pool-empty">
-            Your Deep Deck League account has no available {format} deck.
+            Your account has no deck for the selected formats.
           </p>
         ) : (
           <div className="training-deck-grid" aria-label="Training decks">
@@ -819,78 +892,337 @@ function TrainingForm({
   );
 }
 
-function OnlinePanel({ status }: { status: CapabilityStatus | null }) {
-  const blockers = workflowBlockers(status, "online-training");
+function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
+  const [query, setQuery] = useState("");
+  const [decks, setDecks] = useState<DeckSummary[]>([]);
+  const [selected, setSelected] = useState<DeckSummary[]>([]);
+  const [busy, setBusy] = useState("");
+  const [model, setModel] = useState("v12");
+  const [modelName, setModelName] = useState("");
+  const [parallelMatches, setParallelMatches] = useState(1);
+  const [gpuMemoryMb, setGpuMemoryMb] = useState(0);
+  const [reservePlaytest, setReservePlaytest] = useState(true);
+  const [starting, setStarting] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [error, setError] = useState("");
+  const requiredFormat = model === "v12" ? "legacy" : "commander";
+  const compatibleDeckCount = selected.filter(
+    (deck) => deck.format?.toLowerCase() === requiredFormat,
+  ).length;
+
+  useEffect(() => {
+    if (!status?.hosted.api_key_configured) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void Promise.all([searchDecks(query, "legacy"), searchDecks(query, "commander")])
+        .then((groups) => { if (active) setDecks(groups.flat()); })
+        .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to search decks."); });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [query, status?.hosted.api_key_configured]);
+
+  useEffect(() => {
+    void loadTrainingDeckPool().then((pool) => setSelected(pool.decks)).catch(() => undefined);
+  }, []);
+
+  async function toggleDeck(deck: DeckSummary) {
+    if (selected.some((item) => item.id === deck.id)) {
+      const next = selected.filter((item) => item.id !== deck.id);
+      setSelected(next);
+      void saveTrainingDeckPool(next);
+      return;
+    }
+    setBusy(deck.id);
+    setError("");
+    try {
+      await downloadDeck(deck.id);
+      const next = [...selected, deck];
+      setSelected(next);
+      await saveTrainingDeckPool(next);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to download this deck.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function startTraining() {
+    setStarting(true);
+    setStarted(false);
+    setError("");
+    try {
+      await startJob({ kind: "training.pool", model, model_name: modelName.trim(), parallel_matches: parallelMatches, gpu_memory_mb: gpuMemoryMb, reserve_playtest: reservePlaytest });
+      setStarted(true);
+      refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to start training.");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return <section className="panel configure local-training-form">
+    <div className="section-heading"><div><span className="eyebrow">Local training</span><h2>Build a training deck pool</h2><p className="section-lead">Add as many decks as you need. Every selected version is downloaded locally and kept together as one training pool.</p></div><span className="step">POOL</span></div>
+    {!status?.hosted.api_key_configured ? <div className="notice warning"><strong>API key required</strong><span>Configure your Deep Deck League API key in Application setup to access training decks.</span></div> : <>
+      <div className="training-pool-heading"><div><strong>Training deck pool</strong><small>{selected.length === 0 ? "No deck selected" : `${selected.length} deck${selected.length === 1 ? "" : "s"} ready locally`}</small></div></div>
+      {selected.length > 0 && <div className="selected-training-pool">{selected.map((deck) => <button type="button" key={deck.id} onClick={() => void toggleDeck(deck)} title="Remove from training pool"><span><strong>{deck.name}</strong><small>{deck.format ?? "Deck"} · v{deck.version}</small></span><b aria-hidden="true">×</b></button>)}</div>}
+      <label className="deck-search">Add decks<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any deck by name…" autoFocus /></label>
+      <div className="training-deck-grid" aria-label="Training deck results">
+        {decks.map((deck) => { const isSelected = selected.some((item) => item.id === deck.id); return <button key={deck.id} type="button" className={isSelected ? "selected" : ""} onClick={() => void toggleDeck(deck)} disabled={Boolean(busy)}><span aria-hidden="true">{busy === deck.id ? "…" : isSelected ? "✓" : "+"}</span><strong>{deck.name}</strong><small>{deck.format ?? "Deck"} · v{deck.version} · {deck.playableCardCount} cards</small></button>; })}
+      </div>
+      {busy && <p className="deck-pool-empty" role="status">Adding the deck to the local pool…</p>}
+      {selected.length > 0 && <div className="notice success" role="status"><strong>Training pool ready locally</strong><span>{selected.length} immutable deck snapshot{selected.length === 1 ? "" : "s"} stored in .deepdeck/decks.</span></div>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      {selected.length > 0 && <div className="training-launch">
+        <label>Model name<input value={modelName} maxLength={64} onChange={(event) => setModelName(event.target.value)} placeholder="Example: Montréal Control" /><small>This is your AI's name. V11 or V12 is only its starting architecture.</small></label>
+        <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="v12" disabled={!selected.some((deck) => deck.format?.toLowerCase() === "legacy")}>V12 · Legacy</option><option value="v11" disabled={!selected.some((deck) => deck.format?.toLowerCase() === "commander")}>V11 · Commander</option></select><small>{compatibleDeckCount} {requiredFormat} deck{compatibleDeckCount === 1 ? "" : "s"} available for this model.</small></label>
+        <div className="model-implementation"><strong>{model === "v12" ? "V12 · structured two-player policy" : "V11 · structured multiplayer policy"}</strong><p>{model === "v12" ? "Designed for two-player Legacy: structured observations, legal-action encoding, two relative value slots, self-play collection and PPO updates." : "Designed for Commander: structured observations, legal-action encoding, four multiplayer value slots, shared-policy self-play and PPO updates."}</p><small>Deep Deck provides the architecture and training implementation. The generated weights, name and local model belong to this workspace.</small></div>
+        <details className="runtime-details"><summary>Advanced training settings</summary><div className="advanced-training-grid"><label>Simultaneous training matches<input type="number" min="1" max="32" value={parallelMatches} onChange={(event) => setParallelMatches(Number(event.target.value))} /><small>More matches use more CPU and memory.</small></label><label>GPU memory limit (MiB)<input type="number" min="0" max="24576" step="256" value={gpuMemoryMb} onChange={(event) => setGpuMemoryMb(Number(event.target.value))} /><small>0 lets PyTorch manage the available GPU automatically.</small></label><label className="check-setting"><input type="checkbox" checked={reservePlaytest} onChange={(event) => setReservePlaytest(event.target.checked)} /><span><strong>Keep a version available for playtesting</strong><small>Publishes a stable checkpoint while training continues.</small></span></label></div></details>
+        {started && <div className="notice success" role="status"><strong>Training started</strong><span>The run is now visible in Your agents and Training statistics.</span></div>}
+        <div className="form-actions"><button className="primary" type="button" onClick={() => void startTraining()} disabled={starting || modelName.trim().length < 2 || compatibleDeckCount === 0 || !status?.torch.ready || !status?.engine.healthy}>{starting ? "Starting training…" : `Start ${modelName.trim() || model.toUpperCase()} training`}</button><small>{modelName.trim().length < 2 ? "Give your model a name first." : compatibleDeckCount === 0 ? `Add a ${requiredFormat} deck to train this model.` : "Training runs continuously until you stop it."}</small></div>
+      </div>}
+    </>}
+  </section>;
+}
+
+function formatBytes(bytes: number | null | undefined) {
+  if (bytes === null || bytes === undefined) return "Unavailable";
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+}
+
+function ResourceSystemSummary({ resources }: { resources: ResourceSnapshot | null }) {
+  if (!resources) return null;
+  const ramPercent = resources.system.ramTotalBytes
+    ? Math.round((resources.system.ramUsedBytes / resources.system.ramTotalBytes) * 100)
+    : 0;
   return (
-    <section className="panel configure">
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">Hosted training</span>
-          <h2>Connect without pretending</h2>
-        </div>
-        <span className="step">02</span>
-      </div>
-      <p className="lead">
-        Online inference already uses your account API key. Weight updates need
-        a complete, versioned observation/action/reward trajectory; a replay
-        alone is not declared sufficient yet.
-      </p>
-      <div className="notice warning">
-        <strong>Not ready to launch</strong>
-        {blockers.map((item) => (
-          <span key={item}>{item}</span>
-        ))}
-      </div>
-      <button className="primary" disabled>
-        Start online training
-      </button>
+    <section className="resource-summary" aria-label="Local resource usage">
+      <article><span>System RAM</span><strong>{formatBytes(resources.system.ramUsedBytes)}</strong><small>{ramPercent}% of {formatBytes(resources.system.ramTotalBytes)}</small></article>
+      <article><span>GPU memory</span><strong>{formatBytes(resources.system.gpuUsedBytes)}</strong><small>{resources.system.gpuTotalBytes === null ? "NVIDIA telemetry unavailable" : `of ${formatBytes(resources.system.gpuTotalBytes)}`}</small></article>
+      <article><span>Local Engine</span><strong>{formatBytes(resources.engine.ramBytes)}</strong><small>{resources.engine.activeLocalGames ? `≈ ${formatBytes(resources.engine.ramPerGameEstimate)} per active game` : "No active local game"}</small></article>
     </section>
   );
 }
 
+function AgentAllocationRow({
+  model,
+  resources,
+  refresh,
+}: {
+  model: LocalModel;
+  resources: ResourceSnapshot | null;
+  refresh: () => void;
+}) {
+  const [plan, setPlan] = useState<ResourcePlan | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const workers = resources?.workers.filter((worker) => worker.modelId === model.id) ?? [];
+
+  useEffect(() => {
+    let active = true;
+    void loadModelResources(model.id)
+      .then((value) => { if (active) setPlan(value); })
+      .catch((reason) => { if (active) setMessage(reason instanceof Error ? reason.message : "Unable to load resources."); });
+    return () => { active = false; };
+  }, [model.id]);
+
+  function update(key: keyof ResourcePlan, value: number) {
+    setPlan((current) => current ? { ...current, [key]: value } : current);
+  }
+
+  async function save() {
+    if (!plan) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      setPlan(await saveModelResources(model.id, plan));
+      setMessage("Resource allocation saved.");
+      refresh();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to save resources.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const ramBytes = workers.reduce((total, worker) => total + worker.ramBytes, 0);
+  const gpuBytes = workers.reduce(
+    (total, worker) => total + (worker.gpuBytes ?? 0),
+    0,
+  );
+
+  return (
+    <tr>
+      <th scope="row">
+        <span className={`model-ready ${model.ready ? "ready" : ""}`}>
+          {model.ready ? "Playable" : "Preparing weights"}
+        </span>
+        <strong>{model.name}</strong>
+        <small>{model.architecture.toUpperCase()} · {model.format}</small>
+      </th>
+      {!plan ? (
+        <td colSpan={4}>Loading allocation…</td>
+      ) : (
+        <>
+          <td className="agent-allocation-resources">
+            <label>
+              GPU cap
+              <span>
+                <input
+                  aria-label={`GPU memory limit for ${model.name}`}
+                  type="number"
+                  min="0"
+                  max="24576"
+                  step="256"
+                  value={plan.gpuMemoryMb}
+                  onChange={(event) => update("gpuMemoryMb", Number(event.target.value))}
+                />
+                MiB
+              </span>
+            </label>
+            <small>{formatBytes(ramBytes)} RAM · {formatBytes(gpuBytes)} GPU active</small>
+          </td>
+          {([
+            ["localMatches", "Play", 8],
+            ["trainingMatches", "Training", 32],
+            ["leagueMatches", "League", 32],
+          ] as const).map(([key, label, maximum]) => (
+            <td className="agent-allocation-slot" key={key}>
+              <input
+                aria-label={`${label} slots for ${model.name}`}
+                type="number"
+                min="0"
+                max={maximum}
+                value={plan[key]}
+                onChange={(event) => update(key, Number(event.target.value))}
+              />
+              <small>{plan[key] === 0 ? "Paused" : `${plan[key]} simultaneous`}</small>
+            </td>
+          ))}
+        </>
+      )}
+      <td className="agent-allocation-save">
+        <button className="secondary" type="button" disabled={saving || !plan} onClick={() => void save()}>
+          {saving ? "Saving…" : "Apply"}
+        </button>
+        {message && <small role="status">{message}</small>}
+      </td>
+    </tr>
+  );
+}
+
+function AgentAllocationTable({
+  models,
+  resources,
+  refresh,
+}: {
+  models: LocalModel[];
+  resources: ResourceSnapshot | null;
+  refresh: () => void;
+}) {
+  return (
+    <div className="agent-allocation-scroll">
+      <table className="agent-allocation-table" aria-label="Agent resource allocation">
+        <thead>
+          <tr>
+            <th scope="col">Agent</th>
+            <th scope="col">Resources</th>
+            <th scope="col">Play</th>
+            <th scope="col">Training</th>
+            <th scope="col">League</th>
+            <th scope="col">Apply</th>
+          </tr>
+        </thead>
+        <tbody>
+          {models.map((model) => (
+            <AgentAllocationRow
+              key={model.id}
+              model={model}
+              resources={resources}
+              refresh={refresh}
+            />
+          ))}
+        </tbody>
+      </table>
+      <p className="resource-caveat">
+        Values are per-agent limits. Zero pauses that activity without deleting the agent.
+        RAM and GPU usage come from the active process tree.
+      </p>
+    </div>
+  );
+}
+
+function trainingMetrics(job: Job) {
+  for (const line of [...job.logs].reverse()) {
+    try {
+      const value = JSON.parse(line) as Record<string, unknown>;
+      if (typeof value.loss === "number") return value;
+      const training = value.training;
+      if (training && typeof training === "object") {
+        const record = training as Record<string, unknown>;
+        const ppo = record.ppo;
+        if (ppo && typeof ppo === "object") {
+          return {
+            ...(ppo as Record<string, unknown>),
+            updates: record.trainingStep ?? record.episode,
+          };
+        }
+      }
+    } catch { /* Non-JSON log line. */ }
+  }
+  return null;
+}
+
+function StatisticsPage({ jobs, decks }: { jobs: Job[]; decks: DeckStatistic[] }) {
+  const runs = jobs.filter((job) => job.kind.startsWith("training."));
+  const completed = runs.filter((job) => job.status === "completed");
+  return <section className="statistics-page">
+    <div className="stats-summary"><article><span>Total runs</span><strong>{runs.length}</strong></article><article><span>Completed</span><strong>{completed.length}</strong></article><article><span>Checkpoints</span><strong>{completed.filter((job) => job.artifact_path).length}</strong></article></div>
+    <section className="panel"><div className="section-heading"><div><span className="eyebrow">Stored locally in .deepdeck/learner.db</span><h2>Run history</h2></div></div>
+      {runs.length === 0 ? <div className="empty"><span>◇</span><p>No local training has been launched yet.</p></div> : <div className="stats-table" role="table">
+        <div className="stats-row stats-head" role="row"><span>Run</span><span>Status</span><span>Loss</span><span>Policy</span><span>Value</span><span>Updates</span></div>
+        {runs.map((job) => { const metrics = trainingMetrics(job); return <div className="stats-row" role="row" key={job.id}><span><strong>{job.label}</strong><small>{new Date(job.created_at).toLocaleString()}</small></span><span>{job.status}</span><span>{metrics ? Number(metrics.loss).toFixed(4) : "—"}</span><span>{metrics ? Number(metrics.policy_loss).toFixed(4) : "—"}</span><span>{metrics ? Number(metrics.value_loss).toFixed(4) : "—"}</span><span>{metrics ? String(metrics.updates) : "—"}</span></div>; })}
+      </div>}
+    </section>
+    <section className="panel"><div className="section-heading"><div><span className="eyebrow">Balanced self-play matchmaking</span><h2>Deck ratings</h2><p className="section-lead">The trainer uses a Plackett–Luce rating, similar in purpose to Elo but designed for ranked multiplayer outcomes. Conservative rating (μ − 3σ) is used to sample closer matchups.</p></div></div>
+      {decks.length === 0 ? <div className="empty"><span>◇</span><p>Deck ratings will appear when a named pool training run starts.</p></div> : <div className="stats-table deck-stats-table" role="table">
+        <div className="stats-row stats-head" role="row"><span>Agent · deck</span><span>PL rank</span><span>Conservative</span><span>μ ± σ</span><span>Matches</span><span>Game W–L</span><span>Win rate</span></div>
+        {decks.map((deck) => <div className="stats-row" role="row" key={`${deck.modelId}-${deck.deckVersionId}`}><span><strong>{deck.deckName}</strong><small>{deck.modelName} · {deck.format}</small></span><span>{deck.rank ?? "—"}</span><span>{deck.ordinal.toFixed(2)}</span><span>{deck.mu.toFixed(2)} ± {deck.sigma.toFixed(2)}</span><span>{deck.matches}</span><span>{deck.gameWins}–{deck.gameLosses}</span><span>{deck.winRate === null ? "—" : `${Math.round(deck.winRate * 100)}%`}</span></div>)}
+      </div>}
+    </section>
+  </section>;
+}
+
 function PlaytestForm({
   status,
+  models,
   refresh,
 }: {
   status: CapabilityStatus | null;
+  models: LocalModel[];
   refresh: () => void;
 }) {
-  const [agent, setAgent] = useState("random");
-  const [format, setFormat] = useState("legacy");
+  const playableModels = models.filter((model) => model.ready);
+  const [modelId, setModelId] = useState("");
+  const selectedModel = playableModels.find((model) => model.id === modelId);
+  const format = selectedModel?.format ?? "legacy";
   const [ownDeck, setOwnDeck] = useState("");
   const [opponentDeck, setOpponentDeck] = useState("");
   const [deckSearch, setDeckSearch] = useState("");
-  const [decks, setDecks] = useState<LocalDeck[]>([]);
-  const [catalogError, setCatalogError] = useState("");
   const [error, setError] = useState("");
   const blockers = workflowBlockers(status, "local-playtest");
   useEffect(() => {
-    if (!status?.engine.healthy) return;
-    let active = true;
-    void loadLocalDecks(format, status.engine.url)
-      .then((items) => {
-        if (!active) return;
-        setDecks(items);
-        setOwnDeck(items[0]?.deckSessionId ?? "");
-        setOpponentDeck(
-          items[1]?.deckSessionId ?? items[0]?.deckSessionId ?? "",
-        );
-        setCatalogError("");
-      })
-      .catch((reason) => {
-        if (active)
-          setCatalogError(
-            reason instanceof Error
-              ? reason.message
-              : "Unable to load local decks.",
-          );
-      });
-    return () => {
-      active = false;
-    };
-  }, [format, status?.engine.healthy, status?.engine.url]);
-  const visibleDecks = decks.filter((deck) =>
-    deck.deckName.toLowerCase().includes(deckSearch.toLowerCase()),
+    if (!playableModels.some((model) => model.id === modelId)) {
+      const first = playableModels[0];
+      setModelId(first?.id ?? "");
+      setOwnDeck(first ? "random" : "");
+      setOpponentDeck(first ? "random" : "");
+    }
+  }, [modelId, playableModels]);
+  const poolDecks = selectedModel?.decks ?? [];
+  const visibleDecks = poolDecks.filter((deck) =>
+    deck.name.toLowerCase().includes(deckSearch.toLowerCase()),
   );
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -898,10 +1230,12 @@ function PlaytestForm({
     try {
       await startJob({
         kind: "playtest.agent",
-        agent,
+        model_id: selectedModel?.id,
+        agent: selectedModel?.architecture,
+        checkpoint: selectedModel?.checkpointPath,
         format,
-        deck_session_id: ownDeck,
-        opponent_deck_session_id: opponentDeck,
+        deck_version_id: ownDeck,
+        opponent_deck_version_id: opponentDeck,
         engine_url: status?.engine.url,
       });
       refresh();
@@ -924,28 +1258,25 @@ function PlaytestForm({
         <label>
           Agent
           <select
-            value={agent}
-            onChange={(event) => setAgent(event.target.value)}
+            required
+            value={modelId}
+            onChange={(event) => {
+              const next = playableModels.find((model) => model.id === event.target.value);
+              setModelId(event.target.value);
+              setOwnDeck(next ? "random" : "");
+              setOpponentDeck(next ? "random" : "");
+            }}
           >
-            <option value="random">Random baseline</option>
-            <option value="alexios">Alexios rules</option>
-            <option value="v12">V12 example</option>
-            <option value="v11">V11 example</option>
+            <option value="">Choose one of your models</option>
+            {playableModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.architecture.toUpperCase()}</option>)}
           </select>
+          <small>Only models with local playable weights are listed.</small>
         </label>
-        <label>
-          Format
-          <select
-            value={format}
-            onChange={(event) => setFormat(event.target.value)}
-          >
-            <option value="legacy">Legacy</option>
-            <option value="commander">Commander</option>
-          </select>
-        </label>
+        <div className="automatic-setting"><span>Format</span><strong>{format[0].toUpperCase() + format.slice(1)}</strong><small>Defined by your model's architecture.</small></div>
       </div>
+      {playableModels.length === 0 && <div className="notice warning"><strong>No playable local model yet</strong><span>Start V11 or V12 training and wait for its first local checkpoint.</span></div>}
       <label>
-        Search available local decks
+        Search this model's training pool
         <input
           type="search"
           value={deckSearch}
@@ -961,10 +1292,10 @@ function PlaytestForm({
             value={ownDeck}
             onChange={(event) => setOwnDeck(event.target.value)}
           >
-            <option value="">Choose a deck</option>
+            <option value="random">Random from this pool</option>
             {visibleDecks.map((deck) => (
-              <option key={deck.deckSessionId} value={deck.deckSessionId}>
-                {deck.deckName}
+              <option key={deck.id} value={deck.id}>
+                {deck.name}
               </option>
             ))}
           </select>
@@ -976,20 +1307,16 @@ function PlaytestForm({
             value={opponentDeck}
             onChange={(event) => setOpponentDeck(event.target.value)}
           >
-            <option value="">Choose a deck</option>
+            <option value="random">Random near your deck's Plackett–Luce strength</option>
             {visibleDecks.map((deck) => (
-              <option key={deck.deckSessionId} value={deck.deckSessionId}>
-                {deck.deckName}
+              <option key={deck.id} value={deck.id}>
+                {deck.name}
               </option>
             ))}
           </select>
         </label>
       </div>
-      {catalogError && (
-        <p className="form-error" role="alert">
-          {catalogError}
-        </p>
-      )}
+      {selectedModel && poolDecks.length === 0 && <div className="notice warning"><strong>No deck snapshot is attached to this model</strong><span>Start a new named training run from a deck pool.</span></div>}
       {blockers.length > 0 && (
         <div className="notice warning">
           <strong>Before you start</strong>
@@ -1004,15 +1331,15 @@ function PlaytestForm({
         </p>
       )}
       <div className="notice">
-        <strong>What this launches today</strong>
+        <strong>Selection order</strong>
         <span>
-          The agent and its opponent run in the local Rust session. Pixi is
-          prepared; embedding its visual session host is the next integration.
+          Your random deck is resolved first. The AI deck is then sampled by
+          Plackett–Luce proximity, while preserving some matchup diversity.
         </span>
       </div>
       <button
         className="primary"
-        disabled={blockers.length > 0 || !ownDeck || !opponentDeck}
+        disabled={blockers.length > 0 || !selectedModel || !ownDeck || !opponentDeck}
       >
         Launch behavior test <span>▶</span>
       </button>
@@ -1022,14 +1349,16 @@ function PlaytestForm({
 
 function MatchmakingForm({
   status,
-  jobs,
+  models,
   refresh,
 }: {
   status: CapabilityStatus | null;
-  jobs: Job[];
+  models: LocalModel[];
   refresh: () => void;
 }) {
-  const [agent, setAgent] = useState("random");
+  const playableModels = models.filter((model) => model.ready);
+  const [modelId, setModelId] = useState("");
+  const selectedModel = playableModels.find((model) => model.id === modelId);
   const [format, setFormat] = useState("legacy");
   const [query, setQuery] = useState("");
   const [decks, setDecks] = useState<DeckSummary[]>([]);
@@ -1037,17 +1366,24 @@ function MatchmakingForm({
   const [competitions, setCompetitions] = useState<CompetitionSummary[]>([]);
   const [speed, setSpeed] = useState("1s");
   const [continuous, setContinuous] = useState(false);
-  const [checkpoint, setCheckpoint] = useState("");
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
   const blockers = workflowBlockers(status, "matchmaking");
   const competition = competitions.find(
     (item) => item.format.toLowerCase() === format,
   );
-  const checkpoints = jobs.filter(
-    (job) => job.status === "completed" && job.artifact_path,
-  );
-  const needsCheckpoint = agent === "v11" || agent === "v12";
+
+  useEffect(() => {
+    if (!playableModels.some((model) => model.id === modelId)) {
+      setModelId(playableModels[0]?.id ?? "");
+      return;
+    }
+    if (selectedModel && selectedModel.format !== format) {
+      setFormat(selectedModel.format);
+      setDecks([]);
+      setSelectedDeck(null);
+    }
+  }, [format, modelId, playableModels, selectedModel]);
 
   useEffect(() => {
     if (!status?.hosted.api_key_configured) {
@@ -1094,10 +1430,11 @@ function MatchmakingForm({
     try {
       await startJob({
         kind: "matchmaking.agent",
-        agent,
+        model_id: selectedModel?.id,
+        agent: selectedModel?.architecture,
         speed,
         continuous,
-        checkpoint: needsCheckpoint ? checkpoint : undefined,
+        checkpoint: selectedModel?.checkpointPath,
         competition_version_id: competition.versionId,
         deck_version_id: selectedDeck.id,
       });
@@ -1165,17 +1502,8 @@ function MatchmakingForm({
       <form className="deck-finder" onSubmit={findDecks}>
         <label>
           Format
-          <select
-            value={format}
-            onChange={(event) => {
-              setFormat(event.target.value);
-              setDecks([]);
-              setSelectedDeck(null);
-            }}
-          >
-            <option value="legacy">Legacy</option>
-            <option value="commander">Commander</option>
-          </select>
+          <input value={format[0].toUpperCase() + format.slice(1)} readOnly />
+          <small>Set by the selected local model.</small>
         </label>
         <label>
           Deck name or creator
@@ -1224,13 +1552,12 @@ function MatchmakingForm({
           <label>
             Agent
             <select
-              value={agent}
-              onChange={(event) => setAgent(event.target.value)}
+              required
+              value={modelId}
+              onChange={(event) => setModelId(event.target.value)}
             >
-              <option value="random">Random baseline</option>
-              <option value="alexios">Alexios rules</option>
-              <option value="v12">V12 example</option>
-              <option value="v11">V11 example</option>
+              <option value="">Choose one of your models</option>
+              {playableModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.architecture.toUpperCase()}</option>)}
             </select>
           </label>
           <label>
@@ -1245,23 +1572,7 @@ function MatchmakingForm({
             </select>
           </label>
         </div>
-        {needsCheckpoint && (
-          <label>
-            Trained checkpoint
-            <select
-              required
-              value={checkpoint}
-              onChange={(event) => setCheckpoint(event.target.value)}
-            >
-              <option value="">Choose a completed training run</option>
-              {checkpoints.map((job) => (
-                <option key={job.id} value={job.artifact_path ?? ""}>
-                  {job.label} · {job.artifact_path}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        {playableModels.length === 0 && <div className="notice warning"><strong>No local AI can join yet</strong><span>Start training and wait for your model's first playable checkpoint.</span></div>}
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -1300,7 +1611,7 @@ function MatchmakingForm({
             blockers.length > 0 ||
             !selectedDeck ||
             !competition ||
-            (needsCheckpoint && !checkpoint)
+            !selectedModel
           }
         >
           Join matchmaking <span>→</span>
@@ -1358,31 +1669,49 @@ function JobsPanel({ jobs, refresh }: { jobs: Job[]; refresh: () => void }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>("overview");
-  const [workflow, setWorkflow] = useState<Workflow>("local-training");
+  const [page, setPage] = useState<Page>("train");
   const [status, setStatus] = useState<CapabilityStatus | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [models, setModels] = useState<LocalModel[]>([]);
+  const [resources, setResources] = useState<ResourceSnapshot | null>(null);
+  const [deckStatistics, setDeckStatistics] = useState<DeckStatistic[]>([]);
   const [loadError, setLoadError] = useState("");
+  const [setupOpen, setSetupOpen] = useState(true);
+  const [trainingOpen, setTrainingOpen] = useState(true);
+  const [creatingTraining, setCreatingTraining] = useState(false);
+  const [closedPlaytestSession, setClosedPlaytestSession] = useState("");
   const pageHeading = useRef<HTMLHeadingElement>(null);
+  const setupWasResolved = useRef(false);
+  const refreshInFlight = useRef(false);
 
   async function refresh() {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
-      const [nextStatus, nextJobs] = await Promise.all([
-        loadStatus(),
-        loadJobs(),
+      const results = await Promise.allSettled([
+        loadStatus().then(setStatus),
+        loadJobs().then(setJobs),
+        loadModels().then(setModels),
+        loadResources().then(setResources),
+        loadDeckStatistics().then(setDeckStatistics),
       ]);
-      setStatus(nextStatus);
-      setJobs(nextJobs);
-      setLoadError("");
-    } catch (reason) {
-      setLoadError(
-        reason instanceof Error ? reason.message : "Controller unavailable.",
+      const failure = results.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
       );
+      setLoadError(
+        failure
+          ? failure.reason instanceof Error
+            ? failure.reason.message
+            : "Controller unavailable."
+          : "",
+      );
+    } finally {
+      refreshInFlight.current = false;
     }
   }
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2500);
+    const timer = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
@@ -1397,18 +1726,21 @@ export default function App() {
     [activityJobs],
   );
   const stackReady = Boolean(status?.engine.healthy && status?.pixi.built);
+  const activePlaytest = jobs.find(
+    (job) =>
+      job.kind === "playtest.agent" &&
+      job.status === "running" &&
+      job.details?.sessionId &&
+      job.details.sessionId !== closedPlaytestSession,
+  );
   const accountReady = Boolean(status?.hosted.api_key_configured);
-  const trainingStep = jobs.some(
-    (job) => job.kind.startsWith("training.") && job.status === "completed",
-  )
-    ? 3
-    : jobs.some(
-          (job) =>
-            job.kind.startsWith("training.") &&
-            ["queued", "running"].includes(job.status),
-        )
-      ? 2
-      : 1;
+  const setupReady = Boolean(
+    accountReady && status?.engine.synced && status?.pixi.synced,
+  );
+  useEffect(() => {
+    if (setupReady && !setupWasResolved.current) setSetupOpen(false);
+    if (status) setupWasResolved.current = setupReady;
+  }, [setupReady, status]);
   const playtestStep = jobs.some((job) => job.kind === "playtest.agent")
     ? 3
     : stackReady
@@ -1420,7 +1752,6 @@ export default function App() {
       ? 2
       : 1;
   function selectWorkflow(next: Workflow) {
-    setWorkflow(next);
     setPage(
       next === "local-playtest"
         ? "playtest"
@@ -1429,9 +1760,33 @@ export default function App() {
           : "train",
     );
   }
-
   return (
     <div className="app-shell">
+      {activePlaytest?.details?.sessionId && (
+        <PixiErrorBoundary
+          key={activePlaytest.details.sessionId}
+          onClose={() => {
+            setClosedPlaytestSession(activePlaytest.details?.sessionId ?? "");
+            void stopJob(activePlaytest.id).then(refresh);
+          }}
+        >
+          <Suspense fallback={<section className="pixi-recovery" role="status"><h2>Opening Pixi…</h2></section>}>
+            <LocalPixiTable
+              deckVersionIds={[
+                activePlaytest.details.playerDeck?.id ?? "",
+                activePlaytest.details.opponentDeck?.id ?? "",
+              ].filter(Boolean)}
+              engineUrl={activePlaytest.details.engineUrl ?? status?.engine.url ?? "http://127.0.0.1:8787"}
+              sessionId={activePlaytest.details.sessionId}
+              matchup={`${activePlaytest.details.playerDeck?.name ?? "Your deck"} vs ${activePlaytest.details.opponentDeck?.name ?? "AI deck"}`}
+              onClose={() => {
+                setClosedPlaytestSession(activePlaytest.details?.sessionId ?? "");
+                void stopJob(activePlaytest.id).then(refresh);
+              }}
+            />
+          </Suspense>
+        </PixiErrorBoundary>
+      )}
       <aside>
         <a
           className="brand"
@@ -1555,36 +1910,34 @@ export default function App() {
         )}
         {page === "train" && (
           <>
-            <WorkflowJourney
-              active={trainingStep}
-              steps={[
-                { label: "Configure", detail: "Model, format, and decks" },
-                { label: "Train", detail: "Collect trajectories and learn" },
-                { label: "Test", detail: "Watch its decisions" },
-              ]}
-            />
-            {workflow === "online-training" ? (
-              <OnlinePanel status={status} />
-            ) : (
-              <TrainingForm status={status} refresh={refresh} />
-            )}
-            <div className="segmented">
-              <button
-                className={workflow === "local-training" ? "selected" : ""}
-                onClick={() => setWorkflow("local-training")}
-              >
-                Local
+            <section className={`flow-section ${setupReady ? "complete" : "attention"}`}>
+              <button className="flow-section-toggle" type="button" aria-expanded={setupOpen} onClick={() => setSetupOpen(!setupOpen)}>
+                <span><b>1</b><span><strong>Application setup</strong><small>API key, Engine and Pixi</small></span></span>
+                <span className="flow-section-state">{setupReady ? "Ready" : "Action required"}<i>{setupOpen ? "−" : "+"}</i></span>
               </button>
-              <button
-                className={workflow === "online-training" ? "selected" : ""}
-                onClick={() => setWorkflow("online-training")}
-              >
-                Hosted (later)
+              {setupOpen && <div className="flow-section-body"><AccountSetup status={status} refresh={refresh} /><DependencyPanel status={status} jobs={jobs} refresh={refresh} /></div>}
+            </section>
+
+            <section className="flow-section">
+              <button className="flow-section-toggle" type="button" aria-expanded={trainingOpen} onClick={() => setTrainingOpen(!trainingOpen)}>
+                <span><b>2</b><span><strong>Your agents</strong><small>Review trained agents and past runs</small></span></span>
+                <span className="flow-section-state">{models.length} local model{models.length === 1 ? "" : "s"}<i>{trainingOpen ? "−" : "+"}</i></span>
               </button>
-            </div>
-            {activityJobs.length > 0 && (
-              <JobsPanel jobs={activityJobs} refresh={refresh} />
-            )}
+              {trainingOpen && <div className="flow-section-body">
+                <div className="agent-toolbar">
+                  <div><span className="eyebrow">Your AI</span><h2>Local models</h2></div>
+                  <button className="primary" type="button" onClick={() => setCreatingTraining(!creatingTraining)}>{creatingTraining ? "Cancel" : "+ Local training"}</button>
+                </div>
+                <ResourceSystemSummary resources={resources} />
+                {models.length > 0 ? (
+                  <AgentAllocationTable models={models} resources={resources} refresh={refresh} />
+                ) : (
+                  <div className="empty-agent"><span>AI</span><div><strong>No local model yet</strong><p>Name a model, choose V11 or V12, then start training to create weights owned by this workspace.</p></div></div>
+                )}
+                {activityJobs.some((job) => job.kind.startsWith("training.")) && <JobsPanel jobs={activityJobs.filter((job) => job.kind.startsWith("training."))} refresh={refresh} />}
+                {creatingTraining && <div className="new-training"><LocalTrainingForm status={status} refresh={refresh} /></div>}
+              </div>}
+            </section>
           </>
         )}
         {page === "playtest" && (
@@ -1599,7 +1952,7 @@ export default function App() {
             />
             <DependencyPanel status={status} jobs={jobs} refresh={refresh} />
             {stackReady ? (
-              <PlaytestForm status={status} refresh={refresh} />
+              <PlaytestForm status={status} models={models} refresh={refresh} />
             ) : (
               <LockedNextStep />
             )}
@@ -1620,7 +1973,7 @@ export default function App() {
             />
             <MatchmakingForm
               status={status}
-              jobs={activityJobs}
+              models={models}
               refresh={refresh}
             />
             {activityJobs.length > 0 && (
@@ -1628,6 +1981,7 @@ export default function App() {
             )}
           </>
         )}
+        {page === "statistics" && <StatisticsPage jobs={activityJobs} decks={deckStatistics} />}
         {page === "representation" && (
           <section className="panel prose">
             <span className="eyebrow">Magic → tensor</span>
@@ -1659,26 +2013,21 @@ export default function App() {
           <section className="model-grid">
             <article className="panel model">
               <span>V12</span>
-              <h2>Two-player policy</h2>
+              <h2>Structured two-player policy</h2>
               <p>
-                Legacy-oriented example with two value slots. Weights are
-                intentionally not public.
+                Legacy architecture with structured observations, encoded legal
+                actions, two relative value slots, self-play collection and PPO
+                updates. Deep Deck publishes the implementation; training creates
+                the user's own local weights.
               </p>
             </article>
             <article className="panel model">
               <span>V11</span>
-              <h2>Multiplayer policy</h2>
+              <h2>Structured multiplayer policy</h2>
               <p>
-                Commander-oriented example with four value slots and the same
-                public encoder family.
-              </p>
-            </article>
-            <article className="panel model">
-              <span>Baseline</span>
-              <h2>Readable behavior</h2>
-              <p>
-                Random and Alexios rule-based agents make protocol and behavior
-                testing approachable.
+                Commander architecture with four multiplayer value slots,
+                shared-policy self-play and PPO updates. Its weights are created
+                and retained in the user's local workspace.
               </p>
             </article>
           </section>
