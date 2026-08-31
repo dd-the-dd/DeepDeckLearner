@@ -31,11 +31,11 @@ def _model_decks(root: Path, run: Path, metadata: dict[str, Any]) -> list[dict[s
                 "id": str(deck.get("id", version_id)),
                 "name": str(deck.get("name", "Local training deck")),
                 "creator": deck.get("creator"),
-                "version": int(deck.get("version", 1)),
+                "version": int(deck.get("version") or 1),
                 "format": str(deck.get("format", metadata.get("format", "legacy"))),
                 "colors": deck.get("colors", []),
                 "playableCardCount": int(
-                    deck.get("playableCardCount", deck.get("cardCount", 0))
+                    deck.get("playableCardCount", deck.get("cardCount", 0)) or 0
                 ),
             }
         )

@@ -183,7 +183,9 @@ class JobManager:
             model_name = self._local_model_name(raw)
             self._bounded_int(raw, "parallel_matches", default=1, minimum=1, maximum=32)
             self._bounded_int(raw, "gpu_memory_mb", default=0, minimum=0, maximum=24 * 1024)
-            argv, label, artifact = [], f"{model_name} · {model.upper()} · preparing", None
+            argv: list[str] = []
+            label = f"{model_name} · {model.upper()} · preparing"
+            artifact: Path | None = None
             deferred_payload: dict[str, Any] | None = dict(raw)
         else:
             argv, label, artifact = self._command(kind, raw)
@@ -521,8 +523,10 @@ class JobManager:
                 if missing_rules:
                     worker_count = min(8, len(missing_rules))
                     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                        for card_id, rules in executor.map(parse_rules, missing_rules.items()):
-                            rules_cache[card_id] = rules
+                        for card_id, parsed_rules in executor.map(
+                            parse_rules, missing_rules.items()
+                        ):
+                            rules_cache[card_id] = parsed_rules
                 cards: list[dict[str, Any]] = []
                 for entry in entries:
                     quantity = max(0, int(entry.get("quantity", 0)))
@@ -536,8 +540,11 @@ class JobManager:
                         raise JobValidationError(
                             f"{deck.get('name', version_id)} contains a card without an id."
                         )
-                    rules = entry.get("rules")
-                    if not isinstance(rules, list):
+                    raw_rules = entry.get("rules")
+                    rules: list[Any]
+                    if isinstance(raw_rules, list):
+                        rules = raw_rules
+                    else:
                         cached = rules_cache.get(card_id)
                         if isinstance(cached, list):
                             rules = cached
