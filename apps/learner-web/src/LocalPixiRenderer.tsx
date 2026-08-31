@@ -14,6 +14,7 @@ import type { EngineView } from "./LocalPixiTable";
 import type { DeckPresentation } from "./api";
 import {
   actionTargetKeys,
+  cardOrderLegend,
   candidateTargetIds,
   castingPaymentPresentations,
   selectPlanTarget,
@@ -33,6 +34,7 @@ type PixiRuntime = {
 };
 
 type Interaction = {
+  orderedIds?: string[];
   selectedIds?: Set<string>;
   targetableIds?: Set<string>;
   targeting?: boolean;
@@ -45,6 +47,7 @@ function sceneCard(card: any, kind: string, zone: string, interaction: Interacti
   const id = String(card?.id ?? "");
   const selected = Boolean(interaction.selectedIds?.has(id));
   const targetable = !selected && Boolean(interaction.targetableIds?.has(id));
+  const selectedIndex = interaction.orderedIds?.indexOf(id) ?? -1;
   return {
     actionable: selected || (!interaction.targeting && Boolean(card?.actionState?.actionable)),
     attachedTo: card?.state?.attachedTo ?? null,
@@ -60,6 +63,7 @@ function sceneCard(card: any, kind: string, zone: string, interaction: Interacti
     linkedTo: card?.state?.linkedExileSourceId ?? null,
     name: card?.name ?? "Unknown card",
     raw: card,
+    selectionOrder: selectedIndex >= 0 ? selectedIndex + 1 : null,
     sourceZone: card?.sourceZone ?? zone,
     tapped: Boolean(card?.state?.tapped),
     targetable,
@@ -191,6 +195,7 @@ function mountPixi(
   const vue = createApp({
     render: () => h(pixi.PixiGame, {
       brandName: "Deep Deck Learner",
+      cardBackUrl: "/api/scryfall-images/back.png",
       mode: "play",
       scene: currentScene.value,
       onCardClick: (payload: any) => events.card.current(payload),
@@ -283,6 +288,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     ));
   }, [activeTargetPlan, cardChoice?.maximum, selectedCardIds.length, selectedIds, tableChoiceIds]);
   const interaction = useMemo<Interaction>(() => ({
+    orderedIds: selectedCardIds,
     prompt: activeTargetPlan
       ? `${activeTargetPlan.prompt} (${activeTargetPlan.index + 1}/${activeTargetPlan.keys.length})`
       : cardChoice && tableChoiceCards.length
@@ -291,7 +297,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     selectedIds,
     targetableIds,
     targeting: Boolean(activeTargetPlan || cardChoice),
-  }), [activeTargetPlan, cardChoice, selectedIds, tableChoiceCards.length, targetableIds]);
+  }), [activeTargetPlan, cardChoice, selectedCardIds, selectedIds, tableChoiceCards.length, targetableIds]);
   const scene = useMemo(() => pixiScene(projection, interaction), [interaction, projection]);
   const initialScene = useRef(scene);
   const initialSelectionKey = JSON.stringify(
@@ -441,6 +447,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     selectedCardIds.length >= Number(cardChoice.minimum) &&
     selectedCardIds.length <= Number(cardChoice.maximum),
   );
+  const orderLegend = cardOrderLegend(cardChoice);
   const zoneChoicePanelWidth = Math.min(
     54,
     Math.max(16, Math.min(zoneChoiceCards.length, 6) * 8.25 + 1.6),
@@ -461,6 +468,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     {!activeTargetPlan && cardChoice && tableChoiceCards.length > 0 && <div className="pixi-target-prompt" role="status">
       <strong>{cardChoice.prompt}</strong>
       <span>Choose the highlighted cards directly on the table · selected {selectedCardIds.length}/{cardChoice.minimum}–{cardChoice.maximum}</span>
+      {orderLegend && <span className="pixi-order-legend">{orderLegend}</span>}
       <button
         type="button"
         disabled={!cardSelectionValid}
@@ -488,7 +496,11 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
         width: `min(calc(100vw - 2rem), ${zoneChoicePanelWidth}rem)`,
       }}
     >
-      <header><div><strong>{tableChoiceCards.length ? "Cards outside the table" : cardChoice.prompt}</strong><span>Select {cardChoice.minimum}–{cardChoice.maximum}</span></div></header>
+      <header><div>
+        <strong>{tableChoiceCards.length ? "Cards outside the table" : cardChoice.prompt}</strong>
+        <span>Select {cardChoice.minimum}–{cardChoice.maximum}</span>
+        {orderLegend && <small className="pixi-order-legend">{orderLegend}</small>}
+      </div></header>
       <div className="pixi-card-choice-grid">{zoneChoiceCards.map((card: any) => {
         const order = selectedCardIds.indexOf(card.id);
         return <button key={card.id} type="button" className={order >= 0 ? "selected" : ""} onClick={() => chooseCard(String(card.id))}>

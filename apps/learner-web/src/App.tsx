@@ -11,13 +11,17 @@ import {
 } from "react";
 
 import {
+  createModel,
+  deleteModel,
   loadCompetitions,
+  loadActiveGames,
   loadDeckStatistics,
   loadJobs,
   loadModelResources,
   loadModels,
   loadResources,
   loadStatus,
+  loadTrainingStatistics,
   downloadDeck,
   loadTrainingDeckPool,
   saveApiKey,
@@ -25,8 +29,10 @@ import {
   saveTrainingDeckPool,
   searchDecks,
   startJob,
+  stopGame,
   stopJob,
   type CapabilityStatus,
+  type ActiveGame,
   type CompetitionSummary,
   type DeckSummary,
   type DeckStatistic,
@@ -34,6 +40,7 @@ import {
   type LocalModel,
   type ResourcePlan,
   type ResourceSnapshot,
+  type TrainingStatistic,
 } from "./api";
 import { workflowBlockers, type Workflow } from "./readiness";
 
@@ -69,6 +76,7 @@ class PixiErrorBoundary extends Component<
 type Page =
   | "overview"
   | "train"
+  | "jobs"
   | "playtest"
   | "compete"
   | "statistics"
@@ -76,15 +84,16 @@ type Page =
   | "models";
 
 const pages: Array<{ id: Page; label: string; glyph: string }> = [
-  { id: "train", label: "Train", glyph: "01" },
-  { id: "playtest", label: "Play against your AI", glyph: "02" },
-  { id: "compete", label: "League", glyph: "03" },
+  { id: "train", label: "Agent configuration", glyph: "01" },
+  { id: "jobs", label: "Jobs", glyph: "02" },
+  { id: "playtest", label: "Play against your AI", glyph: "03" },
   { id: "statistics", label: "Training statistics", glyph: "04" },
 ];
 
 const pageHeadings: Record<Page, string> = {
   overview: "What do you want to do?",
-  train: "Train your agents",
+  train: "Agent configuration",
+  jobs: "Jobs and live games",
   playtest: "Play against your AI",
   compete: "Play in the League",
   statistics: "Training statistics",
@@ -303,6 +312,122 @@ function shortRevision(revision: string | null) {
   return revision ? revision.slice(0, 8) : "not installed";
 }
 
+const dependencyKinds = new Set([
+  "dependency.stack.prepare",
+  "dependency.engine.start",
+  "dependency.pixi.prepare",
+  "dependency.sync",
+]);
+
+function dependencyActivity(
+  kind: string,
+  status: CapabilityStatus | null,
+  job?: Job,
+) {
+  const engine = status?.engine;
+  const pixi = status?.pixi;
+  if (kind === "dependency.stack.prepare") {
+    if (!engine?.synced || !pixi?.synced) {
+      return {
+        title: "Syncing compatible Engine and Pixi sources",
+        detail: "Retrieving the reviewed revisions selected for this Learner release.",
+        step: 1,
+      };
+    }
+    if (!pixi.built) {
+      return {
+        title: "Building the Pixi visual client",
+        detail: "Installing locked packages and preparing the local game table.",
+        step: 2,
+      };
+    }
+    if (!engine?.built) {
+      return {
+        title: "Compiling DeepDeckEngine",
+        detail: "Rust is building the local rules server. The first build can take a few minutes.",
+        step: 3,
+      };
+    }
+    return {
+      title: engine.healthy ? "Verifying the local game stack" : "Starting DeepDeckEngine",
+      detail: engine.healthy
+        ? "Checking that Engine and Pixi are ready for local games."
+        : "Starting the freshly built rules server on this computer.",
+      step: 3,
+    };
+  }
+  if (kind === "dependency.engine.start") {
+    return {
+      title: engine?.built ? "Starting DeepDeckEngine" : "Building DeepDeckEngine",
+      detail: engine?.built
+        ? "Starting the local rules server and checking its health."
+        : "Compiling the Rust rules server before starting it locally.",
+      step: 3,
+    };
+  }
+  if (kind === "dependency.pixi.prepare") {
+    return {
+      title: "Building the Pixi visual client",
+      detail: "Preparing the full-screen local table and its browser assets.",
+      step: 2,
+    };
+  }
+  const syncingPixi = kind === "dependency.sync.pixi" || job?.label.toLowerCase().includes("pixi");
+  return {
+    title: syncingPixi ? "Syncing DeepDeckPixi" : "Syncing DeepDeckEngine",
+    detail: "Switching to the compatible reviewed revision without overwriting local work.",
+    step: 1,
+  };
+}
+
+function DependencyLoader({
+  kind,
+  status,
+  job,
+}: {
+  kind: string;
+  status: CapabilityStatus | null;
+  job?: Job;
+}) {
+  const activity = dependencyActivity(kind, status, job);
+  const latestLog = job?.logs.filter((line) => line.trim()).at(-1);
+  return (
+    <aside
+      className="operation-loader"
+      role="status"
+      aria-label={activity.title}
+      aria-live="polite"
+    >
+      <div className="operation-loader-visual" aria-hidden="true">
+        <i />
+        <i />
+        <span>DD</span>
+      </div>
+      <div className="operation-loader-copy">
+        <span className="eyebrow">Working locally · safe to leave this tab open</span>
+        <strong>{activity.title}</strong>
+        <p>{activity.detail}</p>
+        <div className="operation-loader-track" aria-hidden="true"><i /></div>
+        <small>{latestLog || (job?.status === "queued" ? "Waiting for the local worker…" : "Preparing the next step…")}</small>
+      </div>
+      <ol className="operation-loader-stages" aria-label="Setup progress">
+        {["Sources", "Pixi", "Engine"].map((label, index) => {
+          const number = index + 1;
+          return (
+            <li
+              className={number < activity.step ? "complete" : number === activity.step ? "active" : ""}
+              key={label}
+            >
+              <span>{number < activity.step ? "✓" : number}</span>
+              {label}
+            </li>
+          );
+        })}
+      </ol>
+    </aside>
+  );
+}
+
 function DependencyPanel({
   status,
   jobs,
@@ -310,7 +435,7 @@ function DependencyPanel({
 }: {
   status: CapabilityStatus | null;
   jobs: Job[];
-  refresh: () => void;
+  refresh: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -325,6 +450,17 @@ function DependencyPanel({
   const stackFailure = jobs.find(
     (job) => job.kind === "dependency.stack.prepare" && job.status === "failed",
   );
+  const activeDependencyJob = jobs.find(
+    (job) => dependencyKinds.has(job.kind) && ["queued", "running"].includes(job.status),
+  );
+  const busyKind = {
+    stack: "dependency.stack.prepare",
+    engine: "dependency.engine.start",
+    pixi: "dependency.pixi.prepare",
+    "engine-sync": "dependency.sync.engine",
+    "pixi-sync": "dependency.sync.pixi",
+  }[busy];
+  const activeKind = activeDependencyJob?.kind ?? busyKind;
   const dirty = Boolean(engine?.dirty || pixi?.dirty);
 
   async function run(action: string, payload: Record<string, unknown>) {
@@ -332,7 +468,7 @@ function DependencyPanel({
     setError("");
     try {
       await startJob(payload);
-      refresh();
+      await refresh();
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -349,7 +485,7 @@ function DependencyPanel({
     setError("");
     try {
       await startJob({ kind: "dependency.stack.prepare" });
-      refresh();
+      await refresh();
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -375,7 +511,7 @@ function DependencyPanel({
         <button
           className="primary"
           type="button"
-          disabled={!status || Boolean(busy) || Boolean(stackJob) || dirty}
+          disabled={!status || Boolean(busy) || Boolean(activeDependencyJob) || dirty}
           onClick={() => void startStack()}
         >
           {stackReady
@@ -387,6 +523,13 @@ function DependencyPanel({
               : "Set up Engine + Pixi"}
         </button>
       </div>
+      {activeKind && (
+        <DependencyLoader
+          kind={activeKind}
+          status={status}
+          job={activeDependencyJob}
+        />
+      )}
       <ol className="setup-progress">
         <li
           className={
@@ -480,7 +623,8 @@ function DependencyPanel({
                   !engine?.source_available ||
                   !engine.synced ||
                   engine.healthy ||
-                  Boolean(busy)
+                  Boolean(busy) ||
+                  Boolean(activeDependencyJob)
                 }
                 onClick={() =>
                   void run("engine", { kind: "dependency.engine.start" })
@@ -494,7 +638,12 @@ function DependencyPanel({
               </button>
               <button
                 type="button"
-                disabled={engine?.synced || engine?.dirty || Boolean(busy)}
+                disabled={
+                  engine?.synced ||
+                  engine?.dirty ||
+                  Boolean(busy) ||
+                  Boolean(activeDependencyJob)
+                }
                 onClick={() =>
                   void run("engine-sync", {
                     kind: "dependency.sync",
@@ -534,7 +683,8 @@ function DependencyPanel({
                   !pixi?.source_available ||
                   !pixi.synced ||
                   pixi.built ||
-                  Boolean(busy)
+                  Boolean(busy) ||
+                  Boolean(activeDependencyJob)
                 }
                 onClick={() =>
                   void run("pixi", { kind: "dependency.pixi.prepare" })
@@ -544,7 +694,12 @@ function DependencyPanel({
               </button>
               <button
                 type="button"
-                disabled={pixi?.synced || pixi?.dirty || Boolean(busy)}
+                disabled={
+                  pixi?.synced ||
+                  pixi?.dirty ||
+                  Boolean(busy) ||
+                  Boolean(activeDependencyJob)
+                }
                 onClick={() =>
                   void run("pixi-sync", {
                     kind: "dependency.sync",
@@ -899,11 +1054,10 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
   const [busy, setBusy] = useState("");
   const [model, setModel] = useState("v12");
   const [modelName, setModelName] = useState("");
-  const [parallelMatches, setParallelMatches] = useState(1);
-  const [gpuMemoryMb, setGpuMemoryMb] = useState(0);
   const [reservePlaytest, setReservePlaytest] = useState(true);
+  const [selfPlayAllSeats, setSelfPlayAllSeats] = useState(true);
   const [starting, setStarting] = useState(false);
-  const [started, setStarted] = useState(false);
+  const [created, setCreated] = useState(false);
   const [error, setError] = useState("");
   const requiredFormat = model === "v12" ? "legacy" : "commander";
   const compatibleDeckCount = selected.filter(
@@ -946,23 +1100,30 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
     }
   }
 
-  async function startTraining() {
+  async function configureAgent() {
     setStarting(true);
-    setStarted(false);
+    setCreated(false);
     setError("");
     try {
-      await startJob({ kind: "training.pool", model, model_name: modelName.trim(), parallel_matches: parallelMatches, gpu_memory_mb: gpuMemoryMb, reserve_playtest: reservePlaytest });
-      setStarted(true);
+      await createModel({
+        model,
+        model_name: modelName.trim(),
+        parallel_matches: 1,
+        gpu_memory_mb: 0,
+        reserve_playtest: reservePlaytest,
+        self_play_all_seats: selfPlayAllSeats,
+      });
+      setCreated(true);
       refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to start training.");
+      setError(reason instanceof Error ? reason.message : "Unable to configure this agent.");
     } finally {
       setStarting(false);
     }
   }
 
   return <section className="panel configure local-training-form">
-    <div className="section-heading"><div><span className="eyebrow">Local training</span><h2>Build a training deck pool</h2><p className="section-lead">Add as many decks as you need. Every selected version is downloaded locally and kept together as one training pool.</p></div><span className="step">POOL</span></div>
+    <div className="section-heading"><div><span className="eyebrow">New agent</span><h2>Architecture and training decks</h2><p className="section-lead">Create the agent identity here. CPU, GPU and simultaneous games are assigned later from Jobs.</p></div><span className="step">CONFIG</span></div>
     {!status?.hosted.api_key_configured ? <div className="notice warning"><strong>API key required</strong><span>Configure your Deep Deck League API key in Application setup to access training decks.</span></div> : <>
       <div className="training-pool-heading"><div><strong>Training deck pool</strong><small>{selected.length === 0 ? "No deck selected" : `${selected.length} deck${selected.length === 1 ? "" : "s"} ready locally`}</small></div></div>
       {selected.length > 0 && <div className="selected-training-pool">{selected.map((deck) => <button type="button" key={deck.id} onClick={() => void toggleDeck(deck)} title="Remove from training pool"><span><strong>{deck.name}</strong><small>{deck.format ?? "Deck"} · v{deck.version}</small></span><b aria-hidden="true">×</b></button>)}</div>}
@@ -977,9 +1138,12 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
         <label>Model name<input value={modelName} maxLength={64} onChange={(event) => setModelName(event.target.value)} placeholder="Example: Montréal Control" /><small>This is your AI's name. V11 or V12 is only its starting architecture.</small></label>
         <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="v12" disabled={!selected.some((deck) => deck.format?.toLowerCase() === "legacy")}>V12 · Legacy</option><option value="v11" disabled={!selected.some((deck) => deck.format?.toLowerCase() === "commander")}>V11 · Commander</option></select><small>{compatibleDeckCount} {requiredFormat} deck{compatibleDeckCount === 1 ? "" : "s"} available for this model.</small></label>
         <div className="model-implementation"><strong>{model === "v12" ? "V12 · structured two-player policy" : "V11 · structured multiplayer policy"}</strong><p>{model === "v12" ? "Designed for two-player Legacy: structured observations, legal-action encoding, two relative value slots, self-play collection and PPO updates." : "Designed for Commander: structured observations, legal-action encoding, four multiplayer value slots, shared-policy self-play and PPO updates."}</p><small>Deep Deck provides the architecture and training implementation. The generated weights, name and local model belong to this workspace.</small></div>
-        <details className="runtime-details"><summary>Advanced training settings</summary><div className="advanced-training-grid"><label>Simultaneous training matches<input type="number" min="1" max="32" value={parallelMatches} onChange={(event) => setParallelMatches(Number(event.target.value))} /><small>More matches use more CPU and memory.</small></label><label>GPU memory limit (MiB)<input type="number" min="0" max="24576" step="256" value={gpuMemoryMb} onChange={(event) => setGpuMemoryMb(Number(event.target.value))} /><small>0 lets PyTorch manage the available GPU automatically.</small></label><label className="check-setting"><input type="checkbox" checked={reservePlaytest} onChange={(event) => setReservePlaytest(event.target.checked)} /><span><strong>Keep a version available for playtesting</strong><small>Publishes a stable checkpoint while training continues.</small></span></label></div></details>
-        {started && <div className="notice success" role="status"><strong>Training started</strong><span>The run is now visible in Your agents and Training statistics.</span></div>}
-        <div className="form-actions"><button className="primary" type="button" onClick={() => void startTraining()} disabled={starting || modelName.trim().length < 2 || compatibleDeckCount === 0 || !status?.torch.ready || !status?.engine.healthy}>{starting ? "Starting training…" : `Start ${modelName.trim() || model.toUpperCase()} training`}</button><small>{modelName.trim().length < 2 ? "Give your model a name first." : compatibleDeckCount === 0 ? `Add a ${requiredFormat} deck to train this model.` : "Training runs continuously until you stop it."}</small></div>
+        <div className="agent-mode-grid">
+          <label className="check-setting"><input type="checkbox" checked={selfPlayAllSeats} onChange={(event) => setSelfPlayAllSeats(event.target.checked)} /><span><strong>Shared-model self-play</strong><small>{selfPlayAllSeats ? "The same model controls every player in each training game." : "Half of training games use the built-in anchor opponent."}</small></span></label>
+          <label className="check-setting"><input type="checkbox" checked={reservePlaytest} onChange={(event) => setReservePlaytest(event.target.checked)} /><span><strong>Publish playable weights</strong><small>Keeps a stable checkpoint available while newer weights train.</small></span></label>
+        </div>
+        {created && <div className="notice success" role="status"><strong>Agent configured</strong><span>Open Jobs to assign simultaneous games and start training.</span></div>}
+        <div className="form-actions"><button className="primary" type="button" onClick={() => void configureAgent()} disabled={starting || created || modelName.trim().length < 2 || compatibleDeckCount === 0 || !status?.torch.ready || !status?.engine.healthy}>{starting ? "Preparing agent…" : created ? "Agent configured" : `Create ${modelName.trim() || model.toUpperCase()}`}</button><small>{modelName.trim().length < 2 ? "Give your model a name first." : compatibleDeckCount === 0 ? `Add a ${requiredFormat} deck for this agent.` : "No training starts until you explicitly start it in Jobs."}</small></div>
       </div>}
     </>}
   </section>;
@@ -989,6 +1153,69 @@ function formatBytes(bytes: number | null | undefined) {
   if (bytes === null || bytes === undefined) return "Unavailable";
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+}
+
+function AgentCatalog({
+  models,
+  resources,
+  refresh,
+}: {
+  models: LocalModel[];
+  resources: ResourceSnapshot | null;
+  refresh: () => void;
+}) {
+  const [confirming, setConfirming] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [deleting, setDeleting] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function remove(model: LocalModel) {
+    setDeleting(model.id);
+    setMessage("");
+    try {
+      const result = await deleteModel(model.id);
+      setConfirming("");
+      setConfirmation("");
+      setMessage(`${result.name} deleted · ${formatBytes(result.reclaimedBytes)} reclaimed.`);
+      refresh();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to delete this agent.");
+    } finally {
+      setDeleting("");
+    }
+  }
+
+  if (models.length === 0) {
+    return <div className="empty-agent"><span>AI</span><div><strong>No configured agent yet</strong><p>Choose an architecture, give it a deck pool, then create its local identity.</p></div></div>;
+  }
+  return <div className="agent-catalog">
+    {models.map((model) => {
+      const activeWorkers = resources?.workers.filter((worker) => worker.modelId === model.id) ?? [];
+      const isConfirming = confirming === model.id;
+      return <article className="agent-card" key={model.id}>
+        <div className="agent-card-main">
+          <span className={`model-ready ${model.ready ? "ready" : ""}`}>{model.ready ? "Playable weights" : model.status === "running" ? "Preparing weights" : "Configured"}</span>
+          <h3>{model.name}</h3>
+          <p>{model.description}</p>
+          <div className="agent-card-tags"><span>{model.architecture.toUpperCase()}</span><span>{model.format}</span><span>{model.selfPlayAllSeats === false ? "Mixed opponents" : "Shared-model self-play"}</span></div>
+        </div>
+        <dl className="agent-card-facts">
+          <div><dt>Training decks</dt><dd>{model.decks.length}</dd></div>
+          <div><dt>Disk space</dt><dd>{formatBytes(model.diskBytes)}</dd><small>{formatBytes(model.weightsBytes)} weights</small></div>
+          <div><dt>Live workers</dt><dd>{activeWorkers.reduce((total, worker) => total + worker.workerSlots, 0)}</dd></div>
+          <div><dt>Games learned</dt><dd>{model.trainingState?.completedGames ?? 0}</dd></div>
+        </dl>
+        <div className="agent-deck-list">{model.decks.map((deck) => <span key={deck.id}>{deck.name}</span>)}</div>
+        {!isConfirming ? <button className="danger subtle" type="button" onClick={() => { setConfirming(model.id); setConfirmation(""); setMessage(""); }}>Delete agent and weights</button> : <div className="delete-agent-confirm" role="alertdialog" aria-label={`Delete ${model.name}`}>
+          <strong>Delete {formatBytes(model.diskBytes)} permanently?</strong>
+          <p>The agent, checkpoints, training history and local statistics in this run will be removed.</p>
+          {activeWorkers.length > 0 ? <small>Stop its active jobs first.</small> : <label>Type <b>{model.name}</b><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>}
+          <div><button type="button" onClick={() => { setConfirming(""); setConfirmation(""); }}>Keep agent</button><button className="danger" type="button" disabled={activeWorkers.length > 0 || confirmation !== model.name || deleting === model.id} onClick={() => void remove(model)}>{deleting === model.id ? "Deleting…" : "Delete files"}</button></div>
+        </div>}
+      </article>;
+    })}
+    {message && <p className={message.includes("deleted") ? "form-success" : "form-error"} role="status">{message}</p>}
+  </div>;
 }
 
 function ResourceSystemSummary({ resources }: { resources: ResourceSnapshot | null }) {
@@ -1008,21 +1235,28 @@ function ResourceSystemSummary({ resources }: { resources: ResourceSnapshot | nu
 function AgentAllocationRow({
   model,
   resources,
+  jobs,
   refresh,
 }: {
   model: LocalModel;
   resources: ResourceSnapshot | null;
+  jobs: Job[];
   refresh: () => void;
 }) {
   const [plan, setPlan] = useState<ResourcePlan | null>(null);
+  const [savedPlan, setSavedPlan] = useState<ResourcePlan | null>(null);
   const [saving, setSaving] = useState(false);
+  const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const workers = resources?.workers.filter((worker) => worker.modelId === model.id) ?? [];
+  const trainingWorker = workers.find((worker) => worker.kind === "training.pool");
+  const trainingJob = jobs.find((job) => job.model_id === model.id && job.kind === "training.pool" && ["queued", "running"].includes(job.status));
+  const trainingActive = Boolean(trainingWorker || trainingJob);
 
   useEffect(() => {
     let active = true;
     void loadModelResources(model.id)
-      .then((value) => { if (active) setPlan(value); })
+      .then((value) => { if (active) { setPlan(value); setSavedPlan(value); } })
       .catch((reason) => { if (active) setMessage(reason instanceof Error ? reason.message : "Unable to load resources."); });
     return () => { active = false; };
   }, [model.id]);
@@ -1036,13 +1270,36 @@ function AgentAllocationRow({
     setSaving(true);
     setMessage("");
     try {
-      setPlan(await saveModelResources(model.id, plan));
-      setMessage("Resource allocation saved.");
+      const saved = await saveModelResources(model.id, plan);
+      setPlan(saved);
+      setSavedPlan(saved);
+      setMessage(trainingActive ? "Allocation saved · trainer updates after the current batch." : "Allocation saved · ready to start.");
       refresh();
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : "Unable to save resources.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleTraining() {
+    if (!plan) return;
+    setWorking(true);
+    setMessage("");
+    try {
+      if (trainingActive) {
+        const jobId = trainingJob?.id ?? trainingWorker?.jobId;
+        if (jobId) await stopJob(jobId);
+        setMessage("Training stopped. The agent and its weights are preserved.");
+      } else {
+        await startJob({ kind: "training.pool", model_id: model.id });
+        setMessage("Training is starting. Live games will appear below.");
+      }
+      refresh();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to update training.");
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -1056,13 +1313,13 @@ function AgentAllocationRow({
     <tr>
       <th scope="row">
         <span className={`model-ready ${model.ready ? "ready" : ""}`}>
-          {model.ready ? "Playable" : "Preparing weights"}
+          {trainingActive ? "Training live" : model.ready ? "Playable" : "Configured"}
         </span>
         <strong>{model.name}</strong>
         <small>{model.architecture.toUpperCase()} · {model.format}</small>
       </th>
       {!plan ? (
-        <td colSpan={4}>Loading allocation…</td>
+        <td colSpan={5}>Loading allocation…</td>
       ) : (
         <>
           <td className="agent-allocation-resources">
@@ -1084,8 +1341,8 @@ function AgentAllocationRow({
             <small>{formatBytes(ramBytes)} RAM · {formatBytes(gpuBytes)} GPU active</small>
           </td>
           {([
-            ["localMatches", "Play", 8],
-            ["trainingMatches", "Training", 32],
+            ["trainingMatches", "Self-play", 32],
+            ["localMatches", "Playtest", 8],
             ["leagueMatches", "League", 32],
           ] as const).map(([key, label, maximum]) => (
             <td className="agent-allocation-slot" key={key}>
@@ -1103,9 +1360,10 @@ function AgentAllocationRow({
         </>
       )}
       <td className="agent-allocation-save">
-        <button className="secondary" type="button" disabled={saving || !plan} onClick={() => void save()}>
-          {saving ? "Saving…" : "Apply"}
+        <button className="secondary" type="button" disabled={saving || !plan || JSON.stringify(plan) === JSON.stringify(savedPlan)} onClick={() => void save()}>
+          {saving ? "Saving…" : JSON.stringify(plan) === JSON.stringify(savedPlan) ? "Allocation saved" : "Save allocation"}
         </button>
+        <button className={trainingActive ? "danger" : "primary"} type="button" disabled={working || !plan || (!trainingActive && plan.trainingMatches < 1)} onClick={() => void toggleTraining()}>{working ? "Working…" : trainingActive ? "Stop training" : "Start training"}</button>
         {message && <small role="status">{message}</small>}
       </td>
     </tr>
@@ -1115,10 +1373,12 @@ function AgentAllocationRow({
 function AgentAllocationTable({
   models,
   resources,
+  jobs,
   refresh,
 }: {
   models: LocalModel[];
   resources: ResourceSnapshot | null;
+  jobs: Job[];
   refresh: () => void;
 }) {
   return (
@@ -1128,10 +1388,10 @@ function AgentAllocationTable({
           <tr>
             <th scope="col">Agent</th>
             <th scope="col">Resources</th>
-            <th scope="col">Play</th>
-            <th scope="col">Training</th>
-            <th scope="col">League</th>
-            <th scope="col">Apply</th>
+            <th scope="col">Self-play games</th>
+            <th scope="col">Playtest slots</th>
+            <th scope="col">League connections</th>
+            <th scope="col">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -1140,6 +1400,7 @@ function AgentAllocationTable({
               key={model.id}
               model={model}
               resources={resources}
+              jobs={jobs}
               refresh={refresh}
             />
           ))}
@@ -1151,6 +1412,198 @@ function AgentAllocationTable({
       </p>
     </div>
   );
+}
+
+function ActiveWorkersPanel({
+  resources,
+  jobs,
+  refresh,
+}: {
+  resources: ResourceSnapshot | null;
+  jobs: Job[];
+  refresh: () => void;
+}) {
+  const [stopping, setStopping] = useState("");
+  const [error, setError] = useState("");
+  const workers = resources?.workers ?? [];
+  const queued = jobs.filter(
+    (job) => ["queued", "running"].includes(job.status) && !workers.some((worker) => worker.jobId === job.id),
+  );
+
+  async function stop(workerId: string) {
+    setStopping(workerId);
+    setError("");
+    try {
+      await stopJob(workerId);
+      refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to stop this worker.");
+    } finally {
+      setStopping("");
+    }
+  }
+
+  return <section className="panel active-workers">
+    <div className="section-heading"><div><span className="eyebrow">Processes owned by this workbench</span><h2>Active services</h2><p className="section-lead">This is the source of truth for occupied slots. Recovered processes can be stopped here too.</p></div><button className="text-button" type="button" onClick={refresh}>Refresh</button></div>
+    {workers.length === 0 && queued.length === 0 ? <div className="empty"><span>◇</span><p>No worker is holding a training, playtest or League slot.</p></div> : <div className="worker-table" role="table">
+      <div className="worker-row worker-head" role="row"><span>Service</span><span>Slots</span><span>RAM</span><span>GPU</span><span>Process</span><span /></div>
+      {workers.map((worker) => <div className="worker-row" role="row" key={worker.jobId}>
+        <span><strong>{worker.label}</strong><small>{worker.kind === "training.pool" ? "Local self-play trainer" : worker.kind === "matchmaking.agent" ? "League connection" : "Local playtest"}</small></span>
+        <span><strong>{worker.workerSlots}</strong><small>{worker.workerSlots === 1 ? "worker" : "workers"}</small></span>
+        <span><strong>{formatBytes(worker.ramBytes)}</strong><small>{formatBytes(worker.ramPerWorkerEstimate)} / worker</small></span>
+        <span><strong>{formatBytes(worker.gpuBytes)}</strong><small>{worker.gpuBytes === null ? "No process telemetry" : `${formatBytes(worker.gpuPerWorkerEstimate)} / worker`}</small></span>
+        <span><code>{worker.pids.join(", ")}</code><small>{worker.jobId.startsWith("recovered-") ? "Recovered after restart" : "Controller attached"}</small></span>
+        <span><button className="danger subtle" type="button" disabled={stopping === worker.jobId} onClick={() => void stop(worker.jobId)}>{stopping === worker.jobId ? "Stopping…" : "Stop"}</button></span>
+      </div>)}
+      {queued.map((job) => <div className="worker-row pending" role="row" key={job.id}><span><strong>{job.label}</strong><small>{job.kind}</small></span><span>—</span><span>Starting…</span><span>—</span><span><code>{job.id.slice(0, 8)}</code></span><span><button className="danger subtle" type="button" disabled={stopping === job.id} onClick={() => void stop(job.id)}>Cancel</button></span></div>)}
+    </div>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
+}
+
+function LeagueConnectionsPanel({
+  status,
+  models,
+  resources,
+  jobs,
+  refresh,
+}: {
+  status: CapabilityStatus | null;
+  models: LocalModel[];
+  resources: ResourceSnapshot | null;
+  jobs: Job[];
+  refresh: () => void;
+}) {
+  const [competitions, setCompetitions] = useState<CompetitionSummary[]>([]);
+  const [selectedDecks, setSelectedDecks] = useState<Record<string, string>>({});
+  const [working, setWorking] = useState("");
+  const [messages, setMessages] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!status?.hosted.api_key_configured) {
+      setCompetitions([]);
+      return;
+    }
+    void loadCompetitions()
+      .then(setCompetitions)
+      .catch((reason) => setMessages({ global: reason instanceof Error ? reason.message : "Unable to load League competitions." }));
+  }, [status?.hosted.api_key_configured]);
+
+  async function connect(model: LocalModel) {
+    const deckId = selectedDecks[model.id] ?? model.decks[0]?.id;
+    const competition = competitions.find((item) => item.format.toLowerCase() === model.format);
+    if (!deckId || !competition) return;
+    setWorking(model.id);
+    setMessages((current) => ({ ...current, [model.id]: "" }));
+    try {
+      const plan = await loadModelResources(model.id);
+      const activeWorkers = (resources?.workers ?? []).filter((worker) => worker.modelId === model.id && worker.kind === "matchmaking.agent").length;
+      const queuedWorkers = jobs.filter((job) => job.model_id === model.id && job.kind === "matchmaking.agent" && job.status === "queued").length;
+      const toStart = Math.max(0, plan.leagueMatches - activeWorkers - queuedWorkers);
+      if (toStart === 0) {
+        setMessages((current) => ({ ...current, [model.id]: plan.leagueMatches === 0 ? "Set League connections above to at least 1, then save the allocation." : "Every allocated League connection is already active." }));
+        return;
+      }
+      for (let index = 0; index < toStart; index += 1) {
+        await startJob({
+          kind: "matchmaking.agent",
+          model_id: model.id,
+          agent: model.architecture,
+          checkpoint: model.checkpointPath,
+          speed: "100ms",
+          continuous: true,
+          competition_version_id: competition.versionId,
+          deck_version_id: deckId,
+        });
+      }
+      setMessages((current) => ({ ...current, [model.id]: `${toStart} League connection${toStart === 1 ? "" : "s"} started. They remain visible in Active services.` }));
+      refresh();
+    } catch (reason) {
+      setMessages((current) => ({ ...current, [model.id]: reason instanceof Error ? reason.message : "Unable to connect this agent to the League." }));
+    } finally {
+      setWorking("");
+    }
+  }
+
+  return <section className="panel league-connections">
+    <div className="section-heading"><div><span className="eyebrow">Optional remote activity</span><h2>League connections</h2><p className="section-lead">Start the number of persistent connections saved in the allocation table. Local shared-model self-play continues independently when no remote opponent is available.</p></div></div>
+    {!status?.hosted.api_key_configured ? <div className="notice warning"><strong>League account not connected</strong><span>Add the API key in Agent configuration. Nothing else is required on a separate page.</span></div> : <div className="league-agent-list">
+      {models.filter((model) => model.ready).map((model) => {
+        const competition = competitions.find((item) => item.format.toLowerCase() === model.format);
+        const live = (resources?.workers ?? []).filter((worker) => worker.modelId === model.id && worker.kind === "matchmaking.agent").length;
+        return <article key={model.id}><div><span className="model-ready ready">{live} connected</span><strong>{model.name}</strong><small>{competition ? competition.name : `No active ${model.format} competition`}</small></div><label>Deck<select value={selectedDecks[model.id] ?? model.decks[0]?.id ?? ""} onChange={(event) => setSelectedDecks((current) => ({ ...current, [model.id]: event.target.value }))}>{model.decks.map((deck) => <option value={deck.id} key={deck.id}>{deck.name}</option>)}</select></label><button className="secondary" type="button" disabled={working === model.id || !competition || model.decks.length === 0} onClick={() => void connect(model)}>{working === model.id ? "Connecting…" : "Connect allocated slots"}</button>{messages[model.id] && <small role="status">{messages[model.id]}</small>}</article>;
+      })}
+      {models.every((model) => !model.ready) && <div className="empty"><span>◇</span><p>Playable weights are required before connecting to the League.</p></div>}
+    </div>}
+    {messages.global && <p className="form-error" role="alert">{messages.global}</p>}
+  </section>;
+}
+
+function elapsedLabel(startedAtUnixMs: number | null) {
+  if (!startedAtUnixMs) return "Starting";
+  const seconds = Math.max(0, Math.round((Date.now() - startedAtUnixMs) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function ActiveGamesPanel({ games, refresh }: { games: ActiveGame[]; refresh: () => void }) {
+  const [stopping, setStopping] = useState("");
+  const [error, setError] = useState("");
+
+  async function cancel(game: ActiveGame) {
+    setStopping(game.id);
+    setError("");
+    try {
+      await stopGame(game.id);
+      refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to cancel this game.");
+    } finally {
+      setStopping("");
+    }
+  }
+
+  return <section className="panel live-games">
+    <div className="section-heading"><div><span className="eyebrow"><i className={games.length ? "live-pulse" : ""} /> Live Engine telemetry</span><h2>Games in progress</h2><p className="section-lead">Each card is one real Engine session. Cancelling a self-play game ends only that game; the trainer schedules the next one.</p></div><span className="live-game-count">{games.length} live</span></div>
+    {games.length === 0 ? <div className="empty live-empty"><span>0</span><div><strong>No game is currently running</strong><p>If a slot still looks occupied, check Active services above: the process can be stopped even before an Engine session appears.</p></div></div> : <div className="live-game-grid">
+      {games.map((game) => <article className="live-game-card" key={game.id}>
+        <header><span className={`game-source ${game.source}`}>{game.source === "training" ? `Worker ${game.worker}` : "Local"}</span><strong>{elapsedLabel(game.startedAtUnixMs)}</strong></header>
+        <h3>{game.modelName}</h3>
+        <p>{game.decks.filter(Boolean).join(" vs ") || "Preparing matchup"}</p>
+        <div className="game-progress"><span>Round <b>{game.roundNumber ?? "—"}</b></span><span>Turn <b>{game.turnNumber ?? "—"}</b></span><span>Decisions <b>{game.decisions}</b></span><span>Players <b>{game.players}</b></span></div>
+        {game.playersState.length > 0 && <div className="game-player-strip">{game.playersState.map((player, index) => <span className={player.hasLost ? "lost" : ""} key={player.id ?? index}><b>{player.life ?? "—"}</b><small>{player.name ?? `P${index + 1}`} · {player.handCount ?? 0} cards</small></span>)}</div>}
+        <footer><small>{game.mode ?? game.status}{game.sessionId ? ` · ${game.sessionId}` : " · session opening"}</small><button className="danger" type="button" disabled={!game.canCancel || stopping === game.id} onClick={() => void cancel(game)}>{stopping === game.id ? "Cancelling…" : game.canCancel ? "Cancel game" : "Opening…"}</button></footer>
+      </article>)}
+    </div>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
+}
+
+function JobsDashboard({
+  status,
+  models,
+  resources,
+  jobs,
+  games,
+  refresh,
+}: {
+  status: CapabilityStatus | null;
+  models: LocalModel[];
+  resources: ResourceSnapshot | null;
+  jobs: Job[];
+  games: ActiveGame[];
+  refresh: () => void;
+}) {
+  return <div className="jobs-dashboard">
+    <section className="jobs-intro"><div><span className="eyebrow">Capacity → activity → game</span><h2>One operational view</h2><p>Save the capacity you want, start the trainer, then follow every worker and Engine game below. League connections also appear here; they no longer need a separate page.</p></div><div className="jobs-legend"><span><i className="training" /> Training</span><span><i className="local" /> Playtest</span><span><i className="league" /> League</span></div></section>
+    <ResourceSystemSummary resources={resources} />
+    <section className="panel allocation-panel"><div className="section-heading"><div><span className="eyebrow">Desired capacity</span><h2>Agent allocations</h2><p className="section-lead">Self-play games use the same model for every seat when that mode is enabled in Agent configuration.</p></div></div>
+      {models.length ? <AgentAllocationTable models={models} resources={resources} jobs={jobs} refresh={refresh} /> : <div className="empty"><span>AI</span><p>Create an agent configuration before allocating jobs.</p></div>}
+    </section>
+    <LeagueConnectionsPanel status={status} models={models} resources={resources} jobs={jobs} refresh={refresh} />
+    <ActiveWorkersPanel resources={resources} jobs={jobs} refresh={refresh} />
+    <ActiveGamesPanel games={games} refresh={refresh} />
+  </div>;
 }
 
 function trainingMetrics(job: Job) {
@@ -1174,23 +1627,28 @@ function trainingMetrics(job: Job) {
   return null;
 }
 
-function StatisticsPage({ jobs, decks }: { jobs: Job[]; decks: DeckStatistic[] }) {
+function StatisticsPage({ jobs, decks, training }: { jobs: Job[]; decks: DeckStatistic[]; training: TrainingStatistic[] }) {
+  const [selectedId, setSelectedId] = useState("");
   const runs = jobs.filter((job) => job.kind.startsWith("training."));
-  const completed = runs.filter((job) => job.status === "completed");
+  const selected = training.find((item) => item.modelId === selectedId) ?? training[0];
+  const selectedDecks = selected ? decks.filter((deck) => deck.modelId === selected.modelId) : decks;
+  const decidedGames = selectedDecks.reduce((total, deck) => total + deck.gameWins + deck.gameLosses, 0);
+  const wins = selectedDecks.reduce((total, deck) => total + deck.gameWins, 0);
+  const lossPoints = selected?.latestMetrics.filter((point) => typeof point.loss === "number") ?? [];
+  const maximumLoss = Math.max(0.0001, ...lossPoints.map((point) => Math.abs(point.loss ?? 0)));
   return <section className="statistics-page">
-    <div className="stats-summary"><article><span>Total runs</span><strong>{runs.length}</strong></article><article><span>Completed</span><strong>{completed.length}</strong></article><article><span>Checkpoints</span><strong>{completed.filter((job) => job.artifact_path).length}</strong></article></div>
-    <section className="panel"><div className="section-heading"><div><span className="eyebrow">Stored locally in .deepdeck/learner.db</span><h2>Run history</h2></div></div>
-      {runs.length === 0 ? <div className="empty"><span>◇</span><p>No local training has been launched yet.</p></div> : <div className="stats-table" role="table">
-        <div className="stats-row stats-head" role="row"><span>Run</span><span>Status</span><span>Loss</span><span>Policy</span><span>Value</span><span>Updates</span></div>
-        {runs.map((job) => { const metrics = trainingMetrics(job); return <div className="stats-row" role="row" key={job.id}><span><strong>{job.label}</strong><small>{new Date(job.created_at).toLocaleString()}</small></span><span>{job.status}</span><span>{metrics ? Number(metrics.loss).toFixed(4) : "—"}</span><span>{metrics ? Number(metrics.policy_loss).toFixed(4) : "—"}</span><span>{metrics ? Number(metrics.value_loss).toFixed(4) : "—"}</span><span>{metrics ? String(metrics.updates) : "—"}</span></div>; })}
-      </div>}
+    <section className="statistics-toolbar"><div><span className="eyebrow">Local training history</span><h2>{selected?.modelName ?? "No trained agent yet"}</h2></div>{training.length > 0 && <label>Agent<select value={selected?.modelId ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{training.map((item) => <option value={item.modelId} key={item.modelId}>{item.modelName} · {item.architecture.toUpperCase()}</option>)}</select></label>}</section>
+    <div className="stats-summary training-kpis"><article><span>Completed games</span><strong>{selected?.completedGames ?? 0}</strong><small>{selected?.activeGames ?? 0} live now</small></article><article><span>Training updates</span><strong>{selected?.trainingStep ?? 0}</strong><small>{selected?.parallelGames ?? 0} simultaneous slots</small></article><article><span>Deck-pool win rate</span><strong>{decidedGames ? `${Math.round((wins / decidedGames) * 100)}%` : "—"}</strong><small>{decidedGames} decided games</small></article><article><span>Average game</span><strong>{selected?.averageGameSeconds ? `${selected.averageGameSeconds.toFixed(1)}s` : "—"}</strong><small>{selected?.phase ?? "not started"}</small></article></div>
+    <section className="panel training-curve"><div className="section-heading"><div><span className="eyebrow">Last {lossPoints.length} PPO updates</span><h2>Learning curve</h2><p className="section-lead">Total loss by training update. Hover a bar for policy, value and entropy details.</p></div>{selected && <span className={`training-phase ${selected.activeGames ? "live" : ""}`}>{selected.activeGames ? "● collecting games" : selected.desiredState}</span>}</div>
+      {lossPoints.length === 0 ? <div className="empty"><span>↗</span><p>The curve appears after the first completed training game.</p></div> : <div className="loss-chart" aria-label="Training loss chart">{lossPoints.map((point, index) => <i key={`${point.trainingStep}-${index}`} style={{ height: `${Math.max(4, (Math.abs(point.loss ?? 0) / maximumLoss) * 100)}%` }} title={`Step ${point.trainingStep} · loss ${point.loss?.toFixed(4)} · policy ${point.policyLoss?.toFixed(4) ?? "—"} · value ${point.valueLoss?.toFixed(4) ?? "—"} · entropy ${point.entropy?.toFixed(4) ?? "—"}`}><span>{point.loss?.toFixed(3)}</span></i>)}</div>}
     </section>
     <section className="panel"><div className="section-heading"><div><span className="eyebrow">Balanced self-play matchmaking</span><h2>Deck ratings</h2><p className="section-lead">The trainer uses a Plackett–Luce rating, similar in purpose to Elo but designed for ranked multiplayer outcomes. Conservative rating (μ − 3σ) is used to sample closer matchups.</p></div></div>
-      {decks.length === 0 ? <div className="empty"><span>◇</span><p>Deck ratings will appear when a named pool training run starts.</p></div> : <div className="stats-table deck-stats-table" role="table">
+      {selectedDecks.length === 0 ? <div className="empty"><span>◇</span><p>Deck ratings will appear when this agent completes games.</p></div> : <div className="stats-table deck-stats-table" role="table">
         <div className="stats-row stats-head" role="row"><span>Agent · deck</span><span>PL rank</span><span>Conservative</span><span>μ ± σ</span><span>Matches</span><span>Game W–L</span><span>Win rate</span></div>
-        {decks.map((deck) => <div className="stats-row" role="row" key={`${deck.modelId}-${deck.deckVersionId}`}><span><strong>{deck.deckName}</strong><small>{deck.modelName} · {deck.format}</small></span><span>{deck.rank ?? "—"}</span><span>{deck.ordinal.toFixed(2)}</span><span>{deck.mu.toFixed(2)} ± {deck.sigma.toFixed(2)}</span><span>{deck.matches}</span><span>{deck.gameWins}–{deck.gameLosses}</span><span>{deck.winRate === null ? "—" : `${Math.round(deck.winRate * 100)}%`}</span></div>)}
+        {selectedDecks.map((deck) => <div className="stats-row" role="row" key={`${deck.modelId}-${deck.deckVersionId}`}><span><strong>{deck.deckName}</strong><small>{deck.modelName} · {deck.format}</small></span><span>{deck.rank ?? "—"}</span><span>{deck.ordinal.toFixed(2)}</span><span>{deck.mu.toFixed(2)} ± {deck.sigma.toFixed(2)}</span><span>{deck.matches}</span><span>{deck.gameWins}–{deck.gameLosses}</span><span>{deck.winRate === null ? "—" : `${Math.round(deck.winRate * 100)}%`}</span></div>)}
       </div>}
     </section>
+    <section className="panel"><div className="section-heading"><div><span className="eyebrow">Stored locally in .deepdeck/learner.db</span><h2>Controller history</h2></div></div>{runs.length === 0 ? <div className="empty"><span>◇</span><p>No local training job has been launched yet.</p></div> : <div className="stats-table" role="table"><div className="stats-row stats-head" role="row"><span>Run</span><span>Status</span><span>Loss</span><span>Policy</span><span>Value</span><span>Updates</span></div>{runs.map((job) => { const metrics = trainingMetrics(job); return <div className="stats-row" role="row" key={job.id}><span><strong>{job.label}</strong><small>{new Date(job.created_at).toLocaleString()}</small></span><span>{job.status}</span><span>{metrics ? Number(metrics.loss).toFixed(4) : "—"}</span><span>{metrics ? Number(metrics.policy_loss).toFixed(4) : "—"}</span><span>{metrics ? Number(metrics.value_loss).toFixed(4) : "—"}</span><span>{metrics ? String(metrics.updates) : "—"}</span></div>; })}</div>}</section>
   </section>;
 }
 
@@ -1674,7 +2132,9 @@ export default function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [models, setModels] = useState<LocalModel[]>([]);
   const [resources, setResources] = useState<ResourceSnapshot | null>(null);
+  const [games, setGames] = useState<ActiveGame[]>([]);
   const [deckStatistics, setDeckStatistics] = useState<DeckStatistic[]>([]);
+  const [trainingStatistics, setTrainingStatistics] = useState<TrainingStatistic[]>([]);
   const [loadError, setLoadError] = useState("");
   const [setupOpen, setSetupOpen] = useState(true);
   const [trainingOpen, setTrainingOpen] = useState(true);
@@ -1693,7 +2153,9 @@ export default function App() {
         loadJobs().then(setJobs),
         loadModels().then(setModels),
         loadResources().then(setResources),
+        loadActiveGames().then(setGames),
         loadDeckStatistics().then(setDeckStatistics),
+        loadTrainingStatistics().then(setTrainingStatistics),
       ]);
       const failure = results.find(
         (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -1711,7 +2173,7 @@ export default function App() {
   }
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
+    const timer = window.setInterval(() => void refresh(), 2000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
@@ -1721,10 +2183,7 @@ export default function App() {
     () => jobs.filter((job) => !job.kind.startsWith("dependency.")),
     [jobs],
   );
-  const running = useMemo(
-    () => activityJobs.filter((job) => job.status === "running").length,
-    [activityJobs],
-  );
+  const running = resources?.workers.length ?? activityJobs.filter((job) => job.status === "running").length;
   const stackReady = Boolean(status?.engine.healthy && status?.pixi.built);
   const activePlaytest = jobs.find(
     (job) =>
@@ -1925,21 +2384,16 @@ export default function App() {
               </button>
               {trainingOpen && <div className="flow-section-body">
                 <div className="agent-toolbar">
-                  <div><span className="eyebrow">Your AI</span><h2>Local models</h2></div>
-                  <button className="primary" type="button" onClick={() => setCreatingTraining(!creatingTraining)}>{creatingTraining ? "Cancel" : "+ Local training"}</button>
+                  <div><span className="eyebrow">Your AI</span><h2>Configured agents</h2><p>Identity, architecture, owned weights and the immutable deck pool each agent consumes.</p></div>
+                  <button className="primary" type="button" onClick={() => setCreatingTraining(!creatingTraining)}>{creatingTraining ? "Cancel" : "+ New agent"}</button>
                 </div>
-                <ResourceSystemSummary resources={resources} />
-                {models.length > 0 ? (
-                  <AgentAllocationTable models={models} resources={resources} refresh={refresh} />
-                ) : (
-                  <div className="empty-agent"><span>AI</span><div><strong>No local model yet</strong><p>Name a model, choose V11 or V12, then start training to create weights owned by this workspace.</p></div></div>
-                )}
-                {activityJobs.some((job) => job.kind.startsWith("training.")) && <JobsPanel jobs={activityJobs.filter((job) => job.kind.startsWith("training."))} refresh={refresh} />}
+                <AgentCatalog models={models} resources={resources} refresh={refresh} />
                 {creatingTraining && <div className="new-training"><LocalTrainingForm status={status} refresh={refresh} /></div>}
               </div>}
             </section>
           </>
         )}
+        {page === "jobs" && <JobsDashboard status={status} models={models} resources={resources} jobs={activityJobs} games={games} refresh={refresh} />}
         {page === "playtest" && (
           <>
             <WorkflowJourney
@@ -1981,7 +2435,7 @@ export default function App() {
             )}
           </>
         )}
-        {page === "statistics" && <StatisticsPage jobs={activityJobs} decks={deckStatistics} />}
+        {page === "statistics" && <StatisticsPage jobs={activityJobs} decks={deckStatistics} training={trainingStatistics} />}
         {page === "representation" && (
           <section className="panel prose">
             <span className="eyebrow">Magic → tensor</span>

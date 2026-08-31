@@ -2398,6 +2398,7 @@ class LeagueTrainer:
                 attempt["decisions"] = int(attempt.get("decisions", 0)) + 1
             attempt.update(
                 {
+                    "sessionId": view.get("sessionId"),
                     "turnNumber": turn_number,
                     "roundNumber": round_value,
                     "gameStatus": state.get("status"),

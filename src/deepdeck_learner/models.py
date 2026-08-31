@@ -5,6 +5,37 @@ from pathlib import Path
 from typing import Any
 
 
+def _directory_size(path: Path) -> int:
+    if not path.is_dir():
+        return 0
+    total = 0
+    for candidate in path.rglob("*"):
+        try:
+            if candidate.is_file():
+                total += candidate.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _training_state(run: Path) -> dict[str, Any]:
+    try:
+        value = json.loads((run / "league-state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "phase": value.get("trainingPhase"),
+        "desiredState": value.get("desiredState"),
+        "completedGames": int(value.get("completed_episodes", 0) or 0),
+        "trainingStep": int(value.get("trainingStep", 0) or 0),
+        "parallelGames": int(value.get("parallelGameWorkers", 0) or 0),
+        "activeGames": len(value.get("activeAttempts", []) or []),
+        "updatedAtUnixMs": value.get("updatedAtUnixMs"),
+    }
+
+
 def _model_decks(root: Path, run: Path, metadata: dict[str, Any]) -> list[dict[str, Any]]:
     configured = metadata.get("decks", [])
     if isinstance(configured, list) and configured:
@@ -73,6 +104,9 @@ def local_models(root: Path, jobs: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "status": statuses.get(str(run_path), "stopped"),
                 "ready": ready,
                 "decks": _model_decks(root, metadata_path.parent, metadata),
+                "diskBytes": _directory_size(run_path),
+                "weightsBytes": _directory_size(checkpoint),
+                "trainingState": _training_state(run_path),
             }
         )
     return sorted(models, key=lambda model: str(model.get("createdAt", "")), reverse=True)
@@ -140,3 +174,83 @@ def deck_statistics(root: Path) -> list[dict[str, Any]]:
                 }
             )
     return sorted(rows, key=lambda row: (str(row["modelName"]), -float(row["ordinal"])))
+
+
+def training_statistics(root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    runs = root / ".deepdeck" / "runs"
+    if not runs.is_dir():
+        return rows
+    for metadata_path in runs.glob("*/local-model.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        run = metadata_path.parent
+        state: dict[str, Any] = {}
+        try:
+            loaded_state = json.loads((run / "league-state.json").read_text(encoding="utf-8"))
+            if isinstance(loaded_state, dict):
+                state = loaded_state
+        except (OSError, ValueError):
+            pass
+        records: list[dict[str, Any]] = []
+        training_path = run / "training.jsonl"
+        if training_path.is_file():
+            try:
+                lines = training_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            for line in lines[-120:]:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+        durations = [
+            float(record["gameDurationSeconds"])
+            for record in records
+            if isinstance(record.get("gameDurationSeconds"), (int, float))
+        ]
+        latest_metrics: list[dict[str, Any]] = []
+        for record in records[-40:]:
+            raw_ppo = record.get("ppo")
+            ppo: dict[str, Any] = raw_ppo if isinstance(raw_ppo, dict) else {}
+            latest_metrics.append(
+                {
+                    "episode": int(record.get("episode", 0) or 0),
+                    "trainingStep": int(record.get("trainingStep", 0) or 0),
+                    "loss": ppo.get("loss"),
+                    "policyLoss": ppo.get("policy_loss"),
+                    "valueLoss": ppo.get("value_loss"),
+                    "entropy": ppo.get("entropy"),
+                    "gameDurationSeconds": record.get("gameDurationSeconds"),
+                }
+            )
+        active_attempts = state.get("activeAttempts", [])
+        rows.append(
+            {
+                "modelId": metadata.get("id"),
+                "modelName": metadata.get("name"),
+                "architecture": metadata.get("architecture"),
+                "format": metadata.get("format"),
+                "completedGames": int(state.get("completed_episodes", len(records)) or 0),
+                "trainingStep": int(state.get("trainingStep", 0) or 0),
+                "parallelGames": int(state.get("parallelGameWorkers", 0) or 0),
+                "activeGames": len(active_attempts) if isinstance(active_attempts, list) else 0,
+                "phase": state.get("trainingPhase", "not-started"),
+                "desiredState": state.get("desiredState", "stopped"),
+                "trainingElapsedSeconds": float(state.get("trainingElapsedSeconds", 0) or 0),
+                "simulationSeconds": float(state.get("gameSimulationSeconds", 0) or 0),
+                "modelTrainingSeconds": float(state.get("modelTrainingSeconds", 0) or 0),
+                "averageGameSeconds": (
+                    sum(durations) / len(durations) if durations else None
+                ),
+                "latestMetrics": latest_metrics,
+                "updatedAtUnixMs": state.get("updatedAtUnixMs"),
+            }
+        )
+    return sorted(rows, key=lambda row: str(row.get("modelName", "")))
