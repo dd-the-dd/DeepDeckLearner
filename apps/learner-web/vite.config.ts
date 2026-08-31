@@ -13,6 +13,18 @@ export default defineConfig({
           new URL('../../external/deepdeck-pixi/src/index.mjs', import.meta.url),
         ),
       },
+      {
+        find: /^pixi\.js$/,
+        replacement: fileURLToPath(
+          new URL('./node_modules/pixi.js/lib/index.mjs', import.meta.url),
+        ),
+      },
+      {
+        find: /^vue$/,
+        replacement: fileURLToPath(
+          new URL('./node_modules/vue/dist/vue.runtime.esm-bundler.js', import.meta.url),
+        ),
+      },
     ],
   },
   server: {
