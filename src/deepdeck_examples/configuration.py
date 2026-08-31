@@ -39,33 +39,20 @@ def alexios_config() -> AgentConfig:
 
 
 def deep_learning_config(version: str) -> AgentConfig:
-    if version not in {"v11", "v11.1", "v12", "v12.1"}:
-        raise ValueError("deep learning version must be v11, v11.1, v12, or v12.1")
-    pretrained = "." in version
+    if version not in {"v11", "v12"}:
+        raise ValueError("deep learning version must be v11 or v12")
     default_id = f"com.deepdeckleague.example.{version}"
-    descriptions = {
-        "v11": "Trainable V11 recurrent multiplayer policy example.",
-        "v11.1": "Official frozen V11.1 Commander weights.",
-        "v12": "Trainable V12 recurrent two-player zero-sum policy example.",
-        "v12.1": "Official frozen V12.1 Legacy weights.",
-    }
-    formats = {
-        "v11": ("legacy", "commander"),
-        "v11.1": ("commander",),
-        "v12": ("legacy",),
-        "v12.1": ("legacy",),
-    }
     return AgentConfig(
         agent_id=os.getenv("DEEPDECK_AGENT_ID", default_id).strip(),
-        name=(
-            f"Deep Deck {version.upper()} pretrained"
-            if pretrained
-            else f"Deep learning {version.upper()} example"
-        ),
-        version=os.getenv("DEEPDECK_AGENT_VERSION", version if pretrained else "0.1.0").strip(),
+        name=f"Deep learning {version.upper()} example",
+        version=os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
         author="Deep Deck League",
-        description=descriptions[version],
-        formats=formats[version],
+        description=(
+            "Trainable V11 recurrent multiplayer policy example."
+            if version == "v11"
+            else "Trainable V12 recurrent two-player zero-sum policy example."
+        ),
+        formats=("legacy", "commander") if version == "v11" else ("legacy",),
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
         repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
