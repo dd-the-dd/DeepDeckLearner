@@ -41,6 +41,7 @@ dev = [
 [project.scripts]
 deepdeck-example = "deepdeck_examples.run:main"
 deepdeck-train = "deepdeck_examples.deep_learning.training:main"
+deepdeck-models = "deepdeck_examples.pretrained:main"
 deepdeck-learner = "deepdeck_learner.cli:main"
 oracle-ai-train = "oracle_ai.training.cli:main"
 oracle-ai-league-train = "oracle_ai.training.league:main"
