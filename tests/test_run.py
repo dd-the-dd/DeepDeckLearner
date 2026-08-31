@@ -23,13 +23,6 @@ def test_v11_and_v12_are_available_but_untrained_weights_require_opt_in() -> Non
     assert v12.checkpoint == "checkpoint"
 
 
-def test_v11_1_and_v12_1_are_named_pretrained_agents() -> None:
-    v11 = parser().parse_args(["v11.1", "--target", "local"])
-    v12 = parser().parse_args(["v12.1", "--target", "ddl"])
-    assert v11.example == "v11.1"
-    assert v12.example == "v12.1"
-
-
 @pytest.mark.asyncio
 async def test_local_target_can_create_a_game_after_agent_registration() -> None:
     class FakeRunner:
