@@ -15,8 +15,9 @@ submodules. It does not copy their code.
 Oracle AI is owned here rather than by Engine. Its observation encoders, V1–V12
 architectures, PPO loop, self-play environments, checkpoints, evaluation tools,
 League clients, and reproducible configurations live under `src/oracle_ai` and
-`configs/oracle-ai`. Engine remains unaware of PyTorch, model versions, epochs,
-losses, and checkpoints.
+`configs/oracle-ai`. Official V11.1 and V12.1 weights are checksum-verified
+release assets rather than Git blobs. Engine remains unaware of PyTorch, model
+versions, epochs, losses, and checkpoints.
 
 ## Quick start for a Magic player
 
@@ -79,6 +80,7 @@ sends your API key to React.
 - Prefer CUDA automatically and fall back to CPU when no compatible GPU is available.
 - Configure trajectory input, CPU/CUDA, epochs, learning rate, and seed under Advanced.
 - Run random, Alexios, V11, or V12 against a local Engine session.
+- Download and run the official frozen V11.1 Commander or V12.1 Legacy agent.
 - Inspect dependency readiness and bounded job logs.
 - Connect an inference agent to Deep Deck League with your account API key.
 
@@ -132,6 +134,8 @@ React.
   removal, goad, combat tricks, Food, and Clues.
 - `v11`: recurrent PyTorch policy with multiplayer value estimates.
 - `v12`: two-player variant with antisymmetric value estimates.
+- `v11.1`: official frozen Commander agent at training step 186,266.
+- `v12.1`: official frozen Legacy agent at training step 418,148.
 
 The original command-line interfaces remain available:
 
@@ -139,7 +143,13 @@ The original command-line interfaces remain available:
 deepdeck-train v12 --smoke --epochs 2 --output runs/v12-smoke
 deepdeck-example v12 --target local --checkpoint runs/v12-smoke
 deepdeck-example alexios --target ddl --speed 1s
+deepdeck-models install v12.1
+deepdeck-example v12.1 --target local
 ```
+
+See [official pretrained agents](docs/pretrained-agents.md) for downloads,
+checksums, supported formats, and the distinction between inference weights and
+an optimizer-resumable training checkpoint.
 
 The complete Oracle AI implementation is also installed with the workbench:
 

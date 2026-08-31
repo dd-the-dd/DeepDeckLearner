@@ -23,6 +23,7 @@ from dotenv import find_dotenv, load_dotenv
 from .alexios import AlexiosAgent
 from .configuration import alexios_config, deep_learning_config, random_config
 from .oracle_checkpoint_agent import OracleCheckpointAgent, is_oracle_checkpoint
+from .pretrained import PRETRAINED_AGENTS, install_pretrained_agent
 from .random_baseline import build_random_agent
 
 
@@ -38,7 +39,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "example",
         nargs="?",
-        choices=("random", "alexios", "v11", "v12"),
+        choices=("random", "alexios", "v11", "v11.1", "v12", "v12.1"),
         default=os.getenv("DEEPDECK_EXAMPLE", "alexios"),
     )
     result.add_argument(
@@ -124,9 +125,12 @@ def _agent_and_config(arguments: argparse.Namespace) -> tuple[Agent, AgentConfig
         return build_random_agent(arguments.seed), random_config()
     if arguments.example == "alexios":
         return AlexiosAgent(), alexios_config()
-    if is_oracle_checkpoint(arguments.checkpoint):
+    checkpoint = arguments.checkpoint
+    if arguments.example in PRETRAINED_AGENTS and not checkpoint:
+        checkpoint = str(install_pretrained_agent(arguments.example))
+    if is_oracle_checkpoint(checkpoint):
         return (
-            OracleCheckpointAgent(arguments.checkpoint, device=arguments.device),
+            OracleCheckpointAgent(checkpoint, device=arguments.device),
             deep_learning_config(arguments.example),
         )
     try:
@@ -140,7 +144,7 @@ def _agent_and_config(arguments: argparse.Namespace) -> tuple[Agent, AgentConfig
     try:
         agent = build_deep_learning_agent(
             arguments.example,
-            checkpoint=arguments.checkpoint,
+            checkpoint=checkpoint,
             device=arguments.device,
             allow_untrained=arguments.allow_untrained,
             seed=arguments.seed,
