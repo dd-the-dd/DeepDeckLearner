@@ -70,7 +70,74 @@ export type LocalModel = {
   status: string;
   ready: boolean;
   reservePlaytest: boolean;
+  selfPlayAllSeats?: boolean;
   decks: DeckSummary[];
+  diskBytes: number;
+  weightsBytes: number;
+  trainingState: {
+    phase?: string | null;
+    desiredState?: string | null;
+    completedGames: number;
+    trainingStep: number;
+    parallelGames: number;
+    activeGames: number;
+    updatedAtUnixMs?: number | null;
+  };
+};
+
+export type ActiveGame = {
+  id: string;
+  sessionId: string | null;
+  source: 'training' | 'local' | 'league';
+  jobId: string | null;
+  modelId: string | null;
+  modelName: string;
+  worker: number;
+  status: string;
+  mode: string | null;
+  decks: Array<string | null>;
+  players: number;
+  playersState: Array<{
+    id?: string;
+    name?: string;
+    life?: number;
+    hasLost?: boolean;
+    handCount?: number;
+    battlefieldCount?: number;
+  }>;
+  turnNumber: number | null;
+  roundNumber: number | null;
+  decisions: number;
+  startedAtUnixMs: number | null;
+  updatedAtUnixMs: number | null;
+  canCancel: boolean;
+};
+
+export type TrainingStatistic = {
+  modelId: string;
+  modelName: string;
+  architecture: 'v11' | 'v12';
+  format: string;
+  completedGames: number;
+  trainingStep: number;
+  parallelGames: number;
+  activeGames: number;
+  phase: string;
+  desiredState: string;
+  trainingElapsedSeconds: number;
+  simulationSeconds: number;
+  modelTrainingSeconds: number;
+  averageGameSeconds: number | null;
+  latestMetrics: Array<{
+    episode: number;
+    trainingStep: number;
+    loss: number | null;
+    policyLoss: number | null;
+    valueLoss: number | null;
+    entropy: number | null;
+    gameDurationSeconds: number | null;
+  }>;
+  updatedAtUnixMs: number | null;
 };
 
 export type ResourcePlan = {
@@ -160,6 +227,25 @@ export async function loadModels(): Promise<LocalModel[]> {
   return (await json<Page<LocalModel>>(await fetch('/api/v1/models'))).items;
 }
 
+export async function createModel(payload: Record<string, unknown>): Promise<LocalModel> {
+  return json<LocalModel>(
+    await fetch('/api/v1/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+export async function deleteModel(modelId: string): Promise<{ id: string; name: string; deleted: boolean; reclaimedBytes: number }> {
+  return json(
+    await fetch(`/api/v1/models/${encodeURIComponent(modelId)}`, {
+      method: 'DELETE',
+      headers: { 'X-DeepDeck-Token': await token() },
+    }),
+  );
+}
+
 export async function loadResources(): Promise<ResourceSnapshot> {
   return json<ResourceSnapshot>(await fetch('/api/v1/resources'));
 }
@@ -185,6 +271,23 @@ export async function saveModelResources(
 
 export async function loadDeckStatistics(): Promise<DeckStatistic[]> {
   return (await json<Page<DeckStatistic>>(await fetch('/api/v1/statistics/decks'))).items;
+}
+
+export async function loadTrainingStatistics(): Promise<TrainingStatistic[]> {
+  return (await json<Page<TrainingStatistic>>(await fetch('/api/v1/statistics/training'))).items;
+}
+
+export async function loadActiveGames(): Promise<ActiveGame[]> {
+  return (await json<Page<ActiveGame>>(await fetch('/api/v1/games'))).items;
+}
+
+export async function stopGame(gameId: string): Promise<ActiveGame> {
+  return json<ActiveGame>(
+    await fetch(`/api/v1/games/${encodeURIComponent(gameId)}/stop`, {
+      method: 'POST',
+      headers: { 'X-DeepDeck-Token': await token() },
+    }),
+  );
 }
 
 export async function saveApiKey(apiKey: string): Promise<{ configured: boolean }> {

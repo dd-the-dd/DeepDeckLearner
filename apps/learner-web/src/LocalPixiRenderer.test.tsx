@@ -148,4 +148,30 @@ describe("Pixi local-seat projection", () => {
     expect(scene.stack[0].targetable).toBe(true);
     expect(scene.controls.canPassPriority).toBe(false);
   });
+
+  test("projects the click order onto cards already visible on the table", () => {
+    const scene = pixiScene({
+      players: [{
+        key: "local-human",
+        name: "You",
+        role: "human",
+        life: 20,
+        zones: {
+          battlefield: {},
+          hand: [
+            { id: "first-card", name: "First" },
+            { id: "second-card", name: "Second" },
+          ],
+        },
+      }],
+      state: { outcome: null },
+      step: { playerKey: "local-human", playerName: "You", turn: 1 },
+    }, {
+      orderedIds: ["second-card", "first-card"],
+      selectedIds: new Set(["first-card", "second-card"]),
+    });
+
+    expect(scene.players[0].hand[0].selectionOrder).toBe(2);
+    expect(scene.players[0].hand[1].selectionOrder).toBe(1);
+  });
 });

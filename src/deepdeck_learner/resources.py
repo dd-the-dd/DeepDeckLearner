@@ -74,6 +74,129 @@ def save_resource_plan(root: Path, model_id: str, payload: dict[str, Any]) -> di
     return plan
 
 
+def delete_model_run(root: Path, model_id: str) -> dict[str, Any]:
+    run, metadata = find_model_run(root, model_id)
+    runs_root = (root / ".deepdeck" / "runs").resolve()
+    resolved = run.resolve()
+    if resolved.parent != runs_root or not (resolved / "local-model.json").is_file():
+        raise ValueError("Refusing to delete a model outside this Learner workspace.")
+    reclaimed = 0
+    for candidate in resolved.rglob("*"):
+        try:
+            if candidate.is_file():
+                reclaimed += candidate.stat().st_size
+        except OSError:
+            continue
+    shutil.rmtree(resolved)
+    return {
+        "id": model_id,
+        "name": str(metadata.get("name", model_id)),
+        "deleted": True,
+        "reclaimedBytes": reclaimed,
+    }
+
+
+def _json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
+    games: list[dict[str, Any]] = []
+    for metadata_path in (root / ".deepdeck" / "runs").glob("*/local-model.json"):
+        metadata = _json_object(metadata_path)
+        state = _json_object(metadata_path.parent / "league-state.json")
+        attached = any(
+            job.kind == "training.pool"
+            and job.model_id == metadata.get("id")
+            and job.status == "running"
+            for job in jobs
+        )
+        process_id = int(state.get("processId", 0) or 0)
+        if not attached and (process_id <= 0 or not psutil.pid_exists(process_id)):
+            continue
+        attempts = state.get("activeAttempts", [])
+        if not isinstance(attempts, list):
+            continue
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            session_id = str(attempt.get("sessionId", "")).strip()
+            worker = int(attempt.get("worker", 0) or 0)
+            game_id = session_id or f"{metadata.get('id', 'model')}-worker-{worker}"
+            games.append(
+                {
+                    "id": game_id,
+                    "sessionId": session_id or None,
+                    "source": "training",
+                    "jobId": next(
+                        (
+                            job.id
+                            for job in jobs
+                            if job.kind == "training.pool"
+                            and job.model_id == metadata.get("id")
+                            and job.status == "running"
+                        ),
+                        None,
+                    ),
+                    "modelId": metadata.get("id"),
+                    "modelName": metadata.get("name"),
+                    "worker": worker,
+                    "status": attempt.get("status", "collecting"),
+                    "mode": (
+                        "Self-play"
+                        if attempt.get("opponentMode") == "self"
+                        else attempt.get("opponentMode")
+                    ),
+                    "decks": attempt.get("decks", []),
+                    "players": attempt.get("players", 0),
+                    "playersState": attempt.get("playersState", []),
+                    "turnNumber": attempt.get("turnNumber"),
+                    "roundNumber": attempt.get("roundNumber"),
+                    "decisions": attempt.get("decisions", 0),
+                    "startedAtUnixMs": attempt.get("startedAtUnixMs"),
+                    "updatedAtUnixMs": attempt.get("updatedAtUnixMs"),
+                    "canCancel": bool(session_id),
+                }
+            )
+    for job in jobs:
+        if job.kind != "playtest.agent" or job.status != "running":
+            continue
+        details = job.details or {}
+        session_id = str(details.get("sessionId", "")).strip()
+        if not session_id:
+            continue
+        games.append(
+            {
+                "id": session_id,
+                "sessionId": session_id,
+                "source": "local",
+                "jobId": job.id,
+                "modelId": job.model_id,
+                "modelName": job.label,
+                "worker": 1,
+                "status": "playing",
+                "mode": "Local playtest",
+                "decks": [
+                    details.get("playerDeck", {}).get("name"),
+                    details.get("opponentDeck", {}).get("name"),
+                ],
+                "players": 2,
+                "playersState": [],
+                "turnNumber": None,
+                "roundNumber": None,
+                "decisions": 0,
+                "startedAtUnixMs": None,
+                "updatedAtUnixMs": None,
+                "canCancel": True,
+            }
+        )
+    return games
+
+
 def _gpu_process_memory() -> tuple[dict[int, int], int | None, int | None, bool]:
     executable = shutil.which("nvidia-smi")
     if not executable:
@@ -166,7 +289,6 @@ def _record(
 def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
     gpu_by_pid, gpu_total, gpu_used, gpu_process_telemetry = _gpu_process_memory()
     records: list[dict[str, Any]] = []
-    local_jobs: list[Any] = []
     claimed_pids: set[int] = set()
     for job in jobs:
         process = job.process
@@ -194,8 +316,6 @@ def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
                 slots=slots,
             )
         )
-        if job.kind == "playtest.agent":
-            local_jobs.append(job)
 
     processes: list[tuple[psutil.Process, str]] = []
     for candidate in psutil.process_iter(["pid", "cmdline"]):
@@ -257,8 +377,6 @@ def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
                     slots=slots,
                 )
             )
-            if kind == "playtest.agent":
-                local_jobs.append(candidate)
     engine_ram = 0
     try:
         engine_pids = {
@@ -269,7 +387,8 @@ def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
         engine_ram = sum(psutil.Process(pid).memory_info().rss for pid in engine_pids)
     except (AttributeError, psutil.Error, OSError):
         pass
-    per_game = engine_ram // max(1, len(local_jobs)) if local_jobs else 0
+    game_count = len(active_games(root, jobs))
+    per_game = engine_ram // max(1, game_count) if game_count else 0
     virtual = psutil.virtual_memory()
     return {
         "system": {
@@ -283,7 +402,7 @@ def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
         "workers": records,
         "engine": {
             "ramBytes": engine_ram,
-            "activeLocalGames": len(local_jobs),
+            "activeLocalGames": game_count,
             "ramPerGameEstimate": per_game,
             "attribution": "Shared Engine RSS divided by active local games.",
         },

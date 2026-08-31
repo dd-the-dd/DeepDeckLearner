@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import random
@@ -30,7 +31,7 @@ from .card_models import (
     refresh_playtest_deck,
 )
 from .dependencies import current_revision, engine_binary, engine_build_current, pinned_revision
-from .resources import find_model_run, load_resource_plan, resource_snapshot
+from .resources import active_games, find_model_run, load_resource_plan, resource_snapshot
 
 MAX_LOG_LINES = 500
 TRAINING_KINDS = {"training.smoke", "training.dataset", "training.pool"}
@@ -76,6 +77,7 @@ class Job:
     model_id: str | None = None
     worker_slots: int = 1
     details: dict[str, Any] | None = None
+    stop_requested: bool = field(default=False, repr=False)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -178,30 +180,73 @@ class JobManager:
             jobs = list(self._jobs.values())
         return resource_snapshot(self.root, jobs)
 
+    def games(self) -> list[dict[str, Any]]:
+        with self._lock:
+            jobs = list(self._jobs.values())
+        return active_games(self.root, jobs)
+
+    def model_has_active_workers(self, model_id: str) -> bool:
+        return any(
+            worker.get("modelId") == model_id
+            for worker in self.resources().get("workers", [])
+        )
+
+    def prepare_model(self, raw: dict[str, Any]) -> str:
+        model = str(raw.get("model", "v12"))
+        if model not in {"v11", "v12"}:
+            raise JobValidationError("Model must be v11 or v12.")
+        self._local_model_name(raw)
+        self._bounded_int(raw, "parallel_matches", default=1, minimum=1, maximum=32)
+        self._bounded_int(raw, "gpu_memory_mb", default=0, minimum=0, maximum=24 * 1024)
+        _, _, run = self._pool_training_command(model, raw)
+        control = run / "training-control.json"
+        control.write_text(
+            json.dumps({"desiredState": "paused"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        metadata = json.loads((run / "local-model.json").read_text(encoding="utf-8"))
+        return str(metadata["id"])
+
     def create(self, raw: dict[str, Any]) -> dict[str, Any]:
         kind = str(raw.get("kind", ""))
         if kind not in SUPPORTED_KINDS:
             raise JobValidationError(f"Unsupported job kind: {kind or '(missing)'}")
-        if kind == "training.pool":
+        argv: list[str]
+        label: str
+        artifact: Path | None
+        deferred_payload: dict[str, Any] | None
+        model_id: str | None
+        worker_slots: int
+        if kind == "training.pool" and str(raw.get("model_id", "")).strip():
+            model_id = str(raw["model_id"]).strip()
+            argv, label, artifact = self._existing_pool_training_command(model_id)
+            deferred_payload = None
+            plan = load_resource_plan(artifact)
+            if plan["trainingMatches"] <= 0:
+                raise JobValidationError(
+                    "Allocate at least one simultaneous training game before starting."
+                )
+            worker_slots = plan["trainingMatches"]
+        elif kind == "training.pool":
             model = str(raw.get("model", "v12"))
             if model not in {"v11", "v12"}:
                 raise JobValidationError("Model must be v11 or v12.")
             model_name = self._local_model_name(raw)
             self._bounded_int(raw, "parallel_matches", default=1, minimum=1, maximum=32)
             self._bounded_int(raw, "gpu_memory_mb", default=0, minimum=0, maximum=24 * 1024)
-            argv: list[str] = []
+            argv = []
             label = f"{model_name} · {model.upper()} · preparing"
-            artifact: Path | None = None
-            deferred_payload: dict[str, Any] | None = dict(raw)
+            artifact = None
+            deferred_payload = dict(raw)
+            model_id = None
+            worker_slots = self._bounded_int(
+                raw, "parallel_matches", default=1, minimum=1, maximum=32
+            )
         else:
             argv, label, artifact = self._command(kind, raw)
             deferred_payload = None
-        model_id = str(raw.get("model_id", "")).strip() or None
-        worker_slots = (
-            self._bounded_int(raw, "parallel_matches", default=1, minimum=1, maximum=32)
-            if kind == "training.pool"
-            else 1
-        )
+            model_id = str(raw.get("model_id", "")).strip() or None
+            worker_slots = 1
         job = Job(
             id=str(uuid.uuid4()),
             kind=kind,
@@ -215,10 +260,12 @@ class JobManager:
         )
         with self._lock:
             if kind in TRAINING_KINDS and any(
-                candidate.kind in TRAINING_KINDS and candidate.status in {"queued", "running"}
+                candidate.kind in TRAINING_KINDS
+                and candidate.status in {"queued", "running"}
+                and (model_id is None or candidate.model_id in {None, model_id})
                 for candidate in self._jobs.values()
             ):
-                raise JobValidationError("Only one training job may run at a time.")
+                raise JobValidationError("This agent already has an active training job.")
             if model_id and kind in {PLAYTEST_KIND, MATCHMAKING_KIND}:
                 run, _ = find_model_run(self.root, model_id)
                 plan = load_resource_plan(run)
@@ -266,7 +313,53 @@ class JobManager:
             job = self._jobs.get(job_id)
             process = job.process if job else None
         if not job:
-            return None
+            worker = next(
+                (
+                    item
+                    for item in self.resources().get("workers", [])
+                    if item.get("jobId") == job_id and str(job_id).startswith("recovered-")
+                ),
+                None,
+            )
+            if not worker:
+                return None
+            pids = [int(pid) for pid in worker.get("pids", []) if int(pid) > 0]
+            for pid in reversed(pids):
+                try:
+                    candidate = psutil.Process(pid)
+                    candidate.terminate()
+                except (psutil.Error, OSError):
+                    continue
+            remaining: list[psutil.Process] = []
+            for pid in pids:
+                with contextlib.suppress(psutil.Error, OSError):
+                    remaining.append(psutil.Process(pid))
+            _, alive = psutil.wait_procs(remaining, timeout=3)
+            for candidate in alive:
+                with contextlib.suppress(psutil.Error, OSError):
+                    candidate.kill()
+            return {
+                "id": job_id,
+                "kind": worker.get("kind", "recovered"),
+                "label": worker.get("label", "Recovered local process"),
+                "argv": [],
+                "status": "stopped",
+                "created_at": utc_now(),
+                "started_at": None,
+                "finished_at": utc_now(),
+                "exit_code": None,
+                "artifact_path": None,
+                "logs": ["Recovered local process stopped by user."],
+                "model_id": worker.get("modelId"),
+                "worker_slots": worker.get("workerSlots", 1),
+                "details": None,
+            }
+        job.stop_requested = True
+        if job.kind == "training.pool" and job.artifact_path:
+            (Path(job.artifact_path) / "training-control.json").write_text(
+                json.dumps({"desiredState": "paused"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
         if process and process.poll() is None:
             job.logs.append("Stop requested by user.")
             if os.name == "nt":
@@ -279,8 +372,29 @@ class JobManager:
                 )
             else:
                 process.terminate()
-            self._persist(job)
+        job.status = "stopped"
+        job.finished_at = utc_now()
+        self._persist(job)
         return job.public()
+
+    def cancel_game(self, game_id: str) -> dict[str, Any] | None:
+        game = next((item for item in self.games() if item.get("id") == game_id), None)
+        if not game or not game.get("sessionId"):
+            return None
+        if game.get("source") == "local" and game.get("jobId"):
+            self.stop(str(game["jobId"]))
+        session_id = str(game["sessionId"])
+        if not re.fullmatch(r"[A-Za-z0-9:._-]+", session_id):
+            raise JobValidationError("Engine returned an invalid game-session identifier.")
+        try:
+            response = httpx.delete(
+                f"http://127.0.0.1:8787/game/sessions/{session_id}", timeout=10.0
+            )
+            if response.status_code not in {200, 404}:
+                response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise JobValidationError(f"Unable to cancel the Engine game: {error}") from error
+        return {**game, "status": "cancelled", "canCancel": False}
 
     def _command(self, kind: str, raw: dict[str, Any]) -> tuple[list[str], str, Path | None]:
         if kind in TRAINING_KINDS:
@@ -539,6 +653,10 @@ class JobManager:
         config["candidateModelName"] = model_id
         config["analyticsPilotId"] = model_id
         config["trainingParticipantId"] = model_id
+        shared_self_play = bool(raw.get("self_play_all_seats", True))
+        config["trainingOpponentMix"] = (
+            {"self": 1.0} if shared_self_play else {"self": 0.5, "anchor": 0.5}
+        )
         config["continuous"] = True
         config["parallelGameWorkers"] = workers
         config["rolloutBatchGames"] = workers
@@ -566,6 +684,7 @@ class JobManager:
             "modelId": model_id,
             "modelName": model_name,
             "reservePlaytest": reserve_playtest,
+            "selfPlayAllSeats": shared_self_play,
             "selectedDeckVersionIds": [str(deck["id"]) for deck in compatible],
         }
         config_path = run / "training-config.yaml"
@@ -594,6 +713,58 @@ class JobManager:
         argv = [sys.executable, "-m", "oracle_ai.training.league", "--config", str(config_path)]
         deck_label = "deck" if len(compatible) == 1 else "decks"
         return argv, f"{model_name} · {model.upper()} · {len(compatible)} {deck_label}", run
+
+    def _existing_pool_training_command(self, model_id: str) -> tuple[list[str], str, Path]:
+        try:
+            import yaml
+        except ModuleNotFoundError as error:
+            raise JobValidationError(
+                "Install DeepDeckLearner's deep-learning dependencies."
+            ) from error
+        try:
+            run, metadata = find_model_run(self.root, model_id)
+        except ValueError as error:
+            raise JobValidationError(str(error)) from error
+        config_path = run / "training-config.yaml"
+        try:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise JobValidationError(
+                "This agent's training configuration is unavailable."
+            ) from error
+        if not isinstance(config, dict):
+            raise JobValidationError("This agent's training configuration is invalid.")
+        checkpoint = Path(str(metadata.get("checkpointPath", "")))
+        resumable = (checkpoint / "manifest.json").is_file() and (
+            checkpoint / "checkpoint.pt"
+        ).is_file()
+        config["resumeLeagueState"] = (run / "league-state.json").is_file()
+        if resumable:
+            config["resumeCheckpoint"] = str(checkpoint)
+            config["resumeCheckpointOptional"] = True
+        plan = load_resource_plan(run)
+        config["parallelGameWorkers"] = max(1, plan["trainingMatches"])
+        config["rolloutBatchGames"] = max(1, plan["trainingMatches"])
+        config["gpuMemoryLimitMb"] = plan["gpuMemoryMb"]
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+        (run / "training-control.json").write_text(
+            json.dumps({"desiredState": "running"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        decks = metadata.get("decks", [])
+        deck_count = len(decks) if isinstance(decks, list) else 0
+        architecture = str(metadata.get("architecture", "")).upper()
+        return (
+            [
+                sys.executable,
+                "-m",
+                "oracle_ai.training.league",
+                "--config",
+                str(config_path),
+            ],
+            f"{metadata.get('name', model_id)} · {architecture} · {deck_count} decks",
+            run,
+        )
 
     @staticmethod
     def _local_model_name(raw: dict[str, Any]) -> str:
@@ -962,7 +1133,11 @@ class JobManager:
                             job.details = {**(job.details or {}), **session}
                             self._persist(job)
                 job.exit_code = process.wait()
-            job.status = "completed" if job.exit_code == 0 else "failed"
+            job.status = (
+                "stopped"
+                if job.stop_requested
+                else "completed" if job.exit_code == 0 else "failed"
+            )
         except OSError as error:
             job.logs.append(f"Unable to start process: {error}")
             job.status = "failed"

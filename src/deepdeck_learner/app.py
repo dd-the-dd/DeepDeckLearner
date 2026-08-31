@@ -22,8 +22,13 @@ from .catalogs import (
     scryfall_image,
 )
 from .jobs import JobManager, JobValidationError
-from .models import deck_statistics, local_models
-from .resources import find_model_run, load_resource_plan, save_resource_plan
+from .models import deck_statistics, local_models, training_statistics
+from .resources import (
+    delete_model_run,
+    find_model_run,
+    load_resource_plan,
+    save_resource_plan,
+)
 from .settings import load_api_key, save_api_key
 from .status import capability_status, project_root
 
@@ -72,6 +77,36 @@ def create_app(root: Path | None = None) -> FastAPI:
     def models() -> dict[str, Any]:
         return {"items": local_models(resolved_root, manager.list_jobs())}
 
+    @app.post("/api/v1/models", status_code=201)
+    def create_model(
+        payload: dict[str, Any], x_deepdeck_token: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(x_deepdeck_token)
+        try:
+            model_id = manager.prepare_model(payload)
+        except (JobValidationError, OSError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return next(
+            model
+            for model in local_models(resolved_root, manager.list_jobs())
+            if model.get("id") == model_id
+        )
+
+    @app.delete("/api/v1/models/{model_id}")
+    def delete_model(
+        model_id: str, x_deepdeck_token: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(x_deepdeck_token)
+        if manager.model_has_active_workers(model_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Stop this agent's active jobs before deleting its files.",
+            )
+        try:
+            return delete_model_run(resolved_root, model_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get("/api/v1/models/{model_id}/resources")
     def model_resources(model_id: str) -> dict[str, int]:
         try:
@@ -99,6 +134,27 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.get("/api/v1/statistics/decks")
     def training_deck_statistics() -> dict[str, Any]:
         return {"items": deck_statistics(resolved_root)}
+
+    @app.get("/api/v1/statistics/training")
+    def local_training_statistics() -> dict[str, Any]:
+        return {"items": training_statistics(resolved_root)}
+
+    @app.get("/api/v1/games")
+    def active_local_games() -> dict[str, Any]:
+        return {"items": manager.games()}
+
+    @app.post("/api/v1/games/{game_id}/stop")
+    def stop_game(
+        game_id: str, x_deepdeck_token: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(x_deepdeck_token)
+        try:
+            found = manager.cancel_game(game_id)
+        except JobValidationError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        if not found:
+            raise HTTPException(status_code=404, detail="Active game not found.")
+        return found
 
     @app.get("/api/v1/catalog/decks")
     def deck_catalog(search: str = "", format: str = "legacy", page: int = 1) -> dict[str, Any]:

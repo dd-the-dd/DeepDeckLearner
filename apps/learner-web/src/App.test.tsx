@@ -92,7 +92,9 @@ function readResponse(url: string, currentStatus: CapabilityStatus = status) {
   if (url.endsWith("/api/v1/status")) return response(currentStatus);
   if (url.endsWith("/api/v1/models")) return response({ items: [] });
   if (url.endsWith("/api/v1/resources")) return response(resources);
+  if (url.endsWith("/api/v1/games")) return response({ items: [] });
   if (url.endsWith("/api/v1/statistics/decks")) return response({ items: [] });
+  if (url.endsWith("/api/v1/statistics/training")) return response({ items: [] });
   if (url.endsWith("/api/v1/training/deck-pool")) return response({ decks: [] });
   return response([]);
 }
@@ -103,7 +105,7 @@ afterEach(() => {
 });
 
 describe("guided onboarding", () => {
-  test("opens directly in the Train workspace", async () => {
+  test("opens directly in Agent configuration without a League tab", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -115,7 +117,7 @@ describe("guided onboarding", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Train your agents" }),
+      await screen.findByRole("heading", { name: "Agent configuration" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Application setup/i }),
@@ -123,6 +125,7 @@ describe("guided onboarding", () => {
     expect(
       screen.queryByRole("heading", { name: "What do you want to do?" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "League" })).not.toBeInTheDocument();
   });
 
   test("one local setup button requests the composite controller job", async () => {
@@ -151,6 +154,65 @@ describe("guided onboarding", () => {
         kind: "dependency.stack.prepare",
       });
     });
+  });
+
+  test("shows live progress and logs while compatible sources are syncing", async () => {
+    const runningStackJob: Job = {
+      ...stackJob,
+      status: "running",
+      started_at: "2026-08-29T00:00:01Z",
+      logs: ["Fetching the reviewed Engine revision…"],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/v1/jobs")) return response([runningStackJob]);
+        return readResponse(url);
+      }),
+    );
+
+    render(<App />);
+
+    const loader = await screen.findByRole("status", {
+      name: "Syncing compatible Engine and Pixi sources",
+    });
+    expect(within(loader).getByText("Fetching the reviewed Engine revision…")).toBeInTheDocument();
+    expect(within(loader).getByText("Sources").closest("li")).toHaveClass("active");
+  });
+
+  test("identifies a standalone Pixi build as the active slow operation", async () => {
+    const syncedStatus: CapabilityStatus = {
+      ...status,
+      engine: { ...status.engine, source_available: true, revision: "engine-pinned", synced: true },
+      pixi: { ...status.pixi, source_available: true, revision: "pixi-pinned", synced: true },
+    };
+    const pixiJob: Job = {
+      ...stackJob,
+      id: "pixi-job",
+      kind: "dependency.pixi.prepare",
+      label: "Prepare DeepDeckPixi",
+      status: "running",
+      started_at: "2026-08-29T00:00:01Z",
+      logs: ["Building the production Pixi bundle…"],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/v1/status")) return response(syncedStatus);
+        if (url.endsWith("/api/v1/jobs")) return response([pixiJob]);
+        return readResponse(url, syncedStatus);
+      }),
+    );
+
+    render(<App />);
+
+    const loader = await screen.findByRole("status", {
+      name: "Building the Pixi visual client",
+    });
+    expect(within(loader).getByText("Building the production Pixi bundle…")).toBeInTheDocument();
+    expect(within(loader).getByText("Pixi").closest("li")).toHaveClass("active");
   });
 
   test("a ready local stack can still be verified and repaired", async () => {
@@ -240,16 +302,17 @@ describe("guided onboarding", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /Jobs/ }));
     const table = await screen.findByRole("table", { name: "Agent resource allocation" });
     expect(within(table).getByRole("row", { name: /Agent One/i })).toBeInTheDocument();
     expect(within(table).getByRole("row", { name: /Agent Two/i })).toBeInTheDocument();
-    const trainingSlots = await screen.findByLabelText("Training slots for Agent One");
+    const trainingSlots = await screen.findByLabelText("Self-play slots for Agent One");
     const firstRow = trainingSlots.closest("tr");
     expect(firstRow).not.toBeNull();
     fireEvent.change(trainingSlots, {
       target: { value: "3" },
     });
-    fireEvent.click(within(firstRow as HTMLTableRowElement).getByRole("button", { name: "Apply" }));
+    fireEvent.click(within(firstRow as HTMLTableRowElement).getByRole("button", { name: "Save allocation" }));
 
     await waitFor(() => {
       const save = fetchMock.mock.calls.find(([input, init]) =>
@@ -311,7 +374,7 @@ describe("guided onboarding", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Local training/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /New agent/i }));
 
     fireEvent.click(
       await screen.findByRole("button", { name: /Legacy Reanimator/i }),

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  cardOrderLegend,
   candidateTargetIds,
   castingPaymentPresentations,
   selectPlanTarget,
@@ -9,6 +10,19 @@ import {
 } from "./pixiInteraction";
 
 describe("visual Pixi targeting", () => {
+  test("explains both ends of a library ordering decision", () => {
+    expect(cardOrderLegend({
+      kind: "cardOrder",
+      maximum: 4,
+      prompt: "Order the remaining cards for the bottom of the library, bottommost first.",
+    })).toBe("1 = bottommost card · 4 = topmost of these cards");
+    expect(cardOrderLegend({
+      kind: "cardOrder",
+      maximum: 3,
+      prompt: "Order the cards for the top of the library, topmost first.",
+    })).toBe("1 = topmost card · 3 = deepest of these cards");
+  });
+
   test("chooses mana or hand exile before highlighting the exact alternative card", () => {
     const target = (playerId: string) => ({
       targetPlayer: { player: { playerId } },

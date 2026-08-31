@@ -176,8 +176,11 @@ def test_models_route_only_exposes_user_owned_local_model_metadata(tmp_path: Pat
     response = TestClient(create_app(tmp_path)).get("/api/v1/models")
 
     assert response.status_code == 200
-    assert response.json()["items"] == [
-        {
+    item = response.json()["items"][0]
+    assert item.pop("diskBytes") > 0
+    assert item.pop("weightsBytes") == 2
+    assert item.pop("trainingState") == {}
+    assert item == {
             "schemaVersion": "local-model/v1",
             "id": "my-model-id",
             "name": "My Model",
@@ -191,8 +194,7 @@ def test_models_route_only_exposes_user_owned_local_model_metadata(tmp_path: Pat
             "status": "stopped",
             "ready": True,
             "decks": [],
-        }
-    ]
+    }
 
 
 def test_model_resources_and_deck_statistics_are_local_and_persistent(tmp_path: Path) -> None:

@@ -7,6 +7,19 @@ export type TargetPlan = {
   prompt: string;
 };
 
+export function cardOrderLegend(choice: any): string {
+  if (choice?.kind !== "cardOrder") return "";
+  const last = Math.max(1, Number(choice.maximum ?? choice.cards?.length ?? 1));
+  const prompt = String(choice.prompt ?? "").toLowerCase();
+  if (prompt.includes("bottommost first")) {
+    return `1 = bottommost card · ${last} = topmost of these cards`;
+  }
+  if (prompt.includes("topmost first")) {
+    return `1 = topmost card · ${last} = deepest of these cards`;
+  }
+  return `1 = first card in the order · ${last} = last card`;
+}
+
 function exactEngineActions(actions: any[]): any[] {
   return actions.flatMap((action) => action?.engineTargetActions?.length
     ? action.engineTargetActions
