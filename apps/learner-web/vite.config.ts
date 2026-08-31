@@ -1,8 +1,20 @@
 import react from '@vitejs/plugin-react';
+import vue from '@vitejs/plugin-vue';
+import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), vue()],
+  resolve: {
+    alias: [
+      {
+        find: /^@deepdeck\/pixi$/,
+        replacement: fileURLToPath(
+          new URL('../../external/deepdeck-pixi/src/index.mjs', import.meta.url),
+        ),
+      },
+    ],
+  },
   server: {
     port: 4173,
     proxy: {

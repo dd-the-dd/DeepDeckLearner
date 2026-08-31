@@ -9,7 +9,6 @@ import {
 } from "react";
 import { createApp, h, shallowRef, type App as VueApp, type ShallowRef } from "vue";
 import * as DeepDeckPixi from "@deepdeck/pixi";
-import "@deepdeck/pixi/style.css";
 
 import type { EngineView } from "./LocalPixiTable";
 import type { DeckPresentation } from "./api";
