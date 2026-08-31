@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import json
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from .dependencies import current_revision, engine_binary
+
+
+class CardModelError(RuntimeError):
+    pass
+
+
+def card_identifier(card: dict[str, Any]) -> str:
+    return str(
+        card.get("cardId")
+        or card.get("id")
+        or card.get("printingId")
+        or card.get("scryfallId")
+        or ""
+    )
+
+
+def engine_signature(root: Path) -> str | None:
+    revision = current_revision(root, "engine")
+    binary = engine_binary(root)
+    if not revision or not binary.is_file():
+        return None
+    stat = binary.stat()
+    return f"{revision}:{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def oracle_request(card: dict[str, Any]) -> dict[str, Any]:
+    faces = card.get("faces")
+    return {
+        "cardName": str(card.get("name", "")),
+        "typeLine": str(card.get("typeLine", "")),
+        "manaCost": card.get("manaCost"),
+        "oracleText": card.get("oracleText"),
+        "faces": faces if isinstance(faces, list) else [],
+    }
+
+
+def requires_power_toughness(card: dict[str, Any]) -> bool:
+    type_line = str(card.get("typeLine", "")).casefold()
+    return "creature" in type_line or "vehicle" in type_line
+
+
+def enrich_card_characteristics(root: Path, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fill absent printed P/T from Scryfall without trusting stale deck snapshots."""
+    cache_path = root / ".deepdeck" / "scryfall-card-characteristics.json"
+    try:
+        raw_cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw_cache = {}
+    cached_cards = (
+        dict(raw_cache.get("cards", {}))
+        if isinstance(raw_cache, dict)
+        and raw_cache.get("schemaVersion") == "scryfall-card-characteristics/v1"
+        and isinstance(raw_cache.get("cards"), dict)
+        else {}
+    )
+    missing: dict[str, dict[str, Any]] = {}
+    for card in cards:
+        scryfall_id = str(card.get("scryfallId") or "").strip()
+        if (
+            scryfall_id
+            and requires_power_toughness(card)
+            and (card.get("power") is None or card.get("toughness") is None)
+            and scryfall_id not in cached_cards
+        ):
+            missing[scryfall_id] = card
+
+    for start in range(0, len(missing), 75):
+        identifiers = list(missing)[start : start + 75]
+        try:
+            response = httpx.post(
+                "https://api.scryfall.com/cards/collection",
+                json={"identifiers": [{"id": card_id} for card_id in identifiers]},
+                headers={
+                    "Accept": "application/json;q=0.9,*/*;q=0.8",
+                    "User-Agent": "DeepDeckLearner/0.2",
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise CardModelError(
+                f"Scryfall could not provide missing card characteristics: {error}"
+            ) from error
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, list):
+            raise CardModelError("Scryfall did not return the requested card characteristics.")
+        for result in data:
+            if not isinstance(result, dict):
+                continue
+            scryfall_id = str(result.get("id") or "")
+            power = result.get("power")
+            toughness = result.get("toughness")
+            faces = result.get("card_faces")
+            if (power is None or toughness is None) and isinstance(faces, list):
+                creature_face = next(
+                    (
+                        face
+                        for face in faces
+                        if isinstance(face, dict)
+                        and "creature" in str(face.get("type_line", "")).casefold()
+                    ),
+                    None,
+                )
+                if isinstance(creature_face, dict):
+                    power = creature_face.get("power")
+                    toughness = creature_face.get("toughness")
+            if scryfall_id:
+                cached_cards[scryfall_id] = {
+                    "power": power,
+                    "toughness": toughness,
+                }
+
+    if missing:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        pending = cache_path.with_suffix(".pending")
+        pending.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "scryfall-card-characteristics/v1",
+                    "cards": cached_cards,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        pending.replace(cache_path)
+
+    enriched: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    for card in cards:
+        current = dict(card)
+        if requires_power_toughness(current):
+            facts = cached_cards.get(str(current.get("scryfallId") or ""), {})
+            if isinstance(facts, dict):
+                if current.get("power") is None and facts.get("power") is not None:
+                    current["power"] = facts["power"]
+                if current.get("toughness") is None and facts.get("toughness") is not None:
+                    current["toughness"] = facts["toughness"]
+            if current.get("power") is None or current.get("toughness") is None:
+                unresolved.append(str(current.get("name") or card_identifier(current)))
+        enriched.append(current)
+    if unresolved:
+        names = ", ".join(sorted(set(unresolved))[:5])
+        raise CardModelError(f"Missing printed power/toughness for: {names}.")
+    return enriched
+
+
+def compile_oracle_rules(
+    root: Path, engine_url: str, cards: list[dict[str, Any]]
+) -> dict[str, list[Any]]:
+    """Compile card text with the running Oracle, caching only for this Engine build."""
+    signature = engine_signature(root)
+    cache_path = root / ".deepdeck" / "oracle-card-rules.json"
+    try:
+        raw_cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw_cache = {}
+    cache_matches = bool(
+        signature
+        and isinstance(raw_cache, dict)
+        and raw_cache.get("schemaVersion") == "oracle-card-rules/v2"
+        and raw_cache.get("engineBuild") == signature
+        and isinstance(raw_cache.get("cards"), dict)
+    )
+    cached_cards: dict[str, Any] = dict(raw_cache.get("cards", {})) if cache_matches else {}
+    compiled: dict[str, list[Any]] = {}
+    missing: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+
+    for card in cards:
+        card_id = card_identifier(card)
+        if not card_id:
+            continue
+        request = oracle_request(card)
+        has_oracle_text = bool(request["oracleText"]) or any(
+            isinstance(face, dict) and bool(face.get("oracleText")) for face in request["faces"]
+        )
+        if not has_oracle_text:
+            existing = card.get("rules")
+            if isinstance(existing, list):
+                compiled[card_id] = existing
+            continue
+        cached = cached_cards.get(card_id)
+        if (
+            isinstance(cached, dict)
+            and cached.get("request") == request
+            and isinstance(cached.get("rules"), list)
+        ):
+            compiled[card_id] = list(cached["rules"])
+        else:
+            missing[card_id] = (card, request)
+
+    def parse_rules(
+        item: tuple[str, tuple[dict[str, Any], dict[str, Any]]],
+    ) -> tuple[str, dict[str, Any], list[Any]]:
+        card_id, (card, request) = item
+        try:
+            response = httpx.post(
+                f"{engine_url.rstrip('/')}/oracle/rules",
+                json=request,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise CardModelError(
+                f"Engine could not compile {card.get('name', card_id)}: {error}"
+            ) from error
+        rules = body.get("rules") if isinstance(body, dict) else None
+        if not isinstance(rules, list):
+            raise CardModelError(f"Engine did not return rules for {card.get('name', card_id)}.")
+        return card_id, request, rules
+
+    if missing:
+        worker_count = min(8, len(missing))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            for card_id, request, rules in executor.map(parse_rules, missing.items()):
+                compiled[card_id] = rules
+                cached_cards[card_id] = {"request": request, "rules": rules}
+
+    if signature and missing:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        pending = cache_path.with_suffix(".pending")
+        pending.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "oracle-card-rules/v2",
+                    "engineBuild": signature,
+                    "cards": cached_cards,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        pending.replace(cache_path)
+    return compiled
+
+
+def refresh_playtest_deck(
+    root: Path,
+    engine_url: str,
+    version_id: str,
+    cards: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    snapshot_path = root / ".deepdeck" / "decks" / f"{version_id}.json"
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        snapshot = {}
+    snapshot_cards = snapshot.get("cards", []) if isinstance(snapshot, dict) else []
+    sources = {
+        card_identifier(card): card
+        for card in snapshot_cards
+        if isinstance(card, dict) and card_identifier(card)
+    }
+    for card in cards:
+        card_id = card_identifier(card)
+        if card_id and card_id not in sources:
+            sources[card_id] = card
+    sources = {
+        card_identifier(card): card
+        for card in enrich_card_characteristics(root, list(sources.values()))
+    }
+    compiled = compile_oracle_rules(root, engine_url, list(sources.values()))
+    refreshed: list[dict[str, Any]] = []
+    for card in cards:
+        current = dict(card)
+        card_id = card_identifier(card)
+        source = sources.get(card_id, {})
+        if current.get("power") is None and source.get("power") is not None:
+            current["power"] = source["power"]
+        if current.get("toughness") is None and source.get("toughness") is not None:
+            current["toughness"] = source["toughness"]
+        rules = compiled.get(card_id)
+        if isinstance(rules, list):
+            current["rules"] = rules
+        refreshed.append(current)
+    return refreshed

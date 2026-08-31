@@ -11,7 +11,6 @@ import sys
 import threading
 import uuid
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +22,13 @@ import psutil
 
 from oracle_ai.training.matchmaking import plackett_luce_matchmaking_weight
 
+from .card_models import (
+    CardModelError,
+    card_identifier,
+    compile_oracle_rules,
+    enrich_card_characteristics,
+    refresh_playtest_deck,
+)
 from .dependencies import current_revision, engine_binary, engine_build_current, pinned_revision
 from .resources import find_model_run, load_resource_plan, resource_snapshot
 
@@ -465,115 +471,63 @@ class JobManager:
         )
         config = yaml.safe_load(template.read_text(encoding="utf-8"))
         engine_url = str(config.get("engineUrl", "http://127.0.0.1:8787"))
-        rules_cache_path = self.root / ".deepdeck" / "oracle-card-rules.json"
-        try:
-            rules_cache = json.loads(rules_cache_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            rules_cache = {}
-        if not isinstance(rules_cache, dict):
-            rules_cache = {}
         catalog: dict[str, list[dict[str, Any]]] = {}
-        with httpx.Client(base_url=engine_url.rstrip("/"), timeout=30.0) as engine:
-            for deck in compatible:
-                version_id = str(deck["id"])
-                snapshot_path = self.root / ".deepdeck" / "decks" / f"{version_id}.json"
-                try:
-                    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError) as error:
+        for deck in compatible:
+            version_id = str(deck["id"])
+            snapshot_path = self.root / ".deepdeck" / "decks" / f"{version_id}.json"
+            try:
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise JobValidationError(
+                    f"Download {deck.get('name', version_id)} again before training."
+                ) from error
+            entries = [
+                entry
+                for entry in snapshot.get("cards", [])
+                if isinstance(entry, dict) and entry.get("section") != "considering"
+            ]
+            entries = self._enrich_card_characteristics(entries)
+            compiled_rules = self._compile_oracle_rules(engine_url, entries)
+            cards: list[dict[str, Any]] = []
+            for entry in entries:
+                quantity = max(0, int(entry.get("quantity", 0)))
+                card_id = self._card_identifier(entry)
+                if not card_id:
                     raise JobValidationError(
-                        f"Download {deck.get('name', version_id)} again before training."
-                    ) from error
-                entries = [
-                    entry
-                    for entry in snapshot.get("cards", [])
-                    if isinstance(entry, dict) and entry.get("section") != "considering"
-                ]
-                missing_rules: dict[str, dict[str, Any]] = {}
-                for entry in entries:
-                    card_id = str(
-                        entry.get("cardId")
-                        or entry.get("printingId")
-                        or entry.get("scryfallId")
-                        or ""
+                        f"{deck.get('name', version_id)} contains a card without an id."
                     )
-                    if card_id and not isinstance(entry.get("rules"), list) and not isinstance(
-                        rules_cache.get(card_id), list
-                    ):
-                        missing_rules[card_id] = entry
-
-                def parse_rules(item: tuple[str, dict[str, Any]]) -> tuple[str, list[Any]]:
-                    card_id, entry = item
-                    response = engine.post(
-                        "/oracle/rules",
-                        json={
-                            "cardName": str(entry.get("name", "")),
-                            "typeLine": str(entry.get("typeLine", "")),
-                            "manaCost": entry.get("manaCost"),
-                            "oracleText": entry.get("oracleText"),
-                            "faces": [],
-                        },
+                raw_rules = entry.get("rules")
+                rules: list[Any]
+                current_rules = compiled_rules.get(card_id)
+                if isinstance(current_rules, list):
+                    rules = current_rules
+                elif isinstance(raw_rules, list):
+                    rules = raw_rules
+                else:
+                    raise JobValidationError(
+                        f"Engine did not return rules for {entry.get('name', card_id)}."
                     )
-                    if response.status_code >= 400:
-                        raise JobValidationError(
-                            f"Engine could not parse {entry.get('name', card_id)}: "
-                            f"{response.text}"
-                        )
-                    return card_id, list(response.json().get("rules", []))
-
-                if missing_rules:
-                    worker_count = min(8, len(missing_rules))
-                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                        for card_id, parsed_rules in executor.map(
-                            parse_rules, missing_rules.items()
-                        ):
-                            rules_cache[card_id] = parsed_rules
-                cards: list[dict[str, Any]] = []
-                for entry in entries:
-                    quantity = max(0, int(entry.get("quantity", 0)))
-                    card_id = str(
-                        entry.get("cardId")
-                        or entry.get("printingId")
-                        or entry.get("scryfallId")
-                        or ""
-                    )
-                    if not card_id:
-                        raise JobValidationError(
-                            f"{deck.get('name', version_id)} contains a card without an id."
-                        )
-                    raw_rules = entry.get("rules")
-                    rules: list[Any]
-                    if isinstance(raw_rules, list):
-                        rules = raw_rules
-                    else:
-                        cached = rules_cache.get(card_id)
-                        if isinstance(cached, list):
-                            rules = cached
-                        else:
-                            raise JobValidationError(
-                                f"Engine did not return rules for {entry.get('name', card_id)}."
-                            )
-                    section = str(entry.get("section", "main"))
-                    normalized = {
-                        "id": card_id,
-                        "name": str(entry.get("name", "")),
-                        "typeLine": str(entry.get("typeLine", "")),
-                        "manaCost": str(entry.get("manaCost") or ""),
-                        "power": entry.get("power"),
-                        "toughness": entry.get("toughness"),
-                        "rules": rules,
-                        "isSideboard": section in {"sideboard", "companion"},
-                        "isCommander": section == "commander",
-                        "sourceSessionId": version_id,
-                    }
-                    cards.extend(dict(normalized) for _ in range(quantity))
-                name = (
-                    f"{deck.get('name', 'Deck')} · v{deck.get('version', 1)} · "
-                    f"{version_id[:8]}"
-                )
-                catalog[name] = cards
-        rules_cache_path.write_text(
-            json.dumps(rules_cache, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+                section = str(entry.get("section", "main"))
+                normalized = {
+                    "id": card_id,
+                    "name": str(entry.get("name", "")),
+                    "typeLine": str(entry.get("typeLine", "")),
+                    "manaCost": str(entry.get("manaCost") or ""),
+                    "oracleText": entry.get("oracleText"),
+                    "faces": entry.get("faces", []),
+                    "power": entry.get("power"),
+                    "toughness": entry.get("toughness"),
+                    "rules": rules,
+                    "isSideboard": section in {"sideboard", "companion"},
+                    "isCommander": section == "commander",
+                    "sourceSessionId": version_id,
+                }
+                cards.extend(dict(normalized) for _ in range(quantity))
+            name = (
+                f"{deck.get('name', 'Deck')} · v{deck.get('version', 1)} · "
+                f"{version_id[:8]}"
+            )
+            catalog[name] = cards
         catalog_path = run / "training-decks.json"
         catalog_path.write_text(
             json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -647,6 +601,37 @@ class JobManager:
         if not 2 <= len(name) <= 64 or any(ord(character) < 32 for character in name):
             raise JobValidationError("Model name must contain between 2 and 64 visible characters.")
         return name
+
+    @staticmethod
+    def _card_identifier(card: dict[str, Any]) -> str:
+        return card_identifier(card)
+
+    def _enrich_card_characteristics(
+        self, cards: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        try:
+            return enrich_card_characteristics(self.root, cards)
+        except CardModelError as error:
+            raise JobValidationError(str(error)) from error
+
+    def _compile_oracle_rules(
+        self, engine_url: str, cards: list[dict[str, Any]]
+    ) -> dict[str, list[Any]]:
+        try:
+            return compile_oracle_rules(self.root, engine_url, cards)
+        except CardModelError as error:
+            raise JobValidationError(str(error)) from error
+
+    def _refresh_playtest_deck_rules(
+        self,
+        engine_url: str,
+        version_id: str,
+        cards: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        try:
+            return refresh_playtest_deck(self.root, engine_url, version_id, cards)
+        except CardModelError as error:
+            raise JobValidationError(str(error)) from error
 
     def _new_checkpoint_target(self, model: str) -> Path:
         self.checkpoint_root.mkdir(parents=True, exist_ok=True)
@@ -743,6 +728,10 @@ class JobManager:
             opponent_deck = version_id(opponent_cards)
         else:
             opponent_name, opponent_cards = selected_deck(opponent_deck)
+        own_cards = self._refresh_playtest_deck_rules(engine_url, own_deck, own_cards)
+        opponent_cards = self._refresh_playtest_deck_rules(
+            engine_url, opponent_deck, opponent_cards
+        )
         setup_path = self.root / ".deepdeck" / "playtests" / f"{uuid.uuid4()}.json"
         setup_path.parent.mkdir(parents=True, exist_ok=True)
         starting_life = 40 if game_format == "commander" else 20
