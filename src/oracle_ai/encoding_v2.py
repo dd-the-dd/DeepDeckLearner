@@ -353,6 +353,55 @@ class StructuredObservationEncoder:
     def _action_decision_words(self, action: dict[str, Any]) -> Iterable[str]:
         return _semantic_fragments(action.get("decisions", {}))
 
+    def _referenced_entities(
+        self,
+        value: Any,
+        entities: dict[str, tuple[dict[str, Any], int]],
+    ) -> list[tuple[str, dict[str, Any], int]]:
+        result: list[tuple[str, dict[str, Any], int]] = []
+        seen: set[str] = set()
+
+        def collect(candidate: Any) -> None:
+            if isinstance(candidate, str):
+                entity = entities.get(candidate)
+                if entity is not None and candidate not in seen:
+                    seen.add(candidate)
+                    result.append((candidate, entity[0], entity[1]))
+                return
+            if isinstance(candidate, dict):
+                for nested in candidate.values():
+                    collect(nested)
+                return
+            if isinstance(candidate, list):
+                for nested in candidate:
+                    collect(nested)
+
+        collect(value)
+        return result
+
+    def _action_decision_entity_words(
+        self,
+        action: dict[str, Any],
+        entities: dict[str, tuple[dict[str, Any], int]],
+    ) -> Iterable[str]:
+        decisions = action.get("decisions")
+        if not isinstance(decisions, dict):
+            return []
+
+        result: list[str] = []
+        for decision_id in sorted(decisions):
+            for _, entity, _ in self._referenced_entities(
+                decisions[decision_id],
+                entities,
+            ):
+                result.extend(
+                    self._action_entity_words(
+                        entity,
+                        f"decision {decision_id}",
+                    )
+                )
+        return result
+
     def _action_entity_words(
         self,
         card: dict[str, Any],
@@ -498,18 +547,27 @@ class StructuredObservationEncoder:
                     if instance_id:
                         entities[str(instance_id)] = (card, relative_player)
 
-            if player_id != acting_player_id:
-                continue
             hand = (
                 list(player.get("hand", []))
                 if isinstance(player.get("hand"), list)
                 else []
             )
             for card in hand:
+                flags = card.get("flags")
+                known_to_viewer = (
+                    isinstance(flags, dict) and bool(flags.get("knownToViewer"))
+                )
+                if player_id != acting_player_id and not known_to_viewer:
+                    continue
+                zone_label = (
+                    "hand card"
+                    if player_id == acting_player_id
+                    else "known opponent hand card"
+                )
                 stat_tokens.append(
                     _Token(
                         numeric=_card_numeric(card),
-                        words=self._card_words(card, "hand card"),
+                        words=self._card_words(card, zone_label),
                         relative_player=relative_player,
                         token_type=TokenType.CARD_STATS,
                         has_numeric=True,
@@ -738,22 +796,35 @@ class StructuredObservationEncoder:
                     self._action_entity_words(source_card, "action source")
                 )
                 relative_player = source_position
-            words.extend(self._action_decision_words(action))
-            for target in action.get("targets", {}).values():
-                if not isinstance(target, dict):
-                    continue
-                target_instance = target.get("instanceId")
-                target_entity = (
-                    entities.get(str(target_instance))
-                    if target_instance is not None
+            for role, instance_id in (
+                ("attacker", action.get("attackerId")),
+                ("blocker", action.get("blockerId")),
+            ):
+                participant = (
+                    entities.get(str(instance_id))
+                    if instance_id is not None
                     else None
                 )
-                if target_entity is not None:
-                    words.extend(
-                        self._action_entity_words(target_entity[0], "target")
-                    )
+                if participant is not None:
+                    words.extend(self._action_entity_words(participant[0], role))
+            words.extend(self._action_decision_entity_words(action, entities))
+            words.extend(self._action_decision_words(action))
+            for target_id, target in action.get("targets", {}).items():
+                if not isinstance(target, dict):
+                    continue
+                target_entities = self._referenced_entities(target, entities)
+                if target_entities:
+                    for _, target_entity, _ in target_entities:
+                        words.extend(
+                            self._action_entity_words(
+                                target_entity,
+                                f"target {target_id}",
+                            )
+                        )
                 else:
-                    words.extend(_semantic_fragments(target))
+                    words.extend(
+                        _semantic_fragments(target)
+                    )
             result.append(
                 _Token(
                     numeric=numeric,

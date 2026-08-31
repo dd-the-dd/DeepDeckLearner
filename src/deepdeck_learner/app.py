@@ -1,22 +1,29 @@
 from __future__ import annotations
 
+import json
 import secrets
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .catalogs import (
     CatalogAuthenticationError,
     CatalogError,
+    CatalogNotFoundError,
     account_api_key,
     active_competitions,
+    download_platform_deck,
+    local_deck_presentation,
     local_legal_decks,
     platform_decks,
+    scryfall_image,
 )
 from .jobs import JobManager, JobValidationError
+from .models import deck_statistics, local_models
+from .resources import find_model_run, load_resource_plan, save_resource_plan
 from .settings import load_api_key, save_api_key
 from .status import capability_status, project_root
 
@@ -61,6 +68,38 @@ def create_app(root: Path | None = None) -> FastAPI:
     def jobs() -> list[dict[str, Any]]:
         return manager.list_jobs()
 
+    @app.get("/api/v1/models")
+    def models() -> dict[str, Any]:
+        return {"items": local_models(resolved_root, manager.list_jobs())}
+
+    @app.get("/api/v1/models/{model_id}/resources")
+    def model_resources(model_id: str) -> dict[str, int]:
+        try:
+            run, _ = find_model_run(resolved_root, model_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return load_resource_plan(run)
+
+    @app.put("/api/v1/models/{model_id}/resources")
+    def update_model_resources(
+        model_id: str,
+        payload: dict[str, Any],
+        x_deepdeck_token: str | None = Header(default=None),
+    ) -> dict[str, int]:
+        authorize(x_deepdeck_token)
+        try:
+            return save_resource_plan(resolved_root, model_id, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/v1/resources")
+    def resources() -> dict[str, Any]:
+        return manager.resources()
+
+    @app.get("/api/v1/statistics/decks")
+    def training_deck_statistics() -> dict[str, Any]:
+        return {"items": deck_statistics(resolved_root)}
+
     @app.get("/api/v1/catalog/decks")
     def deck_catalog(search: str = "", format: str = "legacy", page: int = 1) -> dict[str, Any]:
         try:
@@ -70,6 +109,72 @@ def create_app(root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail=str(error)) from error
         except CatalogError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.post("/api/v1/catalog/decks/{version_id}/download")
+    def download_deck(
+        version_id: str, x_deepdeck_token: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(x_deepdeck_token)
+        try:
+            return download_platform_deck(resolved_root, version_id)
+        except CatalogAuthenticationError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.get("/api/v1/catalog/decks/{version_id}/presentation")
+    def deck_presentation(version_id: str) -> dict[str, Any]:
+        try:
+            return local_deck_presentation(resolved_root, version_id)
+        except CatalogNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except CatalogError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.get("/api/scryfall-images/{image_path:path}", include_in_schema=False)
+    def card_image(image_path: str) -> Response:
+        try:
+            content, content_type = scryfall_image(image_path)
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=604800, immutable"},
+        )
+
+    @app.get("/api/v1/training/deck-pool")
+    def training_deck_pool() -> dict[str, Any]:
+        path = resolved_root / ".deepdeck" / "training-deck-pool.json"
+        if not path.is_file():
+            return {"decks": []}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"decks": []}
+        return value if isinstance(value, dict) else {"decks": []}
+
+    @app.put("/api/v1/training/deck-pool")
+    def save_training_deck_pool(
+        payload: dict[str, Any], x_deepdeck_token: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(x_deepdeck_token)
+        decks = payload.get("decks", [])
+        if (
+            not isinstance(decks, list)
+            or len(decks) > 100
+            or not all(isinstance(deck, dict) and isinstance(deck.get("id"), str) for deck in decks)
+        ):
+            raise HTTPException(
+                status_code=422, detail="A training pool may contain up to 100 valid decks."
+            )
+        path = resolved_root / ".deepdeck" / "training-deck-pool.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pending = path.with_suffix(".pending")
+        value = {"decks": decks}
+        pending.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        pending.replace(path)
+        return value
 
     @app.get("/api/v1/catalog/competitions")
     def competition_catalog() -> dict[str, Any]:

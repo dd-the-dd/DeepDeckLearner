@@ -15,6 +15,7 @@ dependencies = [
   "fastapi>=0.116,<0.117",
   "httpx>=0.28,<0.29",
   "python-dotenv>=1.0,<2",
+  "psutil>=6,<8",
   "uvicorn>=0.35,<0.36",
 ]
 
@@ -23,7 +24,8 @@ deep-learning = [
   "numpy>=2,<3",
   "pydantic>=2.10,<3",
   "pyyaml>=6,<7",
-  "torch>=2.4,<3",
+  "torch>=2.4,<2.9; sys_platform == 'win32'",
+  "torch>=2.4,<3; sys_platform != 'win32'",
   "websockets>=15,<18",
 ]
 dev = [

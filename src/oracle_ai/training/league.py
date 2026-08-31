@@ -47,6 +47,7 @@ from oracle_ai.training.gameplay_metrics import (
     summarize_gameplay_metrics,
     update_hourly_gameplay_metrics,
 )
+from oracle_ai.training.matchmaking import plackett_luce_matchmaking_weight
 from oracle_ai.training.plackett_luce import (
     PlackettLuceRating,
     TrainingLeaderboard,
@@ -280,20 +281,14 @@ def _plackett_luce_matchmaking_weight(
     underplayed_strength: float,
     game_prior: float,
 ) -> float:
-    ordinal = float(stat.get("ordinal", 0.0) or 0.0)
-    games = max(0, int(stat.get("games", 0) or 0))
-    exposure = (
-        (minimum_games + game_prior) / (games + game_prior)
-    ) ** underplayed_strength
-    proximity = (
-        1.0
-        if target_ordinal is None
-        else math.exp(-abs(ordinal - target_ordinal) / rating_scale)
-    )
-    quality = proximity * exposure
-    return max(
-        random_floor + (1.0 - random_floor) * quality,
-        1e-9,
+    return plackett_luce_matchmaking_weight(
+        stat,
+        target_ordinal=target_ordinal,
+        minimum_games=minimum_games,
+        random_floor=random_floor,
+        rating_scale=rating_scale,
+        underplayed_strength=underplayed_strength,
+        game_prior=game_prior,
     )
 
 
@@ -1653,6 +1648,13 @@ class LeagueTrainer:
         self.device = torch.device(
             config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         )
+        self.gpu_memory_limit_mb = int(config.get("gpuMemoryLimitMb", 0))
+        self.resource_plan_path = (
+            Path(str(config["learnerResourcePlan"]))
+            if config.get("learnerResourcePlan")
+            else None
+        )
+        self._apply_gpu_memory_limit(self.gpu_memory_limit_mb)
         ppo_config = PPOConfig(**config.get("ppo", {}))
         initial_model = build_model(config.get("model", {}))
         initial_ground_truth = self.output / "champions" / "ia-gt-0"
@@ -1756,18 +1758,7 @@ class LeagueTrainer:
                 "can safely reuse environments within one rollout batch"
             )
         self.environments = [
-            RustSelfPlayEnvironment(
-                config.get("engineUrl", "http://127.0.0.1:8787"),
-                self.training_matchups,
-                float(config.get("engineTimeoutSeconds", 120)),
-                str(config.get("multiplayerRewardMode", "winnerLoser")),
-                str(config.get("analyticsPilotId", "ia-in-training")),
-                float(config.get("noWinnerReward", 0.0)),
-                float(config.get("legacyGameWinReward", 0.25)),
-                float(config.get("legacyMatchWinReward", 1.0)),
-                bool(config.get("scaleRewardsByPlackettLuce", False)),
-            )
-            for _ in range(self.parallel_game_workers)
+            self._new_training_environment() for _ in range(self.parallel_game_workers)
         ]
         # Kept as a compatibility alias for diagnostics and existing callers.
         self.environment = self.environments[0]
@@ -2213,6 +2204,50 @@ class LeagueTrainer:
             self.ground_truth_health = None
         return evaluation
 
+    def _new_training_environment(self) -> RustSelfPlayEnvironment:
+        return RustSelfPlayEnvironment(
+            self.config.get("engineUrl", "http://127.0.0.1:8787"),
+            self.training_matchups,
+            float(self.config.get("engineTimeoutSeconds", 120)),
+            str(self.config.get("multiplayerRewardMode", "winnerLoser")),
+            str(self.config.get("analyticsPilotId", "ia-in-training")),
+            float(self.config.get("noWinnerReward", 0.0)),
+            float(self.config.get("legacyGameWinReward", 0.25)),
+            float(self.config.get("legacyMatchWinReward", 1.0)),
+            bool(self.config.get("scaleRewardsByPlackettLuce", False)),
+        )
+
+    def _apply_gpu_memory_limit(self, limit_mb: int) -> None:
+        if self.device.type != "cuda":
+            return
+        total = torch.cuda.get_device_properties(self.device).total_memory
+        fraction = 1.0 if limit_mb <= 0 else min(1.0, (limit_mb * 1024 * 1024) / total)
+        torch.cuda.set_per_process_memory_fraction(fraction, self.device)
+
+    def _refresh_learner_resources(self) -> None:
+        if self.resource_plan_path is None or not self.resource_plan_path.is_file():
+            return
+        try:
+            plan = json.loads(self.resource_plan_path.read_text(encoding="utf-8"))
+            workers = max(1, min(32, int(plan.get("trainingMatches", 1))))
+            gpu_limit = max(0, int(plan.get("gpuMemoryMb", 0)))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return
+        if workers != self.parallel_game_workers:
+            if workers > len(self.environments):
+                self.environments.extend(
+                    self._new_training_environment()
+                    for _ in range(workers - len(self.environments))
+                )
+            else:
+                self.environments = self.environments[:workers]
+            self.parallel_game_workers = workers
+            self.rollout_batch_games = workers
+            self.environment = self.environments[0]
+        if gpu_limit != self.gpu_memory_limit_mb:
+            self._apply_gpu_memory_limit(gpu_limit)
+            self.gpu_memory_limit_mb = gpu_limit
+
     def _run_ground_truth_evaluation(self, period: int) -> dict[str, Any] | None:
         if not self.ground_truth_scenarios:
             return None
@@ -2257,6 +2292,7 @@ class LeagueTrainer:
                     "modelTrainingSeconds": self.model_training_seconds,
                     "parallelGameWorkers": self.parallel_game_workers,
                     "rolloutBatchGames": self.rollout_batch_games,
+                    "gpuMemoryLimitMb": self.gpu_memory_limit_mb,
                     "trainingPhase": self.training_phase,
                     "trainingDeckCount": len(self.training_deck_names),
                     "trainingDecks": list(self.training_deck_names),
@@ -2615,6 +2651,7 @@ class LeagueTrainer:
         self._write_state()
         while episode_limit is None or self.state.completed_episodes < episode_limit:
             self._wait_until_running()
+            self._refresh_learner_resources()
             self._refresh_training_decks_if_changed()
             batch_size = _rollout_batch_size(
                 self.state.completed_episodes,

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
+import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -16,6 +19,10 @@ class CatalogAuthenticationError(CatalogError):
     pass
 
 
+class CatalogNotFoundError(CatalogError):
+    pass
+
+
 def account_api_key() -> str:
     api_key = os.getenv("DEEPDECK_API_KEY", "").strip()
     if not api_key:
@@ -26,9 +33,9 @@ def account_api_key() -> str:
 
 
 def _platform_url() -> str:
-    return os.getenv(
-        "DEEPDECK_PLATFORM_URL", "https://staging.deepdeckleague.com/api/v1"
-    ).rstrip("/")
+    return os.getenv("DEEPDECK_PLATFORM_URL", "https://staging.deepdeckleague.com/api/v1").rstrip(
+        "/"
+    )
 
 
 def _data(response: httpx.Response) -> Any:
@@ -60,6 +67,131 @@ def platform_decks(search: str, game_format: str, page: int = 1) -> dict[str, An
     if not isinstance(data, dict):
         raise CatalogError("The deck catalog did not return a page.")
     return data
+
+
+def download_platform_deck(root: Path, version_id: str) -> dict[str, Any]:
+    deck_id = version_id.strip()
+    if not deck_id:
+        raise CatalogError("A deck version is required.")
+    with httpx.Client(timeout=20.0) as client:
+        response = client.get(
+            f"{_platform_url()}/agents/catalog/decks/{deck_id}",
+            headers={"Authorization": f"Bearer {account_api_key()}"},
+        )
+    data = _data(response)
+    if not isinstance(data, dict) or not isinstance(data.get("cards"), list):
+        raise CatalogError("The deck snapshot did not contain a card list.")
+    target = root / ".deepdeck" / "decks" / f"{deck_id}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pending = target.with_suffix(".pending")
+    pending.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    pending.replace(target)
+    return {
+        "versionId": deck_id,
+        "name": str(data.get("name", "Training deck")),
+        "format": data.get("format"),
+        "cardCount": data.get("cardCount", 0),
+        "path": str(target),
+    }
+
+
+def local_deck_presentation(root: Path, version_id: str) -> dict[str, Any]:
+    """Return the downloaded printing metadata used only to render a local game."""
+    deck_id = version_id.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", deck_id):
+        raise CatalogNotFoundError("The local deck snapshot was not found.")
+    target = root / ".deepdeck" / "decks" / f"{deck_id}.json"
+    try:
+        snapshot = json.loads(target.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise CatalogNotFoundError("Download this deck again before playtesting.") from error
+    except (OSError, ValueError) as error:
+        raise CatalogError("The local deck snapshot could not be read.") from error
+    raw_cards = snapshot.get("cards", []) if isinstance(snapshot, dict) else []
+    if not isinstance(raw_cards, list):
+        raise CatalogError("The local deck snapshot has no card list.")
+
+    cards: list[dict[str, Any]] = []
+    for raw in raw_cards:
+        if not isinstance(raw, dict):
+            continue
+        card_id = str(
+            raw.get("cardId")
+            or raw.get("printingId")
+            or raw.get("scryfallId")
+            or ""
+        ).strip()
+        name = str(raw.get("name", "")).strip()
+        if not card_id or not name:
+            continue
+        type_line = str(raw.get("typeLine", ""))
+        image_front = str(raw.get("imageUri") or raw.get("imageUrl") or "")
+        image_back = str(raw.get("imageBackUri") or raw.get("urlBack") or "")
+        is_token = bool(raw.get("isToken")) or type_line.casefold().startswith("token ")
+        card: dict[str, Any] = {
+            "id": card_id,
+            "imageUrl": image_front,
+            "isGamePiece": bool(raw.get("isGamePiece")) or is_token,
+            "isToken": is_token,
+            "manaCost": raw.get("manaCost") or "",
+            "name": name,
+            "oracleId": raw.get("oracleId"),
+            "oracleText": raw.get("oracleText") or "",
+            "power": raw.get("power"),
+            "printingId": raw.get("printingId"),
+            "quantity": raw.get("quantity", 1),
+            "scryfallId": raw.get("scryfallId"),
+            "toughness": raw.get("toughness"),
+            "typeLine": type_line,
+            "urlBack": image_back,
+            "urlFront": image_front,
+        }
+        if raw.get("flavorName"):
+            card["flavorName"] = raw["flavorName"]
+        if isinstance(raw.get("relatedTokens"), list):
+            card["relatedTokens"] = raw["relatedTokens"]
+
+        face_names = [part.strip() for part in name.split("//") if part.strip()]
+        if len(face_names) > 1:
+            card["faces"] = [
+                {
+                    "id": f"{card_id}:face:{index}",
+                    "imageUrl": image_back if index == 1 and image_back else image_front,
+                    "name": face_name,
+                    "urlFront": image_back if index == 1 and image_back else image_front,
+                }
+                for index, face_name in enumerate(face_names)
+            ]
+        cards.append(card)
+    return {
+        "versionId": deck_id,
+        "name": str(snapshot.get("name", "Local deck")),
+        "cards": cards,
+    }
+
+
+def scryfall_image(image_path: str) -> tuple[bytes, str]:
+    """Proxy allow-listed Scryfall card art so Pixi can safely create WebGL textures."""
+    if (
+        not image_path
+        or ".." in image_path
+        or not re.fullmatch(r"[A-Za-z0-9/_-]+\.[A-Za-z0-9]+", image_path)
+    ):
+        raise CatalogError("Invalid Scryfall image path.")
+    try:
+        response = httpx.get(
+            f"https://cards.scryfall.io/{image_path}",
+            headers={"Accept": "image/*", "User-Agent": "DeepDeckLearner/0.2"},
+            follow_redirects=True,
+            timeout=20.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise CatalogError(f"The Scryfall image request failed: {error}") from error
+    content_type = response.headers.get("content-type", "application/octet-stream")
+    if not content_type.casefold().startswith("image/") or len(response.content) > 20 * 1024 * 1024:
+        raise CatalogError("Scryfall returned an unsupported image response.")
+    return response.content, content_type
 
 
 def active_competitions() -> dict[str, Any]:
