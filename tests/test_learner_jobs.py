@@ -5,6 +5,7 @@ import random
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 
@@ -128,6 +129,178 @@ def test_playtest_uses_inline_decks_from_the_models_training_pool(tmp_path: Path
     assert setup["humanPlayerIds"] == ["local-human"]
     assert setup["setup"]["players"][0]["name"] == "Player Pool Deck"
     assert setup["setup"]["players"][1]["name"] == "AI Pool Deck"
+
+
+def test_playtest_recompiles_cached_card_rules_with_the_current_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = JobManager(tmp_path)
+    checkpoint = local_checkpoint(tmp_path)
+    run = checkpoint.parent.parent
+    catalog_path = run / "training-decks.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["Player Pool Deck"] = [
+        {
+            "id": "sneak-attack",
+            "name": "Sneak Attack",
+            "typeLine": "Enchantment",
+            "manaCost": "{3}{R}",
+            "rules": [
+                {
+                    "kind": "activatedAbility",
+                    "effects": [
+                        {
+                            "kind": "sacrificeAtNextEndStep",
+                            "object": {"kind": "chosenTarget", "id": "handCard"},
+                        }
+                    ],
+                }
+            ],
+            "sourceSessionId": "pool-deck-1",
+        }
+    ]
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    snapshots = tmp_path / ".deepdeck" / "decks"
+    snapshots.mkdir(parents=True)
+    (snapshots / "pool-deck-1.json").write_text(
+        json.dumps(
+            {
+                "cards": [
+                    {
+                        "cardId": "sneak-attack",
+                        "name": "Sneak Attack",
+                        "typeLine": "Enchantment",
+                        "manaCost": "{3}{R}",
+                        "oracleText": (
+                            "{R}: You may put a creature card from your hand onto the "
+                            "battlefield. That creature gains haste. Sacrifice the creature "
+                            "at the beginning of the next end step."
+                        ),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".deepdeck" / "oracle-card-rules.json").write_text(
+        json.dumps({"sneak-attack": catalog["Player Pool Deck"][0]["rules"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("deepdeck_learner.card_models.engine_signature", lambda _: "engine-build")
+    delayed = {
+        "kind": "installDelayedStepTrigger",
+        "step": "endStep",
+        "trackedObject": {"kind": "chosenTarget", "id": "handCard"},
+        "effects": [
+            {
+                "kind": "sacrificePermanent",
+                "permanent": {"kind": "triggeringPermanent"},
+            }
+        ],
+    }
+    requests: list[dict[str, object]] = []
+
+    def oracle_rules(url: str, **kwargs: object) -> httpx.Response:
+        requests.append(dict(kwargs["json"]))  # type: ignore[arg-type]
+        return httpx.Response(
+            200,
+            json={"rules": [{"kind": "activatedAbility", "effects": [delayed]}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr("deepdeck_learner.card_models.httpx.post", oracle_rules)
+
+    argv, _, _ = manager._playtest_command(  # noqa: SLF001
+        {
+            "agent": "v12",
+            "model_id": "my-local-ai",
+            "checkpoint": str(checkpoint),
+            "engine_url": "http://127.0.0.1:8787",
+            "format": "legacy",
+            "deck_version_id": "pool-deck-1",
+            "opponent_deck_version_id": "pool-deck-2",
+        }
+    )
+
+    setup_path = Path(argv[argv.index("--local-game-setup") + 1])
+    setup = json.loads(setup_path.read_text(encoding="utf-8"))
+    rules = setup["setup"]["players"][0]["cards"][0]["rules"]
+    assert len(requests) == 1
+    assert requests[0]["cardName"] == "Sneak Attack"
+    assert rules[0]["effects"][0] == delayed
+    cache = json.loads(
+        (tmp_path / ".deepdeck" / "oracle-card-rules.json").read_text(encoding="utf-8")
+    )
+    assert cache["schemaVersion"] == "oracle-card-rules/v2"
+    assert cache["engineBuild"] == "engine-build"
+
+
+def test_playtest_restores_missing_creature_stats_from_scryfall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = JobManager(tmp_path)
+    snapshots = tmp_path / ".deepdeck" / "decks"
+    snapshots.mkdir(parents=True)
+    (snapshots / "pool-deck-1.json").write_text(
+        json.dumps(
+            {
+                "cards": [
+                    {
+                        "cardId": "large-creature",
+                        "scryfallId": "scryfall-large-creature",
+                        "name": "Large Creature",
+                        "typeLine": "Legendary Creature — Eldrazi",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    requests: list[dict[str, object]] = []
+
+    def scryfall_collection(url: str, **kwargs: object) -> httpx.Response:
+        requests.append(dict(kwargs["json"]))  # type: ignore[arg-type]
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "scryfall-large-creature",
+                        "power": "15",
+                        "toughness": "15",
+                    }
+                ]
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr("deepdeck_learner.card_models.httpx.post", scryfall_collection)
+
+    refreshed = manager._refresh_playtest_deck_rules(  # noqa: SLF001
+        "http://127.0.0.1:8787",
+        "pool-deck-1",
+        [
+            {
+                "id": "large-creature",
+                "name": "Large Creature",
+                "typeLine": "Legendary Creature — Eldrazi",
+                "power": None,
+                "toughness": None,
+                "rules": [],
+            }
+        ],
+    )
+
+    assert requests == [{"identifiers": [{"id": "scryfall-large-creature"}]}]
+    assert refreshed[0]["power"] == "15"
+    assert refreshed[0]["toughness"] == "15"
+    cache = json.loads(
+        (tmp_path / ".deepdeck" / "scryfall-card-characteristics.json").read_text(encoding="utf-8")
+    )
+    assert cache["cards"]["scryfall-large-creature"] == {
+        "power": "15",
+        "toughness": "15",
+    }
 
 
 def test_playtest_resolves_player_random_deck_before_weighting_ai_deck(
