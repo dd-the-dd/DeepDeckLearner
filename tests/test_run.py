@@ -48,7 +48,10 @@ def test_public_runner_accepts_a_pool_for_concurrent_league_seats() -> None:
     assert arguments.matchmaking_concurrency == 2
 
     entries = _matchmaking_entries(arguments)
-    assert [entry.deck_version_id for entry in entries] == ["deck-a", "deck-b"]
+    assert [entry.deck_version_ids for entry in entries] == [
+        ("deck-a", "deck-b"),
+        ("deck-a", "deck-b"),
+    ]
     assert [entry.client_seat_id for entry in entries] == [
         "learner:seat-1",
         "learner:seat-2",

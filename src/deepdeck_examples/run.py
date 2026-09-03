@@ -85,7 +85,7 @@ def parser() -> argparse.ArgumentParser:
         "--additional-deck-version-id",
         action="append",
         default=[],
-        help="Additional deck rotated across concurrent League seats.",
+        help="Additional deck the agent is ready to play; the League selects per match.",
     )
     result.add_argument(
         "--matchmaking-concurrency",
@@ -304,10 +304,10 @@ async def run(arguments: argparse.Namespace) -> None:
             if ticket_id:
                 active_tickets[seat] = ticket_id
             logger.info(
-                "League seat %s queued ticket %s with deck %s",
+                "League seat %s queued ticket %s with %s eligible decks",
                 seat + 1,
                 ticket.get("id"),
-                entry.deck_version_id,
+                len(entry.deck_version_ids),
             )
             match_id = await runner._wait_for_match_id(ticket, 5.0)  # noqa: SLF001
             if match_id is None:
@@ -390,12 +390,14 @@ def _league_match_snapshot(
 
 def _matchmaking_entries(arguments: argparse.Namespace) -> list[MatchmakingEntry]:
     concurrency = max(1, min(32, int(arguments.matchmaking_concurrency)))
-    deck_ids = [arguments.deck_version_id, *arguments.additional_deck_version_id]
+    deck_ids = tuple(
+        dict.fromkeys([arguments.deck_version_id, *arguments.additional_deck_version_id])
+    )
     return [
         MatchmakingEntry(
             competition_version_id=arguments.competition_version_id,
-            deck_version_id=deck_ids[index % len(deck_ids)],
             client_seat_id=f"learner:seat-{index + 1}",
+            deck_version_ids=deck_ids,
         )
         for index in range(concurrency)
     ]
