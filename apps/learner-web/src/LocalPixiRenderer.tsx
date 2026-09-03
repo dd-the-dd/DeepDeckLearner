@@ -17,7 +17,9 @@ import {
   cardOrderLegend,
   candidateTargetIds,
   castingPaymentPresentations,
+  castingXNumberChoice,
   selectPlanTarget,
+  selectOnlyAttackDefender,
   tableChoiceCardIds,
   targetPlanFromAction,
   type TargetPlan,
@@ -30,6 +32,7 @@ type PixiRuntime = {
   gameSessionCardCatalogFromDeckSelections: (
     selections: DeckPresentation[],
   ) => Record<string, unknown>;
+  pixiCombatLinks: (combat: Record<string, unknown>) => any[];
   projectGameSessionView: (view: EngineView, options: Record<string, unknown>) => Projection;
 };
 
@@ -60,6 +63,7 @@ function sceneCard(card: any, kind: string, zone: string, interaction: Interacti
     id: card?.id,
     imageUrl: card?.imageUrl ?? "",
     kind,
+    knownToViewer: Boolean(card?.knownToViewer),
     linkedTo: card?.state?.linkedExileSourceId ?? null,
     name: card?.name ?? "Unknown card",
     raw: card,
@@ -124,9 +128,11 @@ export function pixiScene(projection: Projection, interaction: Interaction = {})
       raw: player,
       targetable: Boolean(interaction.targetableIds?.has(String(player.key))),
       zones: [zone("commandZone"), zone("graveyard"), {
-        cards: Number(player.zones?.libraryCount ?? 0)
-          ? [{ faceDown: true, id: `${player.key}:library`, kind: "zone", name: "Library" }]
-          : [],
+        cards: Number(player.zones?.libraryCount ?? 0) ? [
+          player.zones?.libraryTop
+            ? sceneCard(player.zones.libraryTop, "zone", "library", interaction)
+            : { faceDown: true, id: `${player.key}:library`, kind: "zone", name: "Library" },
+        ] : [],
         count: Number(player.zones?.libraryCount ?? 0),
         id: "library",
       }, zone("exile")],
@@ -137,9 +143,11 @@ export function pixiScene(projection: Projection, interaction: Interaction = {})
     ? players.find((player: any) => player.key === outcome.winner)
     : null;
   return {
-    combat: projection.combat ?? [],
+    combat: pixi.pixiCombatLinks(projection.combat ?? {}),
     controls: {
-      advanceLabel: "Choose a highlighted action",
+      advanceLabel: interaction.targeting
+        ? "Choose a highlighted target"
+        : "Use the decision panel",
       autoPassActive: false,
       canAdvance: false,
       canPassPriority: !interaction.targeting && Boolean(projection.passAction),
@@ -215,7 +223,34 @@ function mountPixi(
 }
 
 function actionLabel(action: any) {
-  return action?.label ?? action?.kind ?? action?.id ?? "Choose action";
+  return String(action?.label ?? action?.kind ?? action?.id ?? "Choose action")
+    .replace(/^Choose\s+/u, "");
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- exported for visibility regression coverage.
+export function visibleCardNameChoices(projection: Projection) {
+  const players = projection.players ?? [];
+  const local = players.find((player: any) => player.role === "human") ?? players[0];
+  const cards = players.flatMap((player: any) => [
+    ...(player.zones?.graveyard?.cards ?? []),
+    ...(player.zones?.exile?.cards ?? []),
+    ...(player.zones?.hand ?? []).filter(
+      (card: any) => player.key === local?.key || card?.knownToViewer,
+    ),
+  ]);
+  return [...new Map(cards
+    .filter((card: any) => card?.id && card?.name)
+    .map((card: any) => [String(card.id), card])).values()];
+}
+
+function abstractResolutionLabel(action: any, projection: Projection) {
+  const label = actionLabel(action);
+  if (projection.decisionSourceCard?.name !== "Ponder") return label;
+  const decisionId = projection.decision?.choice?.decisionId;
+  const selected = decisionId ? action?.decisions?.[decisionId]?.[0] : null;
+  if (selected === "Decline") return "Keep the current order";
+  if (selected === "Perform the optional effects") return "Shuffle the library";
+  return label;
 }
 
 export default function LocalPixiRenderer({ deckSelections, matchup, view, onAction, onExit }: {
@@ -232,7 +267,11 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const [sourceChoices, setSourceChoices] = useState<any[]>([]);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [numberValue, setNumberValue] = useState(0);
+  const [cardNameQuery, setCardNameQuery] = useState("");
+  const [actionQuery, setActionQuery] = useState("");
+  const [searchedCardNames, setSearchedCardNames] = useState<string[]>([]);
   const [hoveredCard, setHoveredCard] = useState<any | null>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [visualError, setVisualError] = useState("");
 
   const cardCatalog = useMemo(
@@ -266,6 +305,13 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   }, [directPresentations, projection.resolutionTargetChoice]);
   const activeTargetPlan = targetPlan ?? automaticTargetPlan;
   const cardChoice = projection.resolutionCardChoice;
+  const cardNameChoice = projection.cardNameChoice;
+  const dungeonChoice = projection.dungeonChoice;
+  const visibleNameCards = useMemo(() => visibleCardNameChoices(projection), [projection]);
+  const visibleNameCardIds = useMemo(
+    () => new Set<string>(visibleNameCards.map((card: any) => String(card.id))),
+    [visibleNameCards],
+  );
   const tableCardIds = useMemo(() => tableChoiceCardIds(projection), [projection]);
   const tableChoiceCards = useMemo(
     () => (cardChoice?.cards ?? []).filter((card: any) => tableCardIds.has(String(card.id))),
@@ -282,22 +328,25 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const selectedIds = useMemo(() => new Set(selectedCardIds), [selectedCardIds]);
   const targetableIds = useMemo(() => {
     if (activeTargetPlan) return candidateTargetIds(activeTargetPlan);
+    if (cardNameChoice) return visibleNameCardIds;
     const maximumReached = selectedCardIds.length >= Number(cardChoice?.maximum ?? 0);
     return new Set<string>([...tableChoiceIds].filter(
       (id) => !maximumReached || selectedIds.has(id),
     ));
-  }, [activeTargetPlan, cardChoice?.maximum, selectedCardIds.length, selectedIds, tableChoiceIds]);
+  }, [activeTargetPlan, cardChoice?.maximum, cardNameChoice, selectedCardIds.length, selectedIds, tableChoiceIds, visibleNameCardIds]);
   const interaction = useMemo<Interaction>(() => ({
     orderedIds: selectedCardIds,
     prompt: activeTargetPlan
       ? `${activeTargetPlan.prompt} (${activeTargetPlan.index + 1}/${activeTargetPlan.keys.length})`
       : cardChoice && tableChoiceCards.length
         ? cardChoice.prompt
+      : cardNameChoice
+        ? `${cardNameChoice.prompt} Click a visible hand, graveyard, or exile card.`
       : undefined,
     selectedIds,
     targetableIds,
-    targeting: Boolean(activeTargetPlan || cardChoice),
-  }), [activeTargetPlan, cardChoice, selectedCardIds, selectedIds, tableChoiceCards.length, targetableIds]);
+    targeting: Boolean(activeTargetPlan || cardChoice || cardNameChoice),
+  }), [activeTargetPlan, cardChoice, cardNameChoice, selectedCardIds, selectedIds, tableChoiceCards.length, targetableIds]);
   const scene = useMemo(() => pixiScene(projection, interaction), [interaction, projection]);
   const initialScene = useRef(scene);
   const initialSelectionKey = JSON.stringify(
@@ -334,8 +383,20 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const beginAction = useCallback((action: any) => {
     const plan = targetPlanFromAction(action);
     setSourceChoices([]);
-    if (plan) setTargetPlan(plan);
-    else if (action?.id) submit(action.id);
+    if (!plan) {
+      if (action?.id) submit(action.id);
+      return;
+    }
+    const automaticDefender = selectOnlyAttackDefender(action, plan);
+    if (automaticDefender?.actionId) {
+      submit(automaticDefender.actionId);
+      return;
+    }
+    if (automaticDefender?.plan) {
+      setTargetPlan(automaticDefender.plan);
+      return;
+    }
+    setTargetPlan(plan);
   }, [submit]);
 
   const chooseEntity = useCallback((ids: string[]) => {
@@ -353,14 +414,22 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       return;
     }
     const cardId = String(card?.id ?? card?.instanceId ?? "");
+    if (cardNameChoice && visibleNameCardIds.has(cardId) && card?.name) {
+      submit(cardNameChoice.actionId, { cardName: String(card.name) });
+      return;
+    }
     if (cardChoice && tableChoiceIds.has(cardId)) {
       chooseCard(cardId);
       return;
     }
     const choices = castingPaymentPresentations(card?.actionState?.options ?? []);
     if (choices.length === 1) beginAction(choices[0]);
-    else if (choices.length > 1) setSourceChoices(choices);
-  }, [activeTargetPlan, beginAction, cardChoice, chooseCard, chooseEntity, tableChoiceIds]);
+    else if (choices.length > 1) {
+      const xChoice = castingXNumberChoice(choices);
+      if (xChoice) setNumberValue(xChoice.minimum);
+      setSourceChoices(choices);
+    }
+  }, [activeTargetPlan, beginAction, cardChoice, cardNameChoice, chooseCard, chooseEntity, submit, tableChoiceIds, visibleNameCardIds]);
 
   const cardRef = useRef(handleCard);
   const hoverRef = useRef<(payload: any) => void>(() => undefined);
@@ -405,7 +474,36 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     setHoveredCard(null);
     setSelectedCardIds(JSON.parse(initialSelectionKey) as string[]);
     setNumberValue(minimumNumber);
+    setCardNameQuery("");
+    setActionQuery("");
+    setSearchedCardNames([]);
   }, [initialSelectionKey, minimumNumber, view.decision?.id]);
+  useEffect(() => {
+    if (!cardNameChoice || cardNameQuery.trim().length < 2) {
+      setSearchedCardNames([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetch(`/api/v1/catalog/cards/autocomplete?query=${encodeURIComponent(cardNameQuery.trim())}`, {
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`Card search failed (${response.status})`);
+          return response.json() as Promise<{ data?: string[] }>;
+        })
+        .then((body) => setSearchedCardNames(Array.isArray(body.data) ? body.data : []))
+        .catch((error: unknown) => {
+          if (!(error instanceof DOMException && error.name === "AbortError")) {
+            setSearchedCardNames([]);
+          }
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [cardNameChoice, cardNameQuery]);
   useEffect(() => {
     if (!host.current) return;
     try {
@@ -440,6 +538,8 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     actionTargetKeys(action).length === 0 &&
     action.kind !== "passPriority" &&
     !projection.resolutionCardChoice &&
+    !projection.dungeonChoice &&
+    !projection.cardNameChoice &&
     !projection.numberChoice,
   );
   const cardSelectionValid = Boolean(
@@ -452,14 +552,93 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     54,
     Math.max(16, Math.min(zoneChoiceCards.length, 6) * 8.25 + 1.6),
   );
+  const searchableAbstractActions = abstractActions.length > 12;
+  const filteredAbstractActions = searchableAbstractActions
+    ? abstractActions.filter((action: any) => abstractResolutionLabel(action, projection)
+      .toLocaleLowerCase()
+      .includes(actionQuery.trim().toLocaleLowerCase()))
+    : abstractActions;
+  const cardNameSuggestions = [...new Set<string>([
+    ...(cardNameChoice?.suggestions ?? []),
+    ...visibleNameCards.map((card: any) => String(card.name)),
+    ...searchedCardNames,
+  ])].slice(0, 25);
+  const sourceXChoice = castingXNumberChoice(sourceChoices);
 
   return <>
     <div className="local-pixi-vue-host" ref={host} />
     <div className="pixi-matchup-badge">{matchup}</div>
+    {(projection.gameNotes?.length ?? 0) > 0 && <aside className={`pixi-game-notes${notesOpen ? " open" : ""}`}>
+      <button type="button" aria-expanded={notesOpen} onClick={() => setNotesOpen((open) => !open)}>
+        <span aria-hidden="true">◉</span> Notes <b>{projection.gameNotes.length}</b>
+      </button>
+      {notesOpen && <div className="pixi-game-notes-panel">
+        <header><strong>Cards seen</strong><button type="button" aria-label="Close notes" onClick={() => setNotesOpen(false)}>×</button></header>
+        {projection.gameNotes.map((note: any, noteIndex: number) => <section key={`${note.sourceName}:${note.turnNumber}:${noteIndex}`}>
+          <div><strong>{note.playerName}</strong><small>{note.sourceName} · turn {note.turnNumber}</small></div>
+          {note.zones.map((zone: any) => <div className="pixi-game-note-zone" key={zone.zone}>
+            <h4>{zone.zone === "library" ? "Library" : zone.zone === "hand" ? "Hand" : "Graveyard"}</h4>
+            {zone.cards.length > 0 ? <ul>{zone.cards.map((card: any) => <li key={card.name}><b>{card.count}×</b>{card.name}</li>)}</ul> : <p>Empty</p>}
+          </div>)}
+          {!note.orderKnown && note.zones.some((zone: any) => zone.zone === "library") && <p className="pixi-game-note-warning">Known contents; order unknown after shuffle.</p>}
+        </section>)}
+      </div>}
+    </aside>}
     {hoveredCard?.imageUrl && <div className="pixi-hover-preview" aria-hidden="true">
       <img src={hoveredCard.imageUrl} alt="" />
     </div>}
     {visualError && <div className="pixi-visual-error" role="alert">Pixi: {visualError}</div>}
+    {dungeonChoice && <div className="pixi-dungeon-choice" role="dialog" aria-label={dungeonChoice.prompt}>
+      <header>
+        <strong>{dungeonChoice.prompt}</strong>
+        {dungeonChoice.currentRoom && <span>Current room: {dungeonChoice.currentRoom}</span>}
+      </header>
+      {dungeonChoice.kind === "dungeon" ? <div className="pixi-dungeon-cards">
+        {dungeonChoice.options.map((option: any) => {
+          const card = dungeonChoice.cards.find((candidate: any) => String(candidate.id) === `dungeon:${option.dungeonId}`);
+          return <button key={option.actionId} type="button" onClick={() => submit(option.actionId)}>
+            {card?.imageUrl ? <img src={card.imageUrl} alt={card.name} /> : <span className="dungeon-card-fallback">Dungeon</span>}
+            <strong>{card?.name ?? option.label}</strong>
+          </button>;
+        })}
+      </div> : <div className="pixi-dungeon-room-choice">
+        {dungeonChoice.cards[0]?.imageUrl && <img src={dungeonChoice.cards[0].imageUrl} alt={dungeonChoice.cards[0].name} />}
+        <div><small>{dungeonChoice.cards[0]?.name}</small>{dungeonChoice.options.map((option: any) => <button key={option.actionId} type="button" onClick={() => submit(option.actionId)}>{option.label}</button>)}</div>
+      </div>}
+    </div>}
+    {cardNameChoice && <form
+      className="pixi-card-name-choice"
+      role="dialog"
+      aria-label={cardNameChoice.prompt}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (cardNameQuery.trim()) submit(cardNameChoice.actionId, { cardName: cardNameQuery.trim() });
+      }}
+    >
+      <strong>{cardNameChoice.prompt}</strong>
+      <span>Click a highlighted card in a visible hand, graveyard, or exile, or search any card name.</span>
+      <div>
+        <input
+          autoFocus
+          aria-label="Card name"
+          list="pixi-card-name-suggestions"
+          placeholder="e.g. Force of Will"
+          value={cardNameQuery}
+          onChange={(event) => setCardNameQuery(event.target.value)}
+        />
+        <datalist id="pixi-card-name-suggestions">
+          {cardNameSuggestions.map((name) => <option key={name} value={name} />)}
+        </datalist>
+        <button type="submit" disabled={!cardNameQuery.trim()}>Choose</button>
+      </div>
+      {cardNameSuggestions.length > 0 && <div className="pixi-card-name-suggestions">
+        {cardNameSuggestions.slice(0, 10).map((name) => <button
+          key={name}
+          type="button"
+          onClick={() => submit(cardNameChoice.actionId, { cardName: name })}
+        >{name}</button>)}
+      </div>}
+    </form>}
     {activeTargetPlan && <div className="pixi-target-prompt" role="status">
       <strong>{activeTargetPlan.prompt}</strong>
       {activeTargetPlan.keys.length > 1 && <span>Step {activeTargetPlan.index + 1}/{activeTargetPlan.keys.length}</span>}
@@ -475,7 +654,21 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
         onClick={() => submit(cardChoice.options[0].actionId, { cardInstanceIds: selectedCardIds })}
       >Confirm</button>
     </div>}
-    {!activeTargetPlan && sourceChoices.length > 0 && <div className="pixi-action-palette">
+    {!activeTargetPlan && sourceXChoice && <div className="pixi-action-palette">
+      <strong>Choose X</strong>
+      <span>Select a whole number from {sourceXChoice.minimum} to {sourceXChoice.maximum}.</span>
+      <div><input
+        aria-label="X value"
+        type="number"
+        min={sourceXChoice.minimum}
+        max={sourceXChoice.maximum}
+        step="1"
+        value={numberValue}
+        onChange={(event) => setNumberValue(Number(event.target.value))}
+      /><button type="button" disabled={!sourceXChoice.options.has(numberValue)} onClick={() => beginAction(sourceXChoice.options.get(numberValue))}>Cast with X = {numberValue}</button></div>
+      <button type="button" className="subtle" onClick={() => setSourceChoices([])}>Cancel</button>
+    </div>}
+    {!activeTargetPlan && sourceChoices.length > 0 && !sourceXChoice && <div className="pixi-action-palette">
       <strong>Choose how to use this card</strong>
       <div>{sourceChoices.map((action) => <button key={action.id} type="button" onClick={() => beginAction(action)}>{actionLabel(action)}</button>)}</div>
       <button type="button" className="subtle" onClick={() => setSourceChoices([])}>Cancel</button>
@@ -484,9 +677,20 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       <strong>Choose an action, then its highlighted targets</strong>
       <div>{visualDirectChoices.map((action: any) => <button key={action.id} type="button" onClick={() => beginAction(action)}>{actionLabel(action)}</button>)}</div>
     </div>}
-    {!activeTargetPlan && sourceChoices.length === 0 && abstractActions.length > 0 && <div className="pixi-action-palette">
+    {!activeTargetPlan && sourceChoices.length === 0 && abstractActions.length > 0 && <div className={`pixi-action-palette${searchableAbstractActions ? " searchable" : ""}`}>
       <strong>{projection.decision?.kind === "mulligan" ? "Choose your opening hand" : projection.decision?.choice?.prompt ?? "Choose an action"}</strong>
-      <div>{abstractActions.map((action: any) => <button key={action.id} type="button" onClick={() => submit(action.id)}>{actionLabel(action)}</button>)}</div>
+      {searchableAbstractActions && <label className="pixi-action-search">
+        <span>Search choices</span>
+        <input
+          autoFocus
+          type="search"
+          placeholder="Type a name…"
+          value={actionQuery}
+          onChange={(event) => setActionQuery(event.target.value)}
+        />
+      </label>}
+      <div>{filteredAbstractActions.map((action: any) => <button key={action.id} type="button" onClick={() => submit(action.id)}>{abstractResolutionLabel(action, projection)}</button>)}</div>
+      {searchableAbstractActions && filteredAbstractActions.length === 0 && <span>No matching choice.</span>}
     </div>}
     {cardChoice && zoneChoiceCards.length > 0 && <div
       className={`pixi-card-choice${tableChoiceCards.length ? " mixed-zone-choice" : ""}`}
@@ -503,7 +707,16 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       </div></header>
       <div className="pixi-card-choice-grid">{zoneChoiceCards.map((card: any) => {
         const order = selectedCardIds.indexOf(card.id);
-        return <button key={card.id} type="button" className={order >= 0 ? "selected" : ""} onClick={() => chooseCard(String(card.id))}>
+        return <button
+          key={card.id}
+          type="button"
+          className={order >= 0 ? "selected" : ""}
+          onClick={() => chooseCard(String(card.id))}
+          onMouseEnter={() => setHoveredCard(card)}
+          onMouseLeave={() => setHoveredCard(null)}
+          onFocus={() => setHoveredCard(card)}
+          onBlur={() => setHoveredCard(null)}
+        >
           <img src={card.imageUrl} alt="" />
           <span>{card.name}</span>
           {order >= 0 && <b>{order + 1}</b>}

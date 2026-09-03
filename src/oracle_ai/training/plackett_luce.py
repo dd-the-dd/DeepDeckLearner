@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -747,9 +750,21 @@ class TrainingLeaderboard:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(self.payload(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        temporary = self.path.with_name(
+            f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
         )
-        temporary.replace(self.path)
+        try:
+            temporary.write_text(
+                json.dumps(self.payload(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            for attempt in range(20):
+                try:
+                    temporary.replace(self.path)
+                    return
+                except PermissionError:
+                    if attempt == 19:
+                        raise
+                    time.sleep(min(0.05 * (attempt + 1), 0.5))
+        finally:
+            temporary.unlink(missing_ok=True)

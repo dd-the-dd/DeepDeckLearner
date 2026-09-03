@@ -207,6 +207,41 @@ export function selectPlanTarget(
   };
 }
 
+export function castingXNumberChoice(actions: any[]): {
+  minimum: number;
+  maximum: number;
+  options: Map<number, any>;
+} | null {
+  if (actions.length < 2) return null;
+  const options = new Map<number, any>();
+  for (const action of actions) {
+    const value = action?.decisions?.xValue;
+    if (!Number.isInteger(value) || options.has(value)) return null;
+    options.set(value, action);
+  }
+  const values = [...options.keys()].sort((left, right) => left - right);
+  const minimum = values[0];
+  const maximum = values.at(-1)!;
+  if (values.length !== maximum - minimum + 1) return null;
+  return { minimum, maximum, options };
+}
+
+export function selectOnlyAttackDefender(
+  action: any,
+  plan: TargetPlan | null,
+): { actionId?: string; plan?: TargetPlan } | null {
+  if (
+    action?.kind !== "declareAttacker" ||
+    !plan ||
+    plan.keys[plan.index] !== "defender"
+  ) {
+    return null;
+  }
+  const targets = candidateTargetIds(plan);
+  if (targets.size !== 1) return null;
+  return selectPlanTarget(plan, targets);
+}
+
 export function clickedEntityIds(value: any): string[] {
   const ids = new Set<string>();
   collectProtocolIds(value, ids);

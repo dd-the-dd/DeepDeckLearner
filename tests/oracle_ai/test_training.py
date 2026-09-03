@@ -294,9 +294,7 @@ def test_running_trainer_reloads_only_when_the_meta_deck_catalog_changes(
     old_decks = {"Old Meta": [{"name": "Old card"}]}
     trainer = LeagueTrainer.__new__(LeagueTrainer)
     trainer.config = config
-    trainer.training_randomizer_config = deepcopy(
-        config["trainingScenarioRandomizer"]
-    )
+    trainer.training_randomizer_config = deepcopy(config["trainingScenarioRandomizer"])
     trainer.training_matchup_sampler = RandomTrainingMatchupSampler(
         trainer.training_randomizer_config,
         old_decks,
@@ -325,10 +323,7 @@ def test_running_trainer_reloads_only_when_the_meta_deck_catalog_changes(
     assert trainer.training_matchup_sampler is not None
     assert trainer.training_matchup_sampler.deck_names == list(new_decks)
     assert trainer.training_matchups is live_environment_matchups
-    assert (
-        trainer.deck_catalog_revision
-        == _deck_catalog_revision(config)
-    )
+    assert trainer.deck_catalog_revision == _deck_catalog_revision(config)
 
 
 def test_learner_resource_plan_resizes_training_workers_between_batches(
@@ -343,17 +338,27 @@ def test_learner_resource_plan_resizes_training_workers_between_batches(
     trainer.resource_plan_path = resource_path
     trainer.parallel_game_workers = 1
     trainer.rollout_batch_games = 1
-    trainer.environments = [object()]
+    class Environment:
+        progress_callback = None
+
+    trainer.environments = [Environment()]
     trainer.environment = trainer.environments[0]
     trainer.device = torch.device("cpu")
     trainer.gpu_memory_limit_mb = 0
-    trainer._new_training_environment = object
+    trainer._new_training_environment = Environment
+    trainer._observe_training_view = lambda worker_index, view: None
 
     trainer._refresh_learner_resources()
 
     assert trainer.parallel_game_workers == 3
     assert trainer.rollout_batch_games == 3
     assert len(trainer.environments) == 3
+    assert all(environment.progress_callback is not None for environment in trainer.environments)
+    assert [environment.progress_callback.args for environment in trainer.environments] == [
+        (0,),
+        (1,),
+        (2,),
+    ]
     assert trainer.gpu_memory_limit_mb == 4096
 
 
@@ -524,12 +529,8 @@ def test_scenario_matrices_cover_eight_decks_and_player_counts() -> None:
     assert {len(matchup.setup["players"]) for matchup in training.values()} == {2, 3, 4}
     assert {matchup.free_mulligans for matchup in training.values()} == {0, 1, 2}
     assert len(evaluations) == len(deck_names) * 3
-    assert {scenario.candidate_deck for scenario in evaluations.values()} == set(
-        deck_names
-    )
-    assert {
-        len(scenario.matchup.setup["players"]) for scenario in evaluations.values()
-    } == {
+    assert {scenario.candidate_deck for scenario in evaluations.values()} == set(deck_names)
+    assert {len(scenario.matchup.setup["players"]) for scenario in evaluations.values()} == {
         2,
         3,
         4,
@@ -571,27 +572,18 @@ def test_training_randomizer_samples_formats_rules_and_matchups_per_episode() ->
 
     assert {matchup.game_mode for matchup in samples} == {"free", "commander"}
     assert {len(matchup.setup["players"]) for matchup in samples} == {2, 3, 4}
-    assert any(
-        len(set(matchup.deck_names)) < len(matchup.deck_names) for matchup in samples
-    )
+    assert any(len(set(matchup.deck_names)) < len(matchup.deck_names) for matchup in samples)
     free_games = [matchup for matchup in samples if matchup.game_mode == "free"]
-    commander_games = [
-        matchup for matchup in samples if matchup.game_mode == "commander"
-    ]
+    commander_games = [matchup for matchup in samples if matchup.game_mode == "commander"]
     assert {matchup.free_mulligans for matchup in free_games} == {0, 1, 2}
-    assert all(
-        20 <= matchup.setup["players"][0]["startingLife"] <= 40
-        for matchup in free_games
-    )
+    assert all(20 <= matchup.setup["players"][0]["startingLife"] <= 40 for matchup in free_games)
     assert any("Control" in matchup.deck_names for matchup in free_games)
     assert all(matchup.free_mulligans == 1 for matchup in commander_games)
     assert all(
         {player["startingLife"] for player in matchup.setup["players"]} == {40}
         for matchup in commander_games
     )
-    assert all(
-        set(matchup.deck_names) <= {"Aang", "Omnath"} for matchup in commander_games
-    )
+    assert all(set(matchup.deck_names) <= {"Aang", "Omnath"} for matchup in commander_games)
 
 
 def test_training_randomizer_builds_two_player_legacy_games_from_legal_decks() -> None:
@@ -633,6 +625,34 @@ def test_training_randomizer_builds_two_player_legacy_games_from_legal_decks() -
         {player["startingLife"] for player in matchup.setup["players"]} == {20}
         for matchup in samples
     )
+
+
+def test_legacy_candidate_ignores_tokens_that_only_have_a_token_type_line() -> None:
+    legacy = [
+        {
+            "id": f"legacy-{index}",
+            "name": f"Legacy card {index}",
+            "typeLine": "Artifact",
+        }
+        for index in range(60)
+    ]
+    legacy.extend(
+        {
+            "id": f"token-{index}",
+            "name": "Zombie",
+            "typeLine": "Token Creature — Zombie",
+            "isSideboard": True,
+        }
+        for index in range(16)
+    )
+
+    sampler = RandomTrainingMatchupSampler(
+        {"formats": ["legacy"], "decks": ["Legacy"], "playerCounts": [2]},
+        {"Legacy": legacy},
+    )
+
+    matchup = sampler.sample(random.Random(7))
+    assert matchup.deck_names == ("Legacy", "Legacy")
     assert [seat["plackettLuceDelta"] for seat in sampler.last_selection["seats"]] == [
         {
             "win": pytest.approx(0.5),
@@ -677,20 +697,13 @@ def test_training_randomizer_keeps_rollout_batch_structurally_homogeneous() -> N
     batches = []
     for _ in range(24):
         profile = sampler.sample_batch_profile(randomizer)
-        batch = [
-            sampler.sample(randomizer, profile=profile)
-            for _ in range(4)
-        ]
+        batch = [sampler.sample(randomizer, profile=profile) for _ in range(4)]
         batches.append(batch)
 
     assert all(len({game.game_mode for game in batch}) == 1 for batch in batches)
+    assert all(len({len(game.setup["players"]) for game in batch}) == 1 for batch in batches)
     assert all(
-        len({len(game.setup["players"]) for game in batch}) == 1
-        for batch in batches
-    )
-    assert all(
-        len({game.setup["players"][0]["startingLife"] for game in batch}) == 1
-        for batch in batches
+        len({game.setup["players"][0]["startingLife"] for game in batch}) == 1 for batch in batches
     )
     assert all(len({game.free_mulligans for game in batch}) == 1 for batch in batches)
     assert {batch[0].game_mode for batch in batches} == {
@@ -855,9 +868,7 @@ def test_training_matchmaking_favors_close_plackett_luce_opponents() -> None:
     assert opponents["Near"] > opponents["Far"] * 2
     assert opponents["Far"] > 0
     assert sampler.last_selection["ratingSystem"] == "plackett-luce"
-    assert sampler.last_selection["ratingSource"] == (
-        "training-model-deck-leaderboard"
-    )
+    assert sampler.last_selection["ratingSource"] == ("training-model-deck-leaderboard")
     assert sampler.last_selection["seats"][1]["participantId"] == "v10"
     assert "elo" not in sampler.last_selection["seats"][1]
     for seat in sampler.last_selection["seats"]:
@@ -961,10 +972,7 @@ def test_anchor_matchmaking_uses_the_model_deck_plackett_luce_strength(
     trainer.anchor_player_counts = (2,)
     trainer.matchup_randomizer = random.Random(79)
 
-    selections = Counter(
-        trainer._sample_anchor_challenge("Omnath", 2)[:2]
-        for _ in range(3000)
-    )
+    selections = Counter(trainer._sample_anchor_challenge("Omnath", 2)[:2] for _ in range(3000))
 
     assert selections[(1, 20)] > selections[(10, 20)] * 2
     assert selections[(10, 20)] > 0
@@ -1004,15 +1012,9 @@ def test_evaluation_matrix_covers_free_and_commander_formats() -> None:
         decks,
     )
 
-    free = [
-        scenario
-        for scenario in scenarios.values()
-        if scenario.matchup.game_mode == "free"
-    ]
+    free = [scenario for scenario in scenarios.values() if scenario.matchup.game_mode == "free"]
     commander = [
-        scenario
-        for scenario in scenarios.values()
-        if scenario.matchup.game_mode == "commander"
+        scenario for scenario in scenarios.values() if scenario.matchup.game_mode == "commander"
     ]
     assert len(free) == 6
     assert len(commander) == 4
@@ -1046,13 +1048,8 @@ def test_evaluation_matrix_builds_simplified_training_scenarios() -> None:
     )
 
     assert len(scenarios) == 2
-    assert all(
-        scenario.matchup.game_mode == "training" for scenario in scenarios.values()
-    )
-    assert all(
-        scenario.matchup.setup["openingHandSize"] == 5
-        for scenario in scenarios.values()
-    )
+    assert all(scenario.matchup.game_mode == "training" for scenario in scenarios.values())
+    assert all(scenario.matchup.setup["openingHandSize"] == 5 for scenario in scenarios.values())
     assert all(scenario.matchup.max_mulligans == 3 for scenario in scenarios.values())
     assert all(
         {player["startingLife"] for player in scenario.matchup.setup["players"]} == {5}
@@ -1086,13 +1083,8 @@ def test_evaluation_matrix_builds_training2_commander_scenarios() -> None:
     )
 
     assert len(scenarios) == 2
-    assert all(
-        scenario.matchup.game_mode == "training2" for scenario in scenarios.values()
-    )
-    assert all(
-        scenario.matchup.setup["openingHandSize"] == 6
-        for scenario in scenarios.values()
-    )
+    assert all(scenario.matchup.game_mode == "training2" for scenario in scenarios.values())
+    assert all(scenario.matchup.setup["openingHandSize"] == 6 for scenario in scenarios.values())
     assert all(scenario.matchup.free_mulligans == 1 for scenario in scenarios.values())
     assert all(scenario.matchup.max_mulligans == 3 for scenario in scenarios.values())
     assert all(
@@ -1135,9 +1127,7 @@ def _structured_test_card(
 def _structured_test_state() -> dict:
     opponent_secret = _structured_test_card("secret:1", "Opponent Secret")
     active_permanent = _structured_test_card("permanent:active", "Active Permanent")
-    previous_permanent = _structured_test_card(
-        "permanent:previous", "Previous Permanent"
-    )
+    previous_permanent = _structured_test_card("permanent:previous", "Previous Permanent")
     acting_hand = _structured_test_card(
         "hand:acting",
         "Acting Hand Card",
@@ -1203,9 +1193,7 @@ def _structured_test_state() -> dict:
     }
 
 
-def test_v2_encoder_uses_structured_visible_tokens_and_active_player_positions() -> (
-    None
-):
+def test_v2_encoder_uses_structured_visible_tokens_and_active_player_positions() -> None:
     encoder = StructuredObservationEncoder(
         word_vocab_size=256,
         max_words=16,
@@ -1237,19 +1225,13 @@ def test_v2_encoder_uses_structured_visible_tokens_and_active_player_positions()
 
     hidden_variant = deepcopy(state)
     hidden_variant["players"][0]["hand"][0]["definition"]["name"] = "Different Secret"
-    hidden_variant["players"][0]["library"][0]["definition"][
-        "name"
-    ] = "Different Library"
+    hidden_variant["players"][0]["library"][0]["definition"]["name"] = "Different Library"
     encoded_variant = encoder.encode(
         hidden_variant,
         [{"id": "pass:2", "kind": "passPriority", "playerId": "player-3"}],
     )
-    assert torch.equal(
-        encoded.state_tokens.numeric, encoded_variant.state_tokens.numeric
-    )
-    assert torch.equal(
-        encoded.state_tokens.word_ids, encoded_variant.state_tokens.word_ids
-    )
+    assert torch.equal(encoded.state_tokens.numeric, encoded_variant.state_tokens.numeric)
+    assert torch.equal(encoded.state_tokens.word_ids, encoded_variant.state_tokens.word_ids)
 
     known_state = deepcopy(state)
     known_card = _structured_test_card("known:opponent", "Known Counterspell")
@@ -1260,9 +1242,7 @@ def test_v2_encoder_uses_structured_visible_tokens_and_active_player_positions()
         [{"id": "pass:3", "kind": "passPriority", "playerId": "player-3"}],
     )
     renamed_known_state = deepcopy(known_state)
-    renamed_known_state["players"][0]["hand"][-1]["definition"]["name"] = (
-        "Known Lightning Bolt"
-    )
+    renamed_known_state["players"][0]["hand"][-1]["definition"]["name"] = "Known Lightning Bolt"
     encoded_renamed_known = encoder.encode(
         renamed_known_state,
         [{"id": "pass:4", "kind": "passPriority", "playerId": "player-3"}],
@@ -1324,16 +1304,12 @@ def test_v2_encoder_resolves_casting_decision_card_ids_to_card_semantics() -> No
         "hand:thoughtseize": (thoughtseize, 0),
     }
     grief_words = list(encoder._action_decision_entity_words(actions[0], entities))
-    thoughtseize_words = list(
-        encoder._action_decision_entity_words(actions[1], entities)
-    )
+    thoughtseize_words = list(encoder._action_decision_entity_words(actions[1], entities))
     assert len(grief_words) == 1
     assert grief_words[0].startswith("decision alternativeExileCard Grief ")
     assert grief_words[0].endswith("{2}{B}{B}")
     assert len(thoughtseize_words) == 1
-    assert thoughtseize_words[0].startswith(
-        "decision alternativeExileCard Thoughtseize "
-    )
+    assert thoughtseize_words[0].startswith("decision alternativeExileCard Thoughtseize ")
     assert thoughtseize_words[0].endswith("{B}")
 
     encoded = encoder.encode(state, actions)
@@ -1364,9 +1340,7 @@ def test_v2_encoder_resolves_casting_decision_card_ids_to_card_semantics() -> No
     ]
     target_encoded = encoder.encode(state, target_actions)
     assert "target targetCard Grief" in target_encoded.action_token_labels[0]
-    assert (
-        "target targetCard Thoughtseize" in target_encoded.action_token_labels[1]
-    )
+    assert "target targetCard Thoughtseize" in target_encoded.action_token_labels[1]
     assert not torch.equal(
         target_encoded.action_tokens.word_ids[0],
         target_encoded.action_tokens.word_ids[1],
@@ -1561,22 +1535,14 @@ def test_v3_checkpoint_weights_upgrade_to_v4_without_changing_v3() -> None:
     source = MagicTransformerActorCriticV3(config_v3)
     with torch.no_grad():
         source.numeric_projection.weight.fill_(0.375)
-    original = {
-        name: value.detach().clone() for name, value in source.state_dict().items()
-    }
+    original = {name: value.detach().clone() for name, value in source.state_dict().items()}
     target = MagicTransformerActorCriticV4(ModelConfigV4(**source.export_config()))
 
     upgraded = upgrade_model(source, target)
 
     assert isinstance(upgraded, MagicTransformerActorCriticV4)
-    assert all(
-        torch.equal(original[name], value)
-        for name, value in upgraded.state_dict().items()
-    )
-    assert all(
-        torch.equal(original[name], value)
-        for name, value in source.state_dict().items()
-    )
+    assert all(torch.equal(original[name], value) for name, value in upgraded.state_dict().items())
+    assert all(torch.equal(original[name], value) for name, value in source.state_dict().items())
 
 
 def test_v5_conditions_each_legal_action_on_encoded_state() -> None:
@@ -1708,15 +1674,11 @@ def test_v10_encodes_mode_mulligan_configuration_exile_and_command_zone() -> Non
     )
 
     configuration = " ".join(
-        label
-        for label in encoded.state_token_labels
-        if label.startswith("game_configuration:")
+        label for label in encoded.state_token_labels if label.startswith("game_configuration:")
     )
     assert "game mode commander" in configuration
     assert "mulligan rules enabled 1 openinghand 7 free 1 maximum 3" in configuration
-    assert (
-        "mulligan progress taken 0 freeremaining 1 paid 0 remaining 3" in configuration
-    )
+    assert "mulligan progress taken 0 freeremaining 1 paid 0 remaining 3" in configuration
     assert any("exile card" in label for label in encoded.state_token_labels)
     assert any("command zone card" in label for label in encoded.state_token_labels)
     assert "draw a card" in encoded.action_token_labels[0]
@@ -1732,17 +1694,13 @@ def test_v11_separates_pregame_knowledge_from_state_differences() -> None:
     commander["definition"]["isCommander"] = True
     deck_card = _structured_test_card("deck:1", "Known Deck Card")
     state["_pregameDeck"] = [deck_card["definition"]]
-    state["_pregameCommanders"] = [
-        {"playerId": "player-1", "card": commander["definition"]}
-    ]
+    state["_pregameCommanders"] = [{"playerId": "player-1", "card": commander["definition"]}]
     previous = deepcopy(state)
     previous.pop("_pregameDeck")
     previous.pop("_pregameCommanders")
     previous["players"][2]["life"] = state["players"][2]["life"] + 3
     previous["events"] = []
-    state["events"] = [
-        {"sequence": 4, "kind": "damageDealt", "playerId": "player-3", "amount": 3}
-    ]
+    state["events"] = [{"sequence": 4, "kind": "damageDealt", "playerId": "player-3", "amount": 3}]
     state["_previousObservation"] = previous
     encoder = AlphaStarObservationEncoder(
         max_words=64,
@@ -1848,9 +1806,7 @@ def test_v12_uses_one_antisymmetric_two_player_value() -> None:
     analysis = model.analyze(encoded.state_tokens, encoded.action_tokens)
 
     assert analysis["player_values"].shape == (1, 2)
-    assert analysis["player_values"][0, 0] == pytest.approx(
-        -analysis["player_values"][0, 1]
-    )
+    assert analysis["player_values"][0, 0] == pytest.approx(-analysis["player_values"][0, 1])
 
 
 def test_anchor_matchup_exposes_opening_hand_challenge_and_deadline() -> None:
@@ -1945,10 +1901,13 @@ def test_anchor_challenge_order_uses_round_pool_then_player_count() -> None:
         AnchorChallenge(1, 20, 3),
     ]
 
-    assert [challenge.participant_id for challenge in sorted(
-        challenges,
-        key=lambda challenge: challenge.ranking_key,
-    )] == [
+    assert [
+        challenge.participant_id
+        for challenge in sorted(
+            challenges,
+            key=lambda challenge: challenge.ranking_key,
+        )
+    ] == [
         "anchor-m01-n020-p4",
         "anchor-m01-n020-p3",
         "anchor-m01-n020-p2",
@@ -1964,9 +1923,7 @@ def test_anchor_calibration_records_games_and_orders_every_challenge(
     tmp_path: Path,
 ) -> None:
     challenges = anchor_challenges((1, 2, 3), (20, 40), (2, 3, 4))
-    labels = {
-        challenge.participant_id: challenge.label for challenge in challenges
-    }
+    labels = {challenge.participant_id: challenge.label for challenge in challenges}
     leaderboard = TrainingLeaderboard(
         tmp_path / "training-leaderboard.json",
         {"v11": "V11", **labels},
@@ -1978,11 +1935,14 @@ def test_anchor_calibration_records_games_and_orders_every_challenge(
     assert report["challengeCount"] == 18
     assert report["minimumGamesPerAnchor"] > 0
     assert report["maximumGamesPerAnchor"] - report["minimumGamesPerAnchor"] <= 3
-    assert sum(
-        row["wins"]
-        for row in leaderboard.payload()["participants"]
-        if row["id"].startswith("anchor-")
-    ) == 900
+    assert (
+        sum(
+            row["wins"]
+            for row in leaderboard.payload()["participants"]
+            if row["id"].startswith("anchor-")
+        )
+        == 900
+    )
     anchor_rows = {
         row["participantId"]: row
         for row in leaderboard.payload()["deckParticipants"]
@@ -2037,6 +1997,31 @@ def test_training_leaderboard_persists_model_deck_combinations(
 
     restored = TrainingLeaderboard(path, labels)
     assert restored.payload()["deckParticipants"] == rows
+
+
+def test_training_leaderboard_retries_a_transient_windows_replace_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "training-leaderboard.json"
+    leaderboard = TrainingLeaderboard(path, {"v12": "V12"})
+    original_replace = Path.replace
+    attempts = 0
+
+    def replace_with_transient_lock(source: Path, target: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("simulated Windows file lock")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", replace_with_transient_lock)
+
+    leaderboard.save()
+
+    assert attempts == 3
+    assert json.loads(path.read_text(encoding="utf-8"))["ratingSystem"] == "plackett-luce"
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_training_leaderboard_compares_decks_during_same_model_self_play(
@@ -2258,12 +2243,8 @@ def test_v7_encodes_known_deck_as_name_free_permutation_stable_tokens() -> None:
 
     deck_mask = encoded.state_tokens.token_types.eq(int(TokenTypeV7.DECK_CARD))
     assert deck_mask.sum().item() == 2
-    assert torch.equal(
-        encoded.state_tokens.word_ids, reversed_encoded.state_tokens.word_ids
-    )
-    deck_labels = [
-        label for label in encoded.state_token_labels if label.startswith("deck_card:")
-    ]
+    assert torch.equal(encoded.state_tokens.word_ids, reversed_encoded.state_tokens.word_ids)
+    deck_labels = [label for label in encoded.state_token_labels if label.startswith("deck_card:")]
     assert any("landfall" in label for label in deck_labels)
     assert all("Memorized Name" not in label for label in deck_labels)
 
@@ -2397,9 +2378,7 @@ def test_v9_future_targets_are_relative_and_include_event_flows() -> None:
     current = _structured_test_state()
     future = deepcopy(current)
     future["players"][2]["life"] = 15
-    future["players"][2]["hand"].append(
-        _structured_test_card("hand:drawn", "Drawn Card")
-    )
+    future["players"][2]["hand"].append(_structured_test_card("hand:drawn", "Drawn Card"))
     future["events"] = [
         {
             "sequence": 1,
@@ -2425,18 +2404,18 @@ def test_v9_future_targets_are_relative_and_include_event_flows() -> None:
     assert targets[0, 0, FUTURE_FEATURE_NAMES.index("life")].item() == pytest.approx(
         normalize_nonnegative(15)
     )
-    assert targets[
-        0, 0, FUTURE_FEATURE_NAMES.index("retained_hand_count")
-    ].item() == pytest.approx(normalize_nonnegative(1))
-    assert targets[
-        0, 0, FUTURE_FEATURE_NAMES.index("new_hand_count")
-    ].item() == pytest.approx(normalize_nonnegative(1))
-    assert targets[
-        0, 0, FUTURE_FEATURE_NAMES.index("total_hand_count")
-    ].item() == pytest.approx(normalize_nonnegative(2))
-    assert targets[
-        0, 0, FUTURE_FEATURE_NAMES.index("cards_drawn")
-    ].item() == pytest.approx(normalize_nonnegative(1))
+    assert targets[0, 0, FUTURE_FEATURE_NAMES.index("retained_hand_count")].item() == pytest.approx(
+        normalize_nonnegative(1)
+    )
+    assert targets[0, 0, FUTURE_FEATURE_NAMES.index("new_hand_count")].item() == pytest.approx(
+        normalize_nonnegative(1)
+    )
+    assert targets[0, 0, FUTURE_FEATURE_NAMES.index("total_hand_count")].item() == pytest.approx(
+        normalize_nonnegative(2)
+    )
+    assert targets[0, 0, FUTURE_FEATURE_NAMES.index("cards_drawn")].item() == pytest.approx(
+        normalize_nonnegative(1)
+    )
 
 
 def test_v9_ppo_trains_future_belief_and_plan_auxiliary_heads() -> None:
@@ -2796,9 +2775,7 @@ def test_v10_checkpoint_expands_hand_features_without_losing_existing_outputs() 
         event_codebook_size=8,
         event_latent_dim=8,
     )
-    source = MagicTransformerActorCriticV10(
-        ModelConfigV10(**shared, future_feature_dim=21)
-    )
+    source = MagicTransformerActorCriticV10(ModelConfigV10(**shared, future_feature_dim=21))
     target = MagicTransformerActorCriticV10(
         ModelConfigV10(**shared, future_feature_dim=len(FUTURE_FEATURE_NAMES))
     )
@@ -2817,9 +2794,7 @@ def test_v10_checkpoint_expands_hand_features_without_losing_existing_outputs() 
     old_features = 21
     new_features = len(FUTURE_FEATURE_NAMES)
     old_hand_mean = (0 * old_features + 1) * 2
-    new_total_mean = (
-        0 * new_features + FUTURE_FEATURE_NAMES.index("total_hand_count")
-    ) * 2
+    new_total_mean = (0 * new_features + FUTURE_FEATURE_NAMES.index("total_hand_count")) * 2
     old_library_event = 0 * old_features + 2
     new_library_event = 0 * new_features + FUTURE_FEATURE_NAMES.index("library_count")
 
@@ -2881,9 +2856,7 @@ def test_training_control_defaults_to_running_and_accepts_pause(tmp_path: Path) 
     assert _training_control_state(control) == "running"
 
 
-def test_v5_checkpoint_weights_upgrade_to_v6_with_new_semantic_and_value_heads() -> (
-    None
-):
+def test_v5_checkpoint_weights_upgrade_to_v6_with_new_semantic_and_value_heads() -> None:
     source = MagicTransformerActorCriticV5(
         ModelConfigV5(
             d_model=32,
@@ -2933,12 +2906,8 @@ def test_v4_checkpoint_weights_upgrade_to_v5_without_changing_v4() -> None:
     source = MagicTransformerActorCriticV4(config_v4)
     with torch.no_grad():
         source.numeric_projection.weight.fill_(0.625)
-    original = {
-        name: value.detach().clone() for name, value in source.state_dict().items()
-    }
-    target = MagicTransformerActorCriticV5(
-        ModelConfigV5(**source.export_config(), action_layers=2)
-    )
+    original = {name: value.detach().clone() for name, value in source.state_dict().items()}
+    target = MagicTransformerActorCriticV5(ModelConfigV5(**source.export_config(), action_layers=2))
 
     upgraded = upgrade_model(source, target)
 
@@ -2965,12 +2934,8 @@ def test_v4_checkpoint_weights_upgrade_to_v5_without_changing_v4() -> None:
     assert isinstance(upgraded, MagicTransformerActorCriticV5)
     assert torch.equal(source_logits, upgraded_logits)
     assert torch.equal(source_value, upgraded_value)
-    assert all(
-        torch.equal(original[name], upgraded.state_dict()[name]) for name in original
-    )
-    assert all(
-        torch.equal(original[name], source.state_dict()[name]) for name in original
-    )
+    assert all(torch.equal(original[name], upgraded.state_dict()[name]) for name in original)
+    assert all(torch.equal(original[name], source.state_dict()[name]) for name in original)
 
 
 def test_behavior_summary_flags_mulligan_to_zero() -> None:
@@ -3081,9 +3046,7 @@ def test_self_play_search_defers_training_observation_dropout_until_update() -> 
         def reset(self, matchup_id: str, seed: int, seat_swap: bool) -> DecisionStep:
             return DecisionStep(
                 state=_structured_test_state(),
-                actions=[
-                    {"id": "pass", "kind": "passPriority", "playerId": "player-3"}
-                ],
+                actions=[{"id": "pass", "kind": "passPriority", "playerId": "player-3"}],
                 reward=0.0,
                 done=False,
                 player_id="player-3",
@@ -3203,9 +3166,7 @@ def test_packed_tensor_round_trip_compresses_sparse_observations() -> None:
 
 def test_ppo_updates_and_checkpoint_round_trip(tmp_path: Path) -> None:
     torch.manual_seed(7)
-    config = ModelConfig(
-        feature_dim=32, d_model=32, layers=1, heads=4, feedforward_dim=64
-    )
+    config = ModelConfig(feature_dim=32, d_model=32, layers=1, heads=4, feedforward_dim=64)
     model = MagicTransformerActorCritic(config)
     learner = PPOLearner(
         model,
@@ -3215,20 +3176,13 @@ def test_ppo_updates_and_checkpoint_round_trip(tmp_path: Path) -> None:
     )
     environment = TinySelfPlayEnvironment(horizon=4)
     trajectory = learner.collect_episode(environment, "smoke", seed=11, seat_swap=False)
-    before = {
-        name: value.detach().clone() for name, value in model.state_dict().items()
-    }
+    before = {name: value.detach().clone() for name, value in model.state_dict().items()}
     metrics = learner.update(trajectory)
     assert metrics["loss"] == metrics["loss"]
-    assert any(
-        not torch.equal(before[name], value)
-        for name, value in model.state_dict().items()
-    )
+    assert any(not torch.equal(before[name], value) for name, value in model.state_dict().items())
 
     checkpoint = tmp_path / "checkpoint"
-    save_checkpoint(
-        checkpoint, model, learner.optimizer, learner.training_step, ["smoke"]
-    )
+    save_checkpoint(checkpoint, model, learner.optimizer, learner.training_step, ["smoke"])
     restored, payload = load_checkpoint(checkpoint, torch.device("cpu"))
     assert payload["training_step"] == learner.training_step
     assert restored.config == model.config
@@ -3354,10 +3308,7 @@ def test_rust_environment_removes_a_completed_session() -> None:
                     },
                 },
             )
-        if (
-            request.method == "DELETE"
-            and request.url.path == "/game/sessions/session:1"
-        ):
+        if request.method == "DELETE" and request.url.path == "/game/sessions/session:1":
             return httpx.Response(200, json={"removed": True})
         return httpx.Response(404)
 
@@ -3447,9 +3398,7 @@ def test_rust_environment_reports_rejected_legal_action() -> None:
     )
     environment.reset(matchup.id, seed=7, seat_swap=False)
 
-    with pytest.raises(
-        RuntimeError, match="decisionKind=priority.*actionKind=castSpell"
-    ):
+    with pytest.raises(RuntimeError, match="decisionKind=priority.*actionKind=castSpell"):
         environment.step(0)
 
     assert environment.session_id is None
@@ -4300,9 +4249,7 @@ def test_league_resume_rebases_champion_after_run_directory_moves(
         json.dumps(
             {
                 "champion_version": 0,
-                "champion_checkpoint": str(
-                    tmp_path / "old-worktree" / "champions" / "ia-gt-0"
-                ),
+                "champion_checkpoint": str(tmp_path / "old-worktree" / "champions" / "ia-gt-0"),
             }
         ),
         encoding="utf-8",

@@ -5,7 +5,9 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 from deepdeck_agent import (
@@ -78,6 +80,18 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--deck-version-id",
         default=os.getenv("DEEPDECK_DECK_VERSION_ID"),
+    )
+    result.add_argument(
+        "--additional-deck-version-id",
+        action="append",
+        default=[],
+        help="Additional deck rotated across concurrent League seats.",
+    )
+    result.add_argument(
+        "--matchmaking-concurrency",
+        type=int,
+        default=1,
+        help="Number of simultaneous League tickets served by this one agent connection.",
     )
     result.add_argument(
         "--once",
@@ -155,17 +169,21 @@ async def _serve_local(runner: AgentRunner, arguments: argparse.Namespace) -> No
     try:
         if arguments.start_local_game:
             local_game_setup = getattr(arguments, "local_game_setup", None)
-            missing = [] if local_game_setup else [
-                name
-                for name, value in (
-                    ("DEEPDECK_LOCAL_DECK_SESSION_ID", arguments.local_deck_session_id),
-                    (
-                        "DEEPDECK_LOCAL_OPPONENT_DECK_SESSION_ID",
-                        arguments.local_opponent_deck_session_id,
-                    ),
-                )
-                if not value
-            ]
+            missing = (
+                []
+                if local_game_setup
+                else [
+                    name
+                    for name, value in (
+                        ("DEEPDECK_LOCAL_DECK_SESSION_ID", arguments.local_deck_session_id),
+                        (
+                            "DEEPDECK_LOCAL_OPPONENT_DECK_SESSION_ID",
+                            arguments.local_opponent_deck_session_id,
+                        ),
+                    )
+                    if not value
+                ]
+            )
             if missing:
                 raise SystemExit(f"Missing local game configuration: {', '.join(missing)}")
             controller_id = await runner.wait_until_connected(timeout=30)
@@ -177,9 +195,7 @@ async def _serve_local(runner: AgentRunner, arguments: argparse.Namespace) -> No
                 )
             starting_life = 40 if game_format == "commander" else 20
             if local_game_setup:
-                payload = json.loads(
-                    Path(local_game_setup).read_text(encoding="utf-8")
-                )
+                payload = json.loads(Path(local_game_setup).read_text(encoding="utf-8"))
                 payload["aiControllerByPlayerId"] = {"local-agent": controller_id}
                 headers = (
                     {"x-mtg-api-key": runner.target.engine_api_key}
@@ -199,33 +215,33 @@ async def _serve_local(runner: AgentRunner, arguments: argparse.Namespace) -> No
                         )
                     bootstrap = response.json()
             else:
-                bootstrap = await runner.start_local_game(LocalGame(
-                    format=game_format,
-                    seed=arguments.seed,
-                    max_turns=arguments.local_max_turns,
-                    free_mulligans=1 if game_format == "commander" else 0,
-                    players=(
-                        LocalPlayer(
-                            player_id="example-agent",
-                            deck_session_id=arguments.local_deck_session_id,
-                            controller_id=controller_id,
-                            name=runner.config.name,
-                            starting_life=starting_life,
+                bootstrap = await runner.start_local_game(
+                    LocalGame(
+                        format=game_format,
+                        seed=arguments.seed,
+                        max_turns=arguments.local_max_turns,
+                        free_mulligans=1 if game_format == "commander" else 0,
+                        players=(
+                            LocalPlayer(
+                                player_id="example-agent",
+                                deck_session_id=arguments.local_deck_session_id,
+                                controller_id=controller_id,
+                                name=runner.config.name,
+                                starting_life=starting_life,
+                            ),
+                            LocalPlayer(
+                                player_id="local-opponent",
+                                deck_session_id=arguments.local_opponent_deck_session_id,
+                                controller_id=arguments.local_opponent_controller,
+                                name="Local opponent",
+                                starting_life=starting_life,
+                            ),
                         ),
-                        LocalPlayer(
-                            player_id="local-opponent",
-                            deck_session_id=arguments.local_opponent_deck_session_id,
-                            controller_id=arguments.local_opponent_controller,
-                            name="Local opponent",
-                            starting_life=starting_life,
-                        ),
-                    ),
-                ))
+                    )
+                )
             session = bootstrap.get("session", bootstrap)
             session_id = (
-                session.get("id") or session.get("sessionId")
-                if isinstance(session, dict)
-                else None
+                session.get("id") or session.get("sessionId") if isinstance(session, dict) else None
             )
             if session_id:
                 print(
@@ -264,13 +280,125 @@ async def run(arguments: argparse.Namespace) -> None:
     missing = [name for name, value in matchmaking_ids.items() if not value]
     if missing:
         raise SystemExit(f"Missing public matchmaking configuration: {', '.join(missing)}")
-    await runner.serve_matchmaking(
+    entries = _matchmaking_entries(arguments)
+    connection = asyncio.create_task(runner.serve())
+    active_tickets: dict[int, str] = {}
+    match_watchers: dict[str, asyncio.Task[str]] = {}
+
+    async def watch_match(match_id: str) -> str:
+        while True:
+            match = await runner.match(match_id)
+            snapshot = _league_match_snapshot(match_id, match, runner.target.platform_url)
+            print("DEEPDECK_LEAGUE_MATCH " + json.dumps(snapshot), flush=True)
+            status = str(snapshot["status"])
+            if status in {"complete", "failed", "cancelled"}:
+                return status
+            await asyncio.sleep(5.0)
+
+    async def serve_seat(seat: int, entry: MatchmakingEntry) -> None:
+        logger = logging.getLogger(__name__)
+        while True:
+            await runner.wait_until_connected(timeout=30)
+            ticket = await runner.join_matchmaking(entry)
+            ticket_id = str(ticket.get("id", ""))
+            if ticket_id:
+                active_tickets[seat] = ticket_id
+            logger.info(
+                "League seat %s queued ticket %s with deck %s",
+                seat + 1,
+                ticket.get("id"),
+                entry.deck_version_id,
+            )
+            match_id = await runner._wait_for_match_id(ticket, 5.0)  # noqa: SLF001
+            if match_id is None:
+                return
+            logger.info("League seat %s matched game %s", seat + 1, match_id)
+            watcher = match_watchers.get(match_id)
+            if watcher is None:
+                watcher = asyncio.create_task(watch_match(match_id))
+                match_watchers[match_id] = watcher
+            try:
+                await watcher
+            finally:
+                if match_watchers.get(match_id) is watcher:
+                    match_watchers.pop(match_id, None)
+            active_tickets.pop(seat, None)
+            if arguments.once:
+                return
+            await asyncio.sleep(2.0)
+
+    try:
+        await asyncio.sleep(0)
+        await runner.wait_until_connected(timeout=30)
+        await asyncio.gather(*(serve_seat(index, entry) for index, entry in enumerate(entries)))
+    finally:
+        await asyncio.gather(
+            *(runner.cancel_matchmaking_ticket(ticket_id) for ticket_id in active_tickets.values()),
+            return_exceptions=True,
+        )
+        connection.cancel()
+        await asyncio.gather(connection, return_exceptions=True)
+
+
+def _unix_ms(value: Any) -> int | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _league_match_snapshot(
+    match_id: str,
+    match: dict[str, Any],
+    platform_url: str | None,
+) -> dict[str, Any]:
+    summary = match.get("summary")
+    if not isinstance(summary, dict):
+        summary = match
+    participants = summary.get("participants", [])
+    if not isinstance(participants, list):
+        participants = []
+    games = match.get("games", [])
+    if not isinstance(games, list):
+        games = []
+    current_game = next(
+        (game for game in games if isinstance(game, dict) and game.get("status") == "running"),
+        next((game for game in reversed(games) if isinstance(game, dict)), {}),
+    )
+    status = str(summary.get("status", "scheduled"))
+    frontend_url = (platform_url or "https://staging.deepdeckleague.com/api/v1").removesuffix(
+        "/api/v1"
+    )
+    return {
+        "matchId": match_id,
+        "gameId": current_game.get("id"),
+        "status": status,
+        "decks": [
+            participant.get("deck") for participant in participants if isinstance(participant, dict)
+        ],
+        "players": len(participants),
+        "turnNumber": current_game.get("turnCount"),
+        "roundNumber": current_game.get("number"),
+        "decisions": 0,
+        "startedAtUnixMs": _unix_ms(current_game.get("startedAt") or summary.get("startedAt")),
+        "updatedAtUnixMs": int(datetime.now().timestamp() * 1000),
+        "watchUrl": f"{frontend_url}/matches?tab=games&match={match_id}&replay=1&seat=0",
+    }
+
+
+def _matchmaking_entries(arguments: argparse.Namespace) -> list[MatchmakingEntry]:
+    concurrency = max(1, min(32, int(arguments.matchmaking_concurrency)))
+    deck_ids = [arguments.deck_version_id, *arguments.additional_deck_version_id]
+    return [
         MatchmakingEntry(
             competition_version_id=arguments.competition_version_id,
-            deck_version_id=arguments.deck_version_id,
-        ),
-        continuous=not arguments.once,
-    )
+            deck_version_id=deck_ids[index % len(deck_ids)],
+            client_seat_id=f"learner:seat-{index + 1}",
+        )
+        for index in range(concurrency)
+    ]
 
 
 def main() -> None:

@@ -36,15 +36,16 @@ class OracleCheckpointAgent(Agent):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-        self._known_deck: list[dict[str, Any]] = []
+        self._known_decks: dict[str, list[dict[str, Any]]] = {}
 
     async def on_game_start(self, game: Game, known_deck: list[dict[str, object]]) -> None:
-        del game
-        self._known_deck = [copy.deepcopy(card) for card in known_deck]
+        game_id = str(game.raw.get("gameId", "local-playtest"))
+        self._known_decks[game_id] = [copy.deepcopy(card) for card in known_deck]
+        if len(self._known_decks) > 128:
+            self._known_decks.pop(next(iter(self._known_decks)))
 
     async def on_game_end(self, outcome: dict[str, object]) -> None:
         del outcome
-        self._known_deck = []
 
     async def make_decision(self, decision: Decision) -> DecisionResponse:
         choice_kind = str((decision.choice or {}).get("kind", ""))
@@ -54,8 +55,10 @@ class OracleCheckpointAgent(Agent):
         if not actions:
             return await super().make_decision(decision)
         state = copy.deepcopy(decision.game.raw)
-        if self._known_deck:
-            state["_pregameDeck"] = copy.deepcopy(self._known_deck)
+        game_id = str(state.get("gameId", "local-playtest"))
+        known_deck = self._known_decks.get(game_id, [])
+        if known_deck:
+            state["_pregameDeck"] = copy.deepcopy(known_deck)
         context = state.get("_decisionContext")
         context = dict(context) if isinstance(context, dict) else {}
         context.update({
@@ -69,7 +72,7 @@ class OracleCheckpointAgent(Agent):
             actions,
             deterministic=True,
             request_id=decision.request_id,
-            context_id=str(state.get("gameId", "local-playtest")),
+            context_id=game_id,
         )
         chosen = actions[selected]
         return DecisionResponse(

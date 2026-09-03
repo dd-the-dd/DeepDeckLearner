@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,11 @@ def _platform_url() -> str:
 
 
 def _data(response: httpx.Response) -> Any:
+    if response.status_code in {401, 403}:
+        raise CatalogAuthenticationError(
+            "The saved Deep Deck League API key was rejected. "
+            "Replace it with a new active agent key."
+        )
     try:
         response.raise_for_status()
         body = response.json()
@@ -69,6 +75,27 @@ def platform_decks(search: str, game_format: str, page: int = 1) -> dict[str, An
     return data
 
 
+def _playable_card_count(cards: list[Any]) -> int:
+    total = 0
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        type_line = str(card.get("typeLine", "")).strip().casefold()
+        section = str(card.get("section", "main")).strip().casefold()
+        if (
+            bool(card.get("isToken"))
+            or bool(card.get("isGamePiece"))
+            or type_line.startswith(("token ", "emblem", "dungeon"))
+            or section in {"considering", "considered", "token", "tokens", "emblem", "dungeon"}
+        ):
+            continue
+        try:
+            total += max(0, int(card.get("quantity", 1)))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def download_platform_deck(root: Path, version_id: str) -> dict[str, Any]:
     deck_id = version_id.strip()
     if not deck_id:
@@ -90,7 +117,8 @@ def download_platform_deck(root: Path, version_id: str) -> dict[str, Any]:
         "versionId": deck_id,
         "name": str(data.get("name", "Training deck")),
         "format": data.get("format"),
-        "cardCount": data.get("cardCount", 0),
+        "cardCount": _playable_card_count(data["cards"]),
+        "rawCardCount": data.get("cardCount", 0),
         "path": str(target),
     }
 
@@ -116,10 +144,7 @@ def local_deck_presentation(root: Path, version_id: str) -> dict[str, Any]:
         if not isinstance(raw, dict):
             continue
         card_id = str(
-            raw.get("cardId")
-            or raw.get("printingId")
-            or raw.get("scryfallId")
-            or ""
+            raw.get("cardId") or raw.get("printingId") or raw.get("scryfallId") or ""
         ).strip()
         name = str(raw.get("name", "")).strip()
         if not card_id or not name:
@@ -192,6 +217,34 @@ def scryfall_image(image_path: str) -> tuple[bytes, str]:
     if not content_type.casefold().startswith("image/") or len(response.content) > 20 * 1024 * 1024:
         raise CatalogError("Scryfall returned an unsupported image response.")
     return response.content, content_type
+
+
+@lru_cache(maxsize=256)
+def scryfall_card_names(query: str) -> list[str]:
+    """Return Scryfall autocomplete names without exposing any game-zone contents."""
+    normalized = query.strip()
+    if len(normalized) < 2:
+        return []
+    if len(normalized) > 100 or any(character in "\r\n\0" for character in normalized):
+        raise CatalogError("Invalid card-name search.")
+    try:
+        response = httpx.get(
+            "https://api.scryfall.com/cards/autocomplete",
+            params={"q": normalized, "include_extras": "false"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "DeepDeckLearner/0.2",
+            },
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise CatalogError(f"The Scryfall card-name search failed: {error}") from error
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        raise CatalogError("Scryfall returned an unsupported autocomplete response.")
+    return [name for name in data[:25] if isinstance(name, str) and name.strip()]
 
 
 def active_competitions() -> dict[str, Any]:

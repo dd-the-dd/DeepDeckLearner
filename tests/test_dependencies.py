@@ -36,6 +36,7 @@ def test_engine_build_is_current_only_when_binary_is_newer(tmp_path: Path) -> No
     manifest.write_text("[package]\nname='test'\n", encoding="utf-8")
     rust_source.write_text("fn main() {}\n", encoding="utf-8")
     binary = dependencies.engine_binary(tmp_path)
+    assert binary.parent.name == "release"
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"binary")
 

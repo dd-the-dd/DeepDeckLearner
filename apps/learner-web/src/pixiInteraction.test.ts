@@ -4,12 +4,29 @@ import {
   cardOrderLegend,
   candidateTargetIds,
   castingPaymentPresentations,
+  castingXNumberChoice,
+  selectOnlyAttackDefender,
   selectPlanTarget,
   tableChoiceCardIds,
   targetPlanFromAction,
 } from "./pixiInteraction";
 
 describe("visual Pixi targeting", () => {
+  test("turns repeated variable-cost casts into one bounded integer choice", () => {
+    const actions = [0, 1, 2].map((xValue) => ({
+      id: `cast:chalice:${xValue}`,
+      kind: "castSpell",
+      label: `Cast Chalice of the Void (X = ${xValue})`,
+      decisions: { xValue },
+    }));
+
+    const choice = castingXNumberChoice(actions);
+
+    expect(choice?.minimum).toBe(0);
+    expect(choice?.maximum).toBe(2);
+    expect(choice?.options.get(2)?.id).toBe("cast:chalice:2");
+  });
+
   test("explains both ends of a library ordering decision", () => {
     expect(cardOrderLegend({
       kind: "cardOrder",
@@ -164,5 +181,41 @@ describe("visual Pixi targeting", () => {
       "commander",
       "spell",
     ]));
+  });
+
+  test("automatically uses the only legal attack defender", () => {
+    const onlyAction = {
+      id: "attack:creature:opponent",
+      kind: "declareAttacker",
+      targetOrder: ["defender"],
+      targets: {
+        defender: { player: { playerId: "opponent" } },
+      },
+    };
+    const onlyPlan = targetPlanFromAction(onlyAction);
+
+    expect(selectOnlyAttackDefender(onlyAction, onlyPlan)).toEqual({
+      actionId: "attack:creature:opponent",
+    });
+
+    const choiceAction = {
+      ...onlyAction,
+      engineTargetActions: [
+        onlyAction,
+        {
+          ...onlyAction,
+          id: "attack:creature:planeswalker",
+          targets: {
+            defender: { permanent: { instanceId: "planeswalker" } },
+          },
+        },
+      ],
+      engineTargetKeys: ["defender"],
+      targets: {},
+    };
+    expect(selectOnlyAttackDefender(
+      choiceAction,
+      targetPlanFromAction(choiceAction),
+    )).toBeNull();
   });
 });

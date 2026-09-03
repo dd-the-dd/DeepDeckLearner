@@ -5,6 +5,10 @@ import os
 from deepdeck_agent import AgentConfig, DeckPolicy, PlaySpeed
 
 
+def _repository_commit() -> str:
+    return os.getenv("DEEPDECK_AGENT_COMMIT", "local-worktree").strip() or "local-worktree"
+
+
 def random_config() -> AgentConfig:
     return AgentConfig(
         agent_id=os.getenv(
@@ -18,6 +22,7 @@ def random_config() -> AgentConfig:
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
         repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
+        repository_commit=_repository_commit(),
     )
 
 
@@ -35,6 +40,7 @@ def alexios_config() -> AgentConfig:
         decks=DeckPolicy.only(deck_id),
         speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
         repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
+        repository_commit=_repository_commit(),
     )
 
 
@@ -56,4 +62,5 @@ def deep_learning_config(version: str) -> AgentConfig:
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
         repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
+        repository_commit=_repository_commit(),
     )

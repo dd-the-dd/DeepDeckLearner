@@ -6,7 +6,12 @@ from argparse import Namespace
 import pytest
 from deepdeck_agent import AgentConfig
 
-from deepdeck_examples.run import _serve_local, parser
+from deepdeck_examples.run import (
+    _league_match_snapshot,
+    _matchmaking_entries,
+    _serve_local,
+    parser,
+)
 
 
 def test_same_demo_command_exposes_local_and_public_targets() -> None:
@@ -21,6 +26,65 @@ def test_v11_and_v12_are_available_but_untrained_weights_require_opt_in() -> Non
     v12 = parser().parse_args(["v12", "--target", "ddl", "--checkpoint", "checkpoint"])
     assert v11.allow_untrained is True
     assert v12.checkpoint == "checkpoint"
+
+
+def test_public_runner_accepts_a_pool_for_concurrent_league_seats() -> None:
+    arguments = parser().parse_args(
+        [
+            "v12",
+            "--target",
+            "ddl",
+            "--deck-version-id",
+            "deck-a",
+            "--additional-deck-version-id",
+            "deck-b",
+            "--matchmaking-concurrency",
+            "2",
+        ]
+    )
+
+    assert arguments.deck_version_id == "deck-a"
+    assert arguments.additional_deck_version_id == ["deck-b"]
+    assert arguments.matchmaking_concurrency == 2
+
+    entries = _matchmaking_entries(arguments)
+    assert [entry.deck_version_id for entry in entries] == ["deck-a", "deck-b"]
+    assert [entry.client_seat_id for entry in entries] == [
+        "learner:seat-1",
+        "learner:seat-2",
+    ]
+
+
+def test_league_match_snapshot_exposes_live_game_telemetry() -> None:
+    snapshot = _league_match_snapshot(
+        "match-1",
+        {
+            "games": [
+                {
+                    "id": "game-1",
+                    "number": 2,
+                    "status": "running",
+                    "turnCount": 7,
+                    "startedAt": "2026-09-03T04:56:32+00:00",
+                }
+            ],
+            "summary": {
+                "status": "running",
+                "participants": [{"deck": "Deck A"}, {"deck": "Deck B"}],
+            },
+        },
+        "https://staging.deepdeckleague.com/api/v1",
+    )
+
+    assert snapshot["gameId"] == "game-1"
+    assert snapshot["decks"] == ["Deck A", "Deck B"]
+    assert snapshot["players"] == 2
+    assert snapshot["turnNumber"] == 7
+    assert snapshot["roundNumber"] == 2
+    assert snapshot["startedAtUnixMs"] == 1_788_411_392_000
+    assert snapshot["watchUrl"] == (
+        "https://staging.deepdeckleague.com/matches?tab=games&match=match-1&replay=1&seat=0"
+    )
 
 
 @pytest.mark.asyncio
