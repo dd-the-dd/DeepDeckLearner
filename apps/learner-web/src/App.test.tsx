@@ -380,7 +380,7 @@ describe("guided onboarding", () => {
     });
   });
 
-  test("rotates League connections across all valid format decks", async () => {
+  test("advertises all valid format decks to every League connection", async () => {
     const readyStatus: CapabilityStatus = {
       ...status,
       hosted: { ...status.hosted, api_key_configured: true },

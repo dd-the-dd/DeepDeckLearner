@@ -1659,11 +1659,10 @@ function LeagueConnectionsPanel({
         competition_version_id: competition.versionId,
         deck_version_ids: selected.map((deck) => deck.id),
       });
-      const usedDecks = Math.min(plan.leagueMatches, selected.length);
       const selfPlay = plan.leagueMatches >= 2
         ? " The League prioritizes distinct agents, then pairs these seats together only when too few distinct agents are queued to fill the table."
         : " Allocate at least 2 League connections to allow self-play when the queue is empty.";
-      setMessages((current) => ({ ...current, [model.id]: `${plan.leagueMatches} League seat${plan.leagueMatches === 1 ? "" : "s"} started through one agent connection across ${usedDecks} deck${usedDecks === 1 ? "" : "s"}.${selfPlay}` }));
+      setMessages((current) => ({ ...current, [model.id]: `${plan.leagueMatches} League seat${plan.leagueMatches === 1 ? "" : "s"} now advertises the same pool of ${selected.length} deck${selected.length === 1 ? "" : "s"}. The League selects a Plackett–Luce-balanced deck for every match.${selfPlay}` }));
       refresh();
     } catch (reason) {
       setMessages((current) => ({ ...current, [model.id]: reason instanceof Error ? reason.message : "Unable to connect this agent to the League." }));
@@ -1689,7 +1688,7 @@ function LeagueConnectionsPanel({
             <div className="league-deck-modes" role="group" aria-label={`Deck selection for ${model.name}`}>
               {(["all", "pool", "single"] as const).map((candidate) => <button key={candidate} type="button" className={mode === candidate ? "selected" : ""} aria-pressed={mode === candidate} onClick={() => setDeckModes((current) => ({ ...current, [model.id]: candidate }))}>{candidate === "all" ? "All legal" : candidate === "pool" ? "Deck pool" : "One deck"}</button>)}
             </div>
-            {loading ? <small>Loading valid {model.format} decks…</small> : mode === "single" ? <select aria-label={`Deck for ${model.name}`} value={singleDecks[model.id] ?? availableDecks[0]?.id ?? ""} onChange={(event) => setSingleDecks((current) => ({ ...current, [model.id]: event.target.value }))}>{availableDecks.map((deck) => <option value={deck.id} key={deck.id}>{deck.name}</option>)}</select> : mode === "pool" ? <div className="league-deck-pool">{availableDecks.map((deck) => <label key={deck.id}><input type="checkbox" checked={pool.includes(deck.id)} onChange={() => togglePoolDeck(model.id, deck.id)} /><span>{deck.name}</span></label>)}</div> : <small>{availableDecks.length} valid {model.format} deck{availableDecks.length === 1 ? "" : "s"} will be rotated across the allocated connections.</small>}
+            {loading ? <small>Loading valid {model.format} decks…</small> : mode === "single" ? <select aria-label={`Deck for ${model.name}`} value={singleDecks[model.id] ?? availableDecks[0]?.id ?? ""} onChange={(event) => setSingleDecks((current) => ({ ...current, [model.id]: event.target.value }))}>{availableDecks.map((deck) => <option value={deck.id} key={deck.id}>{deck.name}</option>)}</select> : mode === "pool" ? <div className="league-deck-pool">{availableDecks.map((deck) => <label key={deck.id}><input type="checkbox" checked={pool.includes(deck.id)} onChange={() => togglePoolDeck(model.id, deck.id)} /><span>{deck.name}</span></label>)}</div> : <small>{availableDecks.length} valid {model.format} deck{availableDecks.length === 1 ? "" : "s"} will be offered to the League for server-side selection at every match.</small>}
           </div>
           <button className="secondary" type="button" disabled={working === model.id || loading || !competition || availableDecks.length === 0 || (mode === "pool" && pool.length === 0)} onClick={() => void connect(model)}>{working === model.id ? "Connecting…" : "Connect allocated slots"}</button>
           {messages[model.id] && <small role="status">{messages[model.id]}</small>}
