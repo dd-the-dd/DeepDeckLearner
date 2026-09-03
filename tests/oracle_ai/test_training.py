@@ -2970,6 +2970,48 @@ def test_behavior_summary_flags_mulligan_to_zero() -> None:
     assert summary["mulligan"]["criticalToOneOrLess"] == 1
 
 
+def test_dominated_actions_prevent_missing_a_legal_land_for_the_turn() -> None:
+    state = {
+        "step": "postcombatMain",
+        "activePlayer": 1,
+        "players": [{"id": "opponent"}, {"id": "agent"}],
+        "_decisionContext": {
+            "id": "priority:2:1:0",
+            "playerId": "agent",
+            "kind": "priority",
+        },
+    }
+    actions = [
+        {"id": "land-a", "kind": "playLand"},
+        {"id": "land-b", "kind": "playLand"},
+        {"id": "spell", "kind": "castSpell"},
+        {"id": "pass", "kind": "passPriority"},
+    ]
+
+    assert dominated_action_indices(state, actions) == (3,)
+
+
+def test_dominated_actions_allow_passing_before_combat_or_without_a_land() -> None:
+    state = {
+        "step": "precombatMain",
+        "activePlayer": "agent",
+        "players": [{"id": "agent"}, {"id": "opponent"}],
+        "_decisionContext": {
+            "id": "priority:3:0:0",
+            "playerId": "agent",
+            "kind": "priority",
+        },
+    }
+    actions = [
+        {"id": "land", "kind": "playLand"},
+        {"id": "pass", "kind": "passPriority"},
+    ]
+
+    assert dominated_action_indices(state, actions) == ()
+    state["step"] = "postcombatMain"
+    assert dominated_action_indices(state, actions[:0] + actions[1:]) == ()
+
+
 def test_observation_dropout_masks_structured_state_only_during_training() -> None:
     config = ModelConfigV2(
         d_model=32,

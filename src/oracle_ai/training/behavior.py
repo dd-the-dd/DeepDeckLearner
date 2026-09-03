@@ -107,16 +107,38 @@ def dominated_action_indices(
     actions: list[dict[str, Any]],
 ) -> tuple[int, ...]:
     context = state.get("_decisionContext")
-    if not isinstance(context, dict) or "freeMulligans" not in context:
+    if not isinstance(context, dict):
         return ()
-    dominated = []
-    for index, action in enumerate(actions):
-        if action.get("kind") != "takeMulligan":
-            continue
-        trace = build_decision_trace(state, actions, index)
-        if trace.projected_hand_size is not None and trace.projected_hand_size <= 1:
-            dominated.append(index)
-    return tuple(dominated)
+    dominated: set[int] = set()
+    if "freeMulligans" in context:
+        for index, action in enumerate(actions):
+            if action.get("kind") != "takeMulligan":
+                continue
+            trace = build_decision_trace(state, actions, index)
+            if trace.projected_hand_size is not None and trace.projected_hand_size <= 1:
+                dominated.add(index)
+
+    players = state.get("players")
+    active_player = state.get("activePlayer")
+    if isinstance(active_player, int) and isinstance(players, list):
+        active_player = (
+            players[active_player].get("id")
+            if 0 <= active_player < len(players)
+            and isinstance(players[active_player], dict)
+            else None
+        )
+    if (
+        str(context.get("kind", "")).casefold() == "priority"
+        and state.get("step") == "postcombatMain"
+        and str(context.get("playerId", "")) == str(active_player)
+        and any(action.get("kind") == "playLand" for action in actions)
+    ):
+        dominated.update(
+            index
+            for index, action in enumerate(actions)
+            if action.get("kind") == "passPriority"
+        )
+    return tuple(sorted(dominated))
 
 
 def summarize_decision_traces(
