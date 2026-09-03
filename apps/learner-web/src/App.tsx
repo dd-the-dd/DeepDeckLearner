@@ -13,10 +13,13 @@ import {
 import {
   createModel,
   deleteModel,
+  updateModel,
+  loadAccountStatus,
   loadCompetitions,
   loadActiveGames,
   loadDeckStatistics,
   loadJobs,
+  loadAllFormatDecks,
   loadModelResources,
   loadModels,
   loadResources,
@@ -32,6 +35,7 @@ import {
   stopGame,
   stopJob,
   type CapabilityStatus,
+  type AccountStatus,
   type ActiveGame,
   type CompetitionSummary,
   type DeckSummary,
@@ -213,7 +217,7 @@ function WorkflowJourney({
   );
 }
 
-function WorkspaceSummary({ status }: { status: CapabilityStatus | null }) {
+function WorkspaceSummary({ status, account }: { status: CapabilityStatus | null; account: AccountStatus | null }) {
   return (
     <section className="workspace-summary" aria-label="Workspace readiness">
       <div>
@@ -234,7 +238,7 @@ function WorkspaceSummary({ status }: { status: CapabilityStatus | null }) {
           label="Local play"
         />
         <StatusDot
-          ready={Boolean(status?.hosted.api_key_configured)}
+          ready={account?.valid === true}
           label="League account"
         />
       </div>
@@ -242,7 +246,7 @@ function WorkspaceSummary({ status }: { status: CapabilityStatus | null }) {
   );
 }
 
-function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
+function AccountSetup({ status, account, refresh }: { status: CapabilityStatus | null; account: AccountStatus | null; refresh: () => void }) {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -272,21 +276,22 @@ function AccountSetup({ status, refresh }: { status: CapabilityStatus | null; re
         <h2>Connect your League account</h2>
         <p>The key stays on this computer and is never displayed again after saving.</p>
       </div>
-      {!status ? (
+      {!status || !account ? (
         <div className="notice" role="status"><strong>Checking this computer…</strong><span>Looking for a previously saved League account key.</span></div>
-      ) : status.hosted.api_key_configured && !replacing ? (
+      ) : account.valid === true && !replacing ? (
         <div className="notice success account-connected" role="status">
           <div><strong>Account connected</strong><span>Saved in this workbench's private local data folder and restored after restart.</span></div>
           <button type="button" onClick={() => setReplacing(true)}>Replace key</button>
         </div>
       ) : (
         <form onSubmit={submit}>
+          {account.configured && <div className="notice warning"><strong>{account.valid === false ? "Saved key rejected" : "League unavailable"}</strong><span>{account.reason}</span></div>}
           <label>
             Deep Deck League API key
             <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="ddl_agent_…" />
           </label>
           <button className="primary" type="submit" disabled={busy || apiKey.trim().length < 24}>{busy ? "Saving…" : "Save API key"}</button>
-          {status.hosted.api_key_configured && <button type="button" onClick={() => { setReplacing(false); setApiKey(""); }}>Cancel</button>}
+          {account.valid === true && <button type="button" onClick={() => { setReplacing(false); setApiKey(""); }}>Cancel</button>}
         </form>
       )}
       {message && <p className={message.startsWith("API key saved") ? "form-success" : "form-error"} role="status">{message}</p>}
@@ -1047,7 +1052,7 @@ export function TrainingForm({
   );
 }
 
-function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | null; refresh: () => void }) {
+function LocalTrainingForm({ status, account, refresh }: { status: CapabilityStatus | null; account: AccountStatus | null; refresh: () => void }) {
   const [query, setQuery] = useState("");
   const [decks, setDecks] = useState<DeckSummary[]>([]);
   const [selected, setSelected] = useState<DeckSummary[]>([]);
@@ -1065,7 +1070,7 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
   ).length;
 
   useEffect(() => {
-    if (!status?.hosted.api_key_configured) return;
+    if (account?.valid !== true) return;
     let active = true;
     const timer = window.setTimeout(() => {
       void Promise.all([searchDecks(query, "legacy"), searchDecks(query, "commander")])
@@ -1073,7 +1078,7 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
         .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to search decks."); });
     }, 250);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [query, status?.hosted.api_key_configured]);
+  }, [account?.valid, query]);
 
   useEffect(() => {
     void loadTrainingDeckPool().then((pool) => setSelected(pool.decks)).catch(() => undefined);
@@ -1089,8 +1094,8 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
     setBusy(deck.id);
     setError("");
     try {
-      await downloadDeck(deck.id);
-      const next = [...selected, deck];
+      const downloaded = await downloadDeck(deck.id);
+      const next = [...selected, { ...deck, playableCardCount: downloaded.cardCount }];
       setSelected(next);
       await saveTrainingDeckPool(next);
     } catch (reason) {
@@ -1124,13 +1129,14 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
 
   return <section className="panel configure local-training-form">
     <div className="section-heading"><div><span className="eyebrow">New agent</span><h2>Architecture and training decks</h2><p className="section-lead">Create the agent identity here. CPU, GPU and simultaneous games are assigned later from Jobs.</p></div><span className="step">CONFIG</span></div>
-    {!status?.hosted.api_key_configured ? <div className="notice warning"><strong>API key required</strong><span>Configure your Deep Deck League API key in Application setup to access training decks.</span></div> : <>
+    {account?.valid !== true && <div className="notice warning"><strong>{account?.configured ? "Replace the rejected API key" : "API key required"}</strong><span>{selected.length > 0 ? "Your downloaded deck snapshots remain available locally. A valid key is only required to add more decks or join the League." : account?.reason ?? "Configure your Deep Deck League API key to access training decks."}</span></div>}
+    <>
       <div className="training-pool-heading"><div><strong>Training deck pool</strong><small>{selected.length === 0 ? "No deck selected" : `${selected.length} deck${selected.length === 1 ? "" : "s"} ready locally`}</small></div></div>
       {selected.length > 0 && <div className="selected-training-pool">{selected.map((deck) => <button type="button" key={deck.id} onClick={() => void toggleDeck(deck)} title="Remove from training pool"><span><strong>{deck.name}</strong><small>{deck.format ?? "Deck"} · v{deck.version}</small></span><b aria-hidden="true">×</b></button>)}</div>}
-      <label className="deck-search">Add decks<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any deck by name…" autoFocus /></label>
+      {account?.valid === true && <><label className="deck-search">Add decks<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search any deck by name…" autoFocus /></label>
       <div className="training-deck-grid" aria-label="Training deck results">
         {decks.map((deck) => { const isSelected = selected.some((item) => item.id === deck.id); return <button key={deck.id} type="button" className={isSelected ? "selected" : ""} onClick={() => void toggleDeck(deck)} disabled={Boolean(busy)}><span aria-hidden="true">{busy === deck.id ? "…" : isSelected ? "✓" : "+"}</span><strong>{deck.name}</strong><small>{deck.format ?? "Deck"} · v{deck.version} · {deck.playableCardCount} cards</small></button>; })}
-      </div>
+      </div></>}
       {busy && <p className="deck-pool-empty" role="status">Adding the deck to the local pool…</p>}
       {selected.length > 0 && <div className="notice success" role="status"><strong>Training pool ready locally</strong><span>{selected.length} immutable deck snapshot{selected.length === 1 ? "" : "s"} stored in .deepdeck/decks.</span></div>}
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -1145,7 +1151,7 @@ function LocalTrainingForm({ status, refresh }: { status: CapabilityStatus | nul
         {created && <div className="notice success" role="status"><strong>Agent configured</strong><span>Open Jobs to assign simultaneous games and start training.</span></div>}
         <div className="form-actions"><button className="primary" type="button" onClick={() => void configureAgent()} disabled={starting || created || modelName.trim().length < 2 || compatibleDeckCount === 0 || !status?.torch.ready || !status?.engine.healthy}>{starting ? "Preparing agent…" : created ? "Agent configured" : `Create ${modelName.trim() || model.toUpperCase()}`}</button><small>{modelName.trim().length < 2 ? "Give your model a name first." : compatibleDeckCount === 0 ? `Add a ${requiredFormat} deck for this agent.` : "No training starts until you explicitly start it in Jobs."}</small></div>
       </div>}
-    </>}
+    </>
   </section>;
 }
 
@@ -1153,6 +1159,87 @@ function formatBytes(bytes: number | null | undefined) {
   if (bytes === null || bytes === undefined) return "Unavailable";
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+}
+
+function AgentEditor({ model, onClose, refresh }: {
+  model: LocalModel;
+  onClose: () => void;
+  refresh: () => void;
+}) {
+  const [name, setName] = useState(model.name);
+  const [decks, setDecks] = useState<DeckSummary[]>(model.decks);
+  const [results, setResults] = useState<DeckSummary[]>([]);
+  const [query, setQuery] = useState("");
+  const [reservePlaytest, setReservePlaytest] = useState(model.reservePlaytest);
+  const [selfPlayAllSeats, setSelfPlayAllSeats] = useState(model.selfPlayAllSeats !== false);
+  const [busy, setBusy] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void searchDecks(query, model.format)
+        .then((items) => { if (active) setResults(items); })
+        .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to search decks."); });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [model.format, query]);
+
+  async function toggleDeck(deck: DeckSummary) {
+    if (decks.some((item) => item.id === deck.id)) {
+      setDecks((current) => current.filter((item) => item.id !== deck.id));
+      return;
+    }
+    setBusy(deck.id);
+    setError("");
+    try {
+      const downloaded = await downloadDeck(deck.id);
+      setDecks((current) => [...current, { ...deck, playableCardCount: downloaded.cardCount }]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to download this deck.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await updateModel(model.id, {
+        name: name.trim(),
+        decks,
+        reservePlaytest,
+        selfPlayAllSeats,
+      });
+      refresh();
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to update this agent.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="agent-editor">
+    <div className="training-launch">
+      <label>Agent name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label>
+      <div className="automatic-setting"><span>Architecture</span><strong>{model.architecture.toUpperCase()} · {model.format}</strong><small>The architecture stays fixed so existing weights remain compatible.</small></div>
+    </div>
+    <div className="training-pool-heading"><div><strong>Decks this agent can play and train with</strong><small>{decks.length} selected</small></div></div>
+    {decks.length > 0 && <div className="selected-training-pool">{decks.map((deck) => <button type="button" key={deck.id} onClick={() => void toggleDeck(deck)} title="Remove from this agent"><span><strong>{deck.name}</strong><small>{deck.format} · v{deck.version}</small></span><b aria-hidden="true">×</b></button>)}</div>}
+    <label className="deck-search">Add {model.format} decks<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search decks by name…" /></label>
+    <div className="training-deck-grid" aria-label={`Deck results for ${model.name}`}>
+      {results.map((deck) => { const selected = decks.some((item) => item.id === deck.id); return <button key={deck.id} type="button" className={selected ? "selected" : ""} disabled={Boolean(busy)} onClick={() => void toggleDeck(deck)}><span aria-hidden="true">{busy === deck.id ? "…" : selected ? "✓" : "+"}</span><strong>{deck.name}</strong><small>v{deck.version} · {deck.playableCardCount} cards</small></button>; })}
+    </div>
+    <div className="agent-mode-grid">
+      <label className="check-setting"><input type="checkbox" checked={selfPlayAllSeats} onChange={(event) => setSelfPlayAllSeats(event.target.checked)} /><span><strong>Shared-model self-play</strong><small>The same model controls every training seat.</small></span></label>
+      <label className="check-setting"><input type="checkbox" checked={reservePlaytest} onChange={(event) => setReservePlaytest(event.target.checked)} /><span><strong>Publish playable weights</strong><small>Keep a stable checkpoint available for playtests.</small></span></label>
+    </div>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="form-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="button" disabled={saving || name.trim().length < 2 || decks.length === 0} onClick={() => void save()}>{saving ? "Saving agent…" : "Save agent"}</button><small>Stop all of this agent's jobs before saving changes.</small></div>
+  </div>;
 }
 
 function AgentCatalog({
@@ -1167,6 +1254,7 @@ function AgentCatalog({
   const [confirming, setConfirming] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [deleting, setDeleting] = useState("");
+  const [editing, setEditing] = useState("");
   const [message, setMessage] = useState("");
 
   async function remove(model: LocalModel) {
@@ -1206,7 +1294,9 @@ function AgentCatalog({
           <div><dt>Games learned</dt><dd>{model.trainingState?.completedGames ?? 0}</dd></div>
         </dl>
         <div className="agent-deck-list">{model.decks.map((deck) => <span key={deck.id}>{deck.name}</span>)}</div>
-        {!isConfirming ? <button className="danger subtle" type="button" onClick={() => { setConfirming(model.id); setConfirmation(""); setMessage(""); }}>Delete agent and weights</button> : <div className="delete-agent-confirm" role="alertdialog" aria-label={`Delete ${model.name}`}>
+        {!isConfirming && <div className="agent-card-actions"><button type="button" disabled={activeWorkers.length > 0} onClick={() => { setEditing(editing === model.id ? "" : model.id); setMessage(""); }}>{editing === model.id ? "Close editor" : "Edit agent and decks"}</button><button className="danger subtle" type="button" onClick={() => { setEditing(""); setConfirming(model.id); setConfirmation(""); setMessage(""); }}>Delete agent and weights</button></div>}
+        {editing === model.id && <AgentEditor model={model} refresh={refresh} onClose={() => setEditing("")} />}
+        {isConfirming && <div className="delete-agent-confirm" role="alertdialog" aria-label={`Delete ${model.name}`}>
           <strong>Delete {formatBytes(model.diskBytes)} permanently?</strong>
           <p>The agent, checkpoints, training history and local statistics in this run will be removed.</p>
           {activeWorkers.length > 0 ? <small>Stop its active jobs first.</small> : <label>Type <b>{model.name}</b><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>}
@@ -1462,61 +1552,118 @@ function ActiveWorkersPanel({
 }
 
 function LeagueConnectionsPanel({
-  status,
+  account,
   models,
   resources,
   jobs,
   refresh,
 }: {
-  status: CapabilityStatus | null;
+  account: AccountStatus | null;
   models: LocalModel[];
   resources: ResourceSnapshot | null;
   jobs: Job[];
   refresh: () => void;
 }) {
   const [competitions, setCompetitions] = useState<CompetitionSummary[]>([]);
-  const [selectedDecks, setSelectedDecks] = useState<Record<string, string>>({});
+  const [catalogs, setCatalogs] = useState<Record<string, DeckSummary[]>>({});
+  const [deckModes, setDeckModes] = useState<Record<string, "all" | "pool" | "single">>({});
+  const [singleDecks, setSingleDecks] = useState<Record<string, string>>({});
+  const [deckPools, setDeckPools] = useState<Record<string, string[]>>({});
+  const [loadingFormats, setLoadingFormats] = useState<string[]>([]);
   const [working, setWorking] = useState("");
   const [messages, setMessages] = useState<Record<string, string>>({});
+  const leagueFormats = [...new Set(models.filter((model) => model.ready).map((model) => model.format))].sort().join(",");
 
   useEffect(() => {
-    if (!status?.hosted.api_key_configured) {
+    if (account?.valid !== true) {
       setCompetitions([]);
+      setCatalogs({});
       return;
     }
-    void loadCompetitions()
-      .then(setCompetitions)
-      .catch((reason) => setMessages({ global: reason instanceof Error ? reason.message : "Unable to load League competitions." }));
-  }, [status?.hosted.api_key_configured]);
+    const formats = leagueFormats.split(",").filter(Boolean);
+    setLoadingFormats(formats);
+    void Promise.all([
+      loadCompetitions(),
+      ...formats.map(async (format) => [format, await loadAllFormatDecks(format)] as const),
+    ])
+      .then(([loadedCompetitions, ...loadedCatalogs]) => {
+        setCompetitions(loadedCompetitions as CompetitionSummary[]);
+        setCatalogs(Object.fromEntries(loadedCatalogs as ReadonlyArray<readonly [string, DeckSummary[]]>));
+        setMessages((current) => ({ ...current, global: "" }));
+      })
+      .catch((reason) => setMessages((current) => ({ ...current, global: reason instanceof Error ? reason.message : "Unable to load League decks and competitions." })))
+      .finally(() => setLoadingFormats([]));
+  }, [account?.valid, leagueFormats]);
+
+  function decksFor(model: LocalModel) {
+    return catalogs[model.format] ?? model.decks.filter((deck) => deck.format?.toLowerCase() === model.format);
+  }
+
+  function togglePoolDeck(modelId: string, deckId: string) {
+    setDeckPools((current) => {
+      const selected = current[modelId] ?? [];
+      return {
+        ...current,
+        [modelId]: selected.includes(deckId)
+          ? selected.filter((id) => id !== deckId)
+          : [...selected, deckId],
+      };
+    });
+  }
 
   async function connect(model: LocalModel) {
-    const deckId = selectedDecks[model.id] ?? model.decks[0]?.id;
+    const availableDecks = decksFor(model);
+    const mode = deckModes[model.id] ?? "single";
+    const selectedIds = mode === "all"
+      ? availableDecks.map((deck) => deck.id)
+      : mode === "pool"
+        ? deckPools[model.id] ?? []
+        : [singleDecks[model.id] ?? availableDecks[0]?.id].filter((id): id is string => Boolean(id));
+    const selected = selectedIds
+      .map((id) => availableDecks.find((deck) => deck.id === id))
+      .filter((deck): deck is DeckSummary => Boolean(deck));
     const competition = competitions.find((item) => item.format.toLowerCase() === model.format);
-    if (!deckId || !competition) return;
+    if (!competition) return;
+    if (selected.length === 0) {
+      setMessages((current) => ({ ...current, [model.id]: mode === "pool" ? "Choose at least one deck for this League pool." : `No valid ${model.format} deck is available.` }));
+      return;
+    }
     setWorking(model.id);
     setMessages((current) => ({ ...current, [model.id]: "" }));
     try {
       const plan = await loadModelResources(model.id);
-      const activeWorkers = (resources?.workers ?? []).filter((worker) => worker.modelId === model.id && worker.kind === "matchmaking.agent").length;
-      const queuedWorkers = jobs.filter((job) => job.model_id === model.id && job.kind === "matchmaking.agent" && job.status === "queued").length;
-      const toStart = Math.max(0, plan.leagueMatches - activeWorkers - queuedWorkers);
-      if (toStart === 0) {
-        setMessages((current) => ({ ...current, [model.id]: plan.leagueMatches === 0 ? "Set League connections above to at least 1, then save the allocation." : "Every allocated League connection is already active." }));
+      if (plan.leagueMatches === 0) {
+        setMessages((current) => ({ ...current, [model.id]: "Set League connections above to at least 1, then save the allocation." }));
         return;
       }
-      for (let index = 0; index < toStart; index += 1) {
-        await startJob({
-          kind: "matchmaking.agent",
-          model_id: model.id,
-          agent: model.architecture,
-          checkpoint: model.checkpointPath,
-          speed: "100ms",
-          continuous: true,
-          competition_version_id: competition.versionId,
-          deck_version_id: deckId,
-        });
+      const existingWorkers = (resources?.workers ?? []).filter(
+        (worker) => worker.modelId === model.id && worker.kind === "matchmaking.agent",
+      );
+      const queuedJobs = jobs.filter(
+        (job) => job.model_id === model.id && job.kind === "matchmaking.agent" && job.status === "queued",
+      );
+      for (const jobId of new Set([
+        ...existingWorkers.map((worker) => worker.jobId),
+        ...queuedJobs.map((job) => job.id),
+      ])) {
+        await stopJob(jobId);
       }
-      setMessages((current) => ({ ...current, [model.id]: `${toStart} League connection${toStart === 1 ? "" : "s"} started. They remain visible in Active services.` }));
+      await startJob({
+        kind: "matchmaking.agent",
+        model_id: model.id,
+        agent: model.architecture,
+        checkpoint: model.checkpointPath,
+        speed: "1s",
+        continuous: true,
+        connections: plan.leagueMatches,
+        competition_version_id: competition.versionId,
+        deck_version_ids: selected.map((deck) => deck.id),
+      });
+      const usedDecks = Math.min(plan.leagueMatches, selected.length);
+      const selfPlay = plan.leagueMatches >= 2
+        ? " The League prioritizes distinct agents, then pairs these seats together only when too few distinct agents are queued to fill the table."
+        : " Allocate at least 2 League connections to allow self-play when the queue is empty.";
+      setMessages((current) => ({ ...current, [model.id]: `${plan.leagueMatches} League seat${plan.leagueMatches === 1 ? "" : "s"} started through one agent connection across ${usedDecks} deck${usedDecks === 1 ? "" : "s"}.${selfPlay}` }));
       refresh();
     } catch (reason) {
       setMessages((current) => ({ ...current, [model.id]: reason instanceof Error ? reason.message : "Unable to connect this agent to the League." }));
@@ -1526,12 +1673,27 @@ function LeagueConnectionsPanel({
   }
 
   return <section className="panel league-connections">
-    <div className="section-heading"><div><span className="eyebrow">Optional remote activity</span><h2>League connections</h2><p className="section-lead">Start the number of persistent connections saved in the allocation table. Local shared-model self-play continues independently when no remote opponent is available.</p></div></div>
-    {!status?.hosted.api_key_configured ? <div className="notice warning"><strong>League account not connected</strong><span>Add the API key in Agent configuration. Nothing else is required on a separate page.</span></div> : <div className="league-agent-list">
+    <div className="section-heading"><div><span className="eyebrow">Optional remote activity</span><h2>League connections</h2><p className="section-lead">Start the number of persistent connections saved in the allocation table. The League fills tables with distinct agents first, then uses your additional seats as self-play fallback.</p></div></div>
+    {account?.valid !== true ? <div className="notice warning"><strong>{account?.configured ? "Saved League key rejected" : "League account not connected"}</strong><span>{account?.reason ?? "Add the API key in Agent configuration. Nothing else is required on a separate page."}</span></div> : <div className="league-agent-list">
       {models.filter((model) => model.ready).map((model) => {
         const competition = competitions.find((item) => item.format.toLowerCase() === model.format);
         const live = (resources?.workers ?? []).filter((worker) => worker.modelId === model.id && worker.kind === "matchmaking.agent").length;
-        return <article key={model.id}><div><span className="model-ready ready">{live} connected</span><strong>{model.name}</strong><small>{competition ? competition.name : `No active ${model.format} competition`}</small></div><label>Deck<select value={selectedDecks[model.id] ?? model.decks[0]?.id ?? ""} onChange={(event) => setSelectedDecks((current) => ({ ...current, [model.id]: event.target.value }))}>{model.decks.map((deck) => <option value={deck.id} key={deck.id}>{deck.name}</option>)}</select></label><button className="secondary" type="button" disabled={working === model.id || !competition || model.decks.length === 0} onClick={() => void connect(model)}>{working === model.id ? "Connecting…" : "Connect allocated slots"}</button>{messages[model.id] && <small role="status">{messages[model.id]}</small>}</article>;
+        const availableDecks = decksFor(model);
+        const mode = deckModes[model.id] ?? "single";
+        const pool = deckPools[model.id] ?? [];
+        const loading = loadingFormats.includes(model.format);
+        return <article key={model.id}>
+          <div><span className="model-ready ready">{live} connected</span><strong>{model.name}</strong><small>{competition ? competition.name : `No active ${model.format} competition`}</small></div>
+          <div className="league-deck-configuration">
+            <span className="field-label">League decks</span>
+            <div className="league-deck-modes" role="group" aria-label={`Deck selection for ${model.name}`}>
+              {(["all", "pool", "single"] as const).map((candidate) => <button key={candidate} type="button" className={mode === candidate ? "selected" : ""} aria-pressed={mode === candidate} onClick={() => setDeckModes((current) => ({ ...current, [model.id]: candidate }))}>{candidate === "all" ? "All legal" : candidate === "pool" ? "Deck pool" : "One deck"}</button>)}
+            </div>
+            {loading ? <small>Loading valid {model.format} decks…</small> : mode === "single" ? <select aria-label={`Deck for ${model.name}`} value={singleDecks[model.id] ?? availableDecks[0]?.id ?? ""} onChange={(event) => setSingleDecks((current) => ({ ...current, [model.id]: event.target.value }))}>{availableDecks.map((deck) => <option value={deck.id} key={deck.id}>{deck.name}</option>)}</select> : mode === "pool" ? <div className="league-deck-pool">{availableDecks.map((deck) => <label key={deck.id}><input type="checkbox" checked={pool.includes(deck.id)} onChange={() => togglePoolDeck(model.id, deck.id)} /><span>{deck.name}</span></label>)}</div> : <small>{availableDecks.length} valid {model.format} deck{availableDecks.length === 1 ? "" : "s"} will be rotated across the allocated connections.</small>}
+          </div>
+          <button className="secondary" type="button" disabled={working === model.id || loading || !competition || availableDecks.length === 0 || (mode === "pool" && pool.length === 0)} onClick={() => void connect(model)}>{working === model.id ? "Connecting…" : "Connect allocated slots"}</button>
+          {messages[model.id] && <small role="status">{messages[model.id]}</small>}
+        </article>;
       })}
       {models.every((model) => !model.ready) && <div className="empty"><span>◇</span><p>Playable weights are required before connecting to the League.</p></div>}
     </div>}
@@ -1546,7 +1708,7 @@ function elapsedLabel(startedAtUnixMs: number | null) {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function ActiveGamesPanel({ games, refresh }: { games: ActiveGame[]; refresh: () => void }) {
+function ActiveGamesPanel({ games, refresh, onOpen }: { games: ActiveGame[]; refresh: () => void; onOpen: (game: ActiveGame) => void }) {
   const [stopping, setStopping] = useState("");
   const [error, setError] = useState("");
 
@@ -1564,15 +1726,15 @@ function ActiveGamesPanel({ games, refresh }: { games: ActiveGame[]; refresh: ()
   }
 
   return <section className="panel live-games">
-    <div className="section-heading"><div><span className="eyebrow"><i className={games.length ? "live-pulse" : ""} /> Live Engine telemetry</span><h2>Games in progress</h2><p className="section-lead">Each card is one real Engine session. Cancelling a self-play game ends only that game; the trainer schedules the next one.</p></div><span className="live-game-count">{games.length} live</span></div>
+    <div className="section-heading"><div><span className="eyebrow"><i className={games.length ? "live-pulse" : ""} /> Live game telemetry</span><h2>Games in progress</h2><p className="section-lead">Training, local playtest, and League matches appear here as soon as a game starts.</p></div><span className="live-game-count">{games.length} live</span></div>
     {games.length === 0 ? <div className="empty live-empty"><span>0</span><div><strong>No game is currently running</strong><p>If a slot still looks occupied, check Active services above: the process can be stopped even before an Engine session appears.</p></div></div> : <div className="live-game-grid">
       {games.map((game) => <article className="live-game-card" key={game.id}>
-        <header><span className={`game-source ${game.source}`}>{game.source === "training" ? `Worker ${game.worker}` : "Local"}</span><strong>{elapsedLabel(game.startedAtUnixMs)}</strong></header>
+        <header><span className={`game-source ${game.source}`}>{game.source === "training" ? `Worker ${game.worker}` : game.source === "league" ? "League" : "Local"}</span><strong>{elapsedLabel(game.startedAtUnixMs)}</strong></header>
         <h3>{game.modelName}</h3>
         <p>{game.decks.filter(Boolean).join(" vs ") || "Preparing matchup"}</p>
         <div className="game-progress"><span>Round <b>{game.roundNumber ?? "—"}</b></span><span>Turn <b>{game.turnNumber ?? "—"}</b></span><span>Decisions <b>{game.decisions}</b></span><span>Players <b>{game.players}</b></span></div>
         {game.playersState.length > 0 && <div className="game-player-strip">{game.playersState.map((player, index) => <span className={player.hasLost ? "lost" : ""} key={player.id ?? index}><b>{player.life ?? "—"}</b><small>{player.name ?? `P${index + 1}`} · {player.handCount ?? 0} cards</small></span>)}</div>}
-        <footer><small>{game.mode ?? game.status}{game.sessionId ? ` · ${game.sessionId}` : " · session opening"}</small><button className="danger" type="button" disabled={!game.canCancel || stopping === game.id} onClick={() => void cancel(game)}>{stopping === game.id ? "Cancelling…" : game.canCancel ? "Cancel game" : "Opening…"}</button></footer>
+        <footer><small>{game.mode ?? game.status}{game.sessionId ? ` · ${game.sessionId}` : " · session opening"}</small><div className="live-game-actions">{game.source === "local" && game.jobId && <button type="button" onClick={() => onOpen(game)}>Open game</button>}{game.source === "league" && game.watchUrl && <a className="button-link" href={game.watchUrl} target="_blank" rel="noreferrer">Watch League</a>}{game.source !== "league" && <button className="danger" type="button" disabled={!game.canCancel || stopping === game.id} onClick={() => void cancel(game)}>{stopping === game.id ? "Cancelling…" : game.canCancel ? "Cancel game" : "Opening…"}</button>}</div></footer>
       </article>)}
     </div>}
     {error && <p className="form-error" role="alert">{error}</p>}
@@ -1580,19 +1742,21 @@ function ActiveGamesPanel({ games, refresh }: { games: ActiveGame[]; refresh: ()
 }
 
 function JobsDashboard({
-  status,
+  account,
   models,
   resources,
   jobs,
   games,
   refresh,
+  onOpenGame,
 }: {
-  status: CapabilityStatus | null;
+  account: AccountStatus | null;
   models: LocalModel[];
   resources: ResourceSnapshot | null;
   jobs: Job[];
   games: ActiveGame[];
   refresh: () => void;
+  onOpenGame: (game: ActiveGame) => void;
 }) {
   return <div className="jobs-dashboard">
     <section className="jobs-intro"><div><span className="eyebrow">Capacity → activity → game</span><h2>One operational view</h2><p>Save the capacity you want, start the trainer, then follow every worker and Engine game below. League connections also appear here; they no longer need a separate page.</p></div><div className="jobs-legend"><span><i className="training" /> Training</span><span><i className="local" /> Playtest</span><span><i className="league" /> League</span></div></section>
@@ -1600,9 +1764,9 @@ function JobsDashboard({
     <section className="panel allocation-panel"><div className="section-heading"><div><span className="eyebrow">Desired capacity</span><h2>Agent allocations</h2><p className="section-lead">Self-play games use the same model for every seat when that mode is enabled in Agent configuration.</p></div></div>
       {models.length ? <AgentAllocationTable models={models} resources={resources} jobs={jobs} refresh={refresh} /> : <div className="empty"><span>AI</span><p>Create an agent configuration before allocating jobs.</p></div>}
     </section>
-    <LeagueConnectionsPanel status={status} models={models} resources={resources} jobs={jobs} refresh={refresh} />
+    <LeagueConnectionsPanel account={account} models={models} resources={resources} jobs={jobs} refresh={refresh} />
     <ActiveWorkersPanel resources={resources} jobs={jobs} refresh={refresh} />
-    <ActiveGamesPanel games={games} refresh={refresh} />
+    <ActiveGamesPanel games={games} refresh={refresh} onOpen={onOpenGame} />
   </div>;
 }
 
@@ -1656,10 +1820,12 @@ function PlaytestForm({
   status,
   models,
   refresh,
+  onStarted,
 }: {
   status: CapabilityStatus | null;
   models: LocalModel[];
   refresh: () => void;
+  onStarted: (jobId: string) => void;
 }) {
   const playableModels = models.filter((model) => model.ready);
   const [modelId, setModelId] = useState("");
@@ -1686,7 +1852,7 @@ function PlaytestForm({
     event.preventDefault();
     setError("");
     try {
-      await startJob({
+      const job = await startJob({
         kind: "playtest.agent",
         model_id: selectedModel?.id,
         agent: selectedModel?.architecture,
@@ -1696,6 +1862,7 @@ function PlaytestForm({
         opponent_deck_version_id: opponentDeck,
         engine_url: status?.engine.url,
       });
+      onStarted(job.id);
       refresh();
     } catch (reason) {
       setError(
@@ -2129,6 +2296,7 @@ function JobsPanel({ jobs, refresh }: { jobs: Job[]; refresh: () => void }) {
 export default function App() {
   const [page, setPage] = useState<Page>("train");
   const [status, setStatus] = useState<CapabilityStatus | null>(null);
+  const [account, setAccount] = useState<AccountStatus | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [models, setModels] = useState<LocalModel[]>([]);
   const [resources, setResources] = useState<ResourceSnapshot | null>(null);
@@ -2139,7 +2307,7 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(true);
   const [trainingOpen, setTrainingOpen] = useState(true);
   const [creatingTraining, setCreatingTraining] = useState(false);
-  const [closedPlaytestSession, setClosedPlaytestSession] = useState("");
+  const [openedPlaytestJobId, setOpenedPlaytestJobId] = useState("");
   const pageHeading = useRef<HTMLHeadingElement>(null);
   const setupWasResolved = useRef(false);
   const refreshInFlight = useRef(false);
@@ -2150,6 +2318,7 @@ export default function App() {
     try {
       const results = await Promise.allSettled([
         loadStatus().then(setStatus),
+        loadAccountStatus().then(setAccount),
         loadJobs().then(setJobs),
         loadModels().then(setModels),
         loadResources().then(setResources),
@@ -2183,16 +2352,20 @@ export default function App() {
     () => jobs.filter((job) => !job.kind.startsWith("dependency.")),
     [jobs],
   );
+  const userModels = useMemo(
+    () => models.filter((model) => model.source !== "local-frozen-checkpoint"),
+    [models],
+  );
   const running = resources?.workers.length ?? activityJobs.filter((job) => job.status === "running").length;
   const stackReady = Boolean(status?.engine.healthy && status?.pixi.built);
-  const activePlaytest = jobs.find(
+  const activePlaytest = openedPlaytestJobId ? jobs.find(
     (job) =>
+      job.id === openedPlaytestJobId &&
       job.kind === "playtest.agent" &&
       job.status === "running" &&
-      job.details?.sessionId &&
-      job.details.sessionId !== closedPlaytestSession,
-  );
-  const accountReady = Boolean(status?.hosted.api_key_configured);
+      job.details?.sessionId,
+  ) : undefined;
+  const accountReady = account?.valid === true;
   const setupReady = Boolean(
     accountReady && status?.engine.synced && status?.pixi.synced,
   );
@@ -2225,7 +2398,7 @@ export default function App() {
         <PixiErrorBoundary
           key={activePlaytest.details.sessionId}
           onClose={() => {
-            setClosedPlaytestSession(activePlaytest.details?.sessionId ?? "");
+            setOpenedPlaytestJobId("");
             void stopJob(activePlaytest.id).then(refresh);
           }}
         >
@@ -2239,7 +2412,7 @@ export default function App() {
               sessionId={activePlaytest.details.sessionId}
               matchup={`${activePlaytest.details.playerDeck?.name ?? "Your deck"} vs ${activePlaytest.details.opponentDeck?.name ?? "AI deck"}`}
               onClose={() => {
-                setClosedPlaytestSession(activePlaytest.details?.sessionId ?? "");
+                setOpenedPlaytestJobId("");
                 void stopJob(activePlaytest.id).then(refresh);
               }}
             />
@@ -2360,8 +2533,8 @@ export default function App() {
                 ))}
               </div>
             </section>
-            <WorkspaceSummary status={status} />
-            <AccountSetup status={status} refresh={refresh} />
+            <WorkspaceSummary status={status} account={account} />
+            <AccountSetup status={status} account={account} refresh={refresh} />
             {activityJobs.length > 0 && (
               <JobsPanel jobs={activityJobs} refresh={refresh} />
             )}
@@ -2374,26 +2547,26 @@ export default function App() {
                 <span><b>1</b><span><strong>Application setup</strong><small>API key, Engine and Pixi</small></span></span>
                 <span className="flow-section-state">{setupReady ? "Ready" : "Action required"}<i>{setupOpen ? "−" : "+"}</i></span>
               </button>
-              {setupOpen && <div className="flow-section-body"><AccountSetup status={status} refresh={refresh} /><DependencyPanel status={status} jobs={jobs} refresh={refresh} /></div>}
+              {setupOpen && <div className="flow-section-body"><AccountSetup status={status} account={account} refresh={refresh} /><DependencyPanel status={status} jobs={jobs} refresh={refresh} /></div>}
             </section>
 
             <section className="flow-section">
               <button className="flow-section-toggle" type="button" aria-expanded={trainingOpen} onClick={() => setTrainingOpen(!trainingOpen)}>
                 <span><b>2</b><span><strong>Your agents</strong><small>Review trained agents and past runs</small></span></span>
-                <span className="flow-section-state">{models.length} local model{models.length === 1 ? "" : "s"}<i>{trainingOpen ? "−" : "+"}</i></span>
+                <span className="flow-section-state">{userModels.length} agent{userModels.length === 1 ? "" : "s"}<i>{trainingOpen ? "−" : "+"}</i></span>
               </button>
               {trainingOpen && <div className="flow-section-body">
                 <div className="agent-toolbar">
                   <div><span className="eyebrow">Your AI</span><h2>Configured agents</h2><p>Identity, architecture, owned weights and the immutable deck pool each agent consumes.</p></div>
                   <button className="primary" type="button" onClick={() => setCreatingTraining(!creatingTraining)}>{creatingTraining ? "Cancel" : "+ New agent"}</button>
                 </div>
-                <AgentCatalog models={models} resources={resources} refresh={refresh} />
-                {creatingTraining && <div className="new-training"><LocalTrainingForm status={status} refresh={refresh} /></div>}
+                <AgentCatalog models={userModels} resources={resources} refresh={refresh} />
+                {creatingTraining && <div className="new-training"><LocalTrainingForm status={status} account={account} refresh={refresh} /></div>}
               </div>}
             </section>
           </>
         )}
-        {page === "jobs" && <JobsDashboard status={status} models={models} resources={resources} jobs={activityJobs} games={games} refresh={refresh} />}
+        {page === "jobs" && <JobsDashboard account={account} models={userModels} resources={resources} jobs={activityJobs} games={games} refresh={refresh} onOpenGame={(game) => { if (game.jobId) { setOpenedPlaytestJobId(game.jobId); setPage("playtest"); } }} />}
         {page === "playtest" && (
           <>
             <WorkflowJourney
@@ -2406,7 +2579,7 @@ export default function App() {
             />
             <DependencyPanel status={status} jobs={jobs} refresh={refresh} />
             {stackReady ? (
-              <PlaytestForm status={status} models={models} refresh={refresh} />
+              <PlaytestForm status={status} models={userModels} refresh={refresh} onStarted={setOpenedPlaytestJobId} />
             ) : (
               <LockedNextStep />
             )}
@@ -2427,7 +2600,7 @@ export default function App() {
             />
             <MatchmakingForm
               status={status}
-              models={models}
+              models={userModels}
               refresh={refresh}
             />
             {activityJobs.length > 0 && (

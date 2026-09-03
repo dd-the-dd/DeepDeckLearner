@@ -1,10 +1,70 @@
 import { describe, expect, test, vi } from "vitest";
 
-vi.mock("@deepdeck/pixi", () => ({}));
+vi.mock("@deepdeck/pixi", () => ({
+  pixiCombatLinks: (combat: {
+    attackers?: Array<{
+      attackerId: string;
+      defender?: {
+        permanent?: { instanceId: string };
+        player?: { playerId: string };
+      };
+    }>;
+    blockers?: Array<{ attackerId: string; blockerId: string }>;
+  } = {}) => [
+    ...(combat.attackers ?? []).map((assignment) => ({
+      kind: "attack",
+      sourceCardId: assignment.attackerId,
+      targetCardId: assignment.defender?.permanent?.instanceId ?? "",
+      targetPlayerId: assignment.defender?.player?.playerId ?? "",
+    })),
+    ...(combat.blockers ?? []).map((assignment) => ({
+      kind: "block",
+      sourceCardId: assignment.blockerId,
+      targetCardId: assignment.attackerId,
+      targetPlayerId: "",
+    })),
+  ],
+}));
 
-import { pixiScene } from "./LocalPixiRenderer";
+import { pixiScene, visibleCardNameChoices } from "./LocalPixiRenderer";
 
 describe("Pixi local-seat projection", () => {
+  test("offers only visible hand, graveyard, and exile cards as clickable names", () => {
+    const choices = visibleCardNameChoices({
+      players: [
+        {
+          key: "local-human",
+          role: "human",
+          zones: {
+            exile: { cards: [{ id: "exiled", name: "Swords to Plowshares" }] },
+            graveyard: { cards: [{ id: "buried", name: "Cabal Therapy" }] },
+            hand: [{ id: "mine", name: "Ponder" }],
+            libraryTop: { id: "known-top", name: "Brainstorm" },
+          },
+        },
+        {
+          key: "opponent",
+          role: "ai",
+          zones: {
+            exile: { cards: [] },
+            graveyard: { cards: [] },
+            hand: [
+              { id: "known", knownToViewer: true, name: "Force of Will" },
+              { id: "hidden", name: "Daze" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(choices.map((card) => (card as { name: string }).name)).toEqual([
+      "Cabal Therapy",
+      "Swords to Plowshares",
+      "Ponder",
+      "Force of Will",
+    ]);
+  });
+
   test("shows the local hand and turns every opponent hand card face down", () => {
     const scene = pixiScene({
       players: [
@@ -103,6 +163,36 @@ describe("Pixi local-seat projection", () => {
     });
   });
 
+  test("shows a known library top face up with its knowledge marker", () => {
+    const scene = pixiScene({
+      players: [{
+        key: "local-agent",
+        life: 20,
+        name: "AI",
+        role: "ai",
+        zones: {
+          battlefield: {},
+          hand: [],
+          libraryCount: 42,
+          libraryTop: {
+            id: "known-top",
+            imageUrl: "known-top.jpg",
+            knownToViewer: true,
+            name: "Force of Will",
+          },
+        },
+      }],
+      state: { outcome: null },
+      step: null,
+    });
+
+    expect(scene.players[0].zones[2].cards[0]).toMatchObject({
+        faceDown: false,
+        imageUrl: "known-top.jpg",
+        knownToViewer: true,
+      });
+  });
+
   test("marks existing table entities as visual targets while targeting", () => {
     const scene = pixiScene({
       players: [
@@ -147,6 +237,17 @@ describe("Pixi local-seat projection", () => {
     expect(scene.players[1].targetable).toBe(true);
     expect(scene.stack[0].targetable).toBe(true);
     expect(scene.controls.canPassPriority).toBe(false);
+    expect(scene.controls.advanceLabel).toBe("Choose a highlighted target");
+  });
+
+  test("does not ask for a highlighted object when the choice is abstract", () => {
+    const scene = pixiScene({
+      players: [],
+      state: { outcome: null },
+      step: null,
+    });
+
+    expect(scene.controls.advanceLabel).toBe("Use the decision panel");
   });
 
   test("projects the click order onto cards already visible on the table", () => {
@@ -173,5 +274,33 @@ describe("Pixi local-seat projection", () => {
 
     expect(scene.players[0].hand[0].selectionOrder).toBe(2);
     expect(scene.players[0].hand[1].selectionOrder).toBe(1);
+  });
+
+  test("turns Engine combat assignments into Pixi attack and block arrows", () => {
+    const scene = pixiScene({
+      combat: {
+        attackers: [{
+          attackerId: "attacker",
+          defender: { player: { playerId: "opponent" } },
+        }],
+        blockers: [{ attackerId: "attacker", blockerId: "blocker" }],
+      },
+      players: [],
+      state: { outcome: null },
+      step: null,
+    });
+
+    expect(scene.combat).toEqual([
+      expect.objectContaining({
+        kind: "attack",
+        sourceCardId: "attacker",
+        targetPlayerId: "opponent",
+      }),
+      expect.objectContaining({
+        kind: "block",
+        sourceCardId: "blocker",
+        targetCardId: "attacker",
+      }),
+    ]);
   });
 });

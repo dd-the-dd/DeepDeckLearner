@@ -46,6 +46,25 @@ def test_catalog_routes_keep_deck_identifiers_behind_named_results(
     assert response.json()["items"][0]["name"] == "Reanimator"
 
 
+def test_card_name_autocomplete_uses_scryfall_without_game_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    searches: list[str] = []
+    monkeypatch.setattr(
+        learner_app,
+        "scryfall_card_names",
+        lambda query: searches.append(query) or ["Force of Will", "Force of Negation"],
+    )
+
+    response = TestClient(create_app(tmp_path)).get(
+        "/api/v1/catalog/cards/autocomplete?query=Force"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"data": ["Force of Will", "Force of Negation"]}
+    assert searches == ["Force"]
+
+
 def test_local_deck_presentation_keeps_normal_token_and_double_faced_art(
     tmp_path: Path,
 ) -> None:
@@ -267,4 +286,138 @@ def test_model_resources_and_deck_statistics_are_local_and_persistent(tmp_path: 
     snapshot = client.get("/api/v1/resources").json()
     assert snapshot["system"]["ramTotalBytes"] > 0
     assert snapshot["engine"]["activeLocalGames"] == 0
+
+
+def test_agent_files_can_be_deleted_with_an_explicit_authorized_request(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / ".deepdeck" / "runs" / "retired-model"
+    checkpoint = run / "live" / "retired-model-id"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "checkpoint.pt").write_bytes(b"weights")
+    (run / "local-model.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "local-model/v1",
+                "id": "retired-model-id",
+                "name": "Retired Model",
+                "architecture": "v12",
+                "format": "legacy",
+                "checkpointPath": str(checkpoint),
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(tmp_path))
+    token = client.get("/api/v1/session").json()["token"]
+
+    response = client.delete(
+        "/api/v1/models/retired-model-id",
+        headers={"X-DeepDeck-Token": token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+    assert response.json()["reclaimedBytes"] >= len(b"weights")
+    assert not run.exists()
+
+
+def test_live_training_games_are_visible_and_cancelled_with_the_raw_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path / ".deepdeck" / "runs" / "live-model"
+    run.mkdir(parents=True)
+    (run / "local-model.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "local-model/v1",
+                "id": "live-model-id",
+                "name": "Live Model",
+                "architecture": "v12",
+                "format": "legacy",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run / "league-state.json").write_text(
+        json.dumps(
+            {
+                "processId": os.getpid(),
+                "completed_episodes": 12,
+                "trainingStep": 4,
+                "parallelGameWorkers": 2,
+                "trainingPhase": "collecting",
+                "desiredState": "running",
+                "activeAttempts": [
+                    {
+                        "sessionId": "game-session:9",
+                        "worker": 1,
+                        "status": "collecting",
+                        "opponentMode": "self",
+                        "decks": ["Reanimator", "Reanimator"],
+                        "players": 2,
+                        "turnNumber": 3,
+                        "decisions": 8,
+                    },
+                    {
+                        "sessionId": "game-session:finished",
+                        "worker": 2,
+                        "status": "optimizingWeights",
+                        "opponentMode": "self",
+                        "decks": ["Delver", "Delver"],
+                        "players": 2,
+                        "turnNumber": 18,
+                        "decisions": 240,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run / "training.jsonl").write_text(
+        json.dumps(
+            {
+                "episode": 12,
+                "trainingStep": 4,
+                "gameDurationSeconds": 18.5,
+                "ppo": {"loss": 0.25, "entropy": 0.7},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cancelled_urls: list[str] = []
+
+    class EngineResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    def cancel_engine_game(url: str, **_: object) -> EngineResponse:
+        cancelled_urls.append(url)
+        return EngineResponse()
+
+    monkeypatch.setattr("deepdeck_learner.jobs.httpx.delete", cancel_engine_game)
+    client = TestClient(create_app(tmp_path))
+    token = client.get("/api/v1/session").json()["token"]
+
+    game = client.get("/api/v1/games").json()["items"][0]
+    assert len(client.get("/api/v1/games").json()["items"]) == 1
+    statistic = client.get("/api/v1/statistics/training").json()["items"][0]
+    stopped = client.post(
+        "/api/v1/games/game-session%3A9/stop",
+        headers={"X-DeepDeck-Token": token},
+    )
+
+    assert game["sessionId"] == "game-session:9"
+    assert game["mode"] == "Self-play"
+    assert statistic["completedGames"] == 12
+    assert statistic["averageGameSeconds"] == 18.5
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "cancelled"
+    assert cancelled_urls == [
+        "http://127.0.0.1:8787/game/sessions/game-session:9"
+    ]
 

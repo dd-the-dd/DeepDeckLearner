@@ -90,6 +90,11 @@ const resources = {
 
 function readResponse(url: string, currentStatus: CapabilityStatus = status) {
   if (url.endsWith("/api/v1/status")) return response(currentStatus);
+  if (url.endsWith("/api/v1/account/status")) return response({
+    configured: currentStatus.hosted.api_key_configured,
+    valid: currentStatus.hosted.api_key_configured,
+    reason: currentStatus.hosted.api_key_configured ? "League account connected." : "Add an agent API key.",
+  });
   if (url.endsWith("/api/v1/models")) return response({ items: [] });
   if (url.endsWith("/api/v1/resources")) return response(resources);
   if (url.endsWith("/api/v1/games")) return response({ items: [] });
@@ -126,6 +131,58 @@ describe("guided onboarding", () => {
       screen.queryByRole("heading", { name: "What do you want to do?" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "League" })).not.toBeInTheDocument();
+  });
+
+  test("does not reopen a recovered local game when the site loads", async () => {
+    const recoveredPlaytest: Job = {
+      id: "recovered-playtest",
+      kind: "playtest.agent",
+      label: "Recovered local game",
+      argv: [],
+      status: "running",
+      created_at: "2026-08-31T00:00:00Z",
+      started_at: "2026-08-31T00:00:01Z",
+      finished_at: null,
+      exit_code: null,
+      artifact_path: null,
+      logs: [],
+      model_id: "local-model",
+      worker_slots: 1,
+      details: {
+        sessionId: "game-session:6",
+        engineUrl: "http://127.0.0.1:8787",
+      },
+    };
+    const occupiedResources = {
+      ...resources,
+      workers: [{
+        jobId: recoveredPlaytest.id,
+        modelId: "local-model",
+        label: recoveredPlaytest.label,
+        kind: recoveredPlaytest.kind,
+        pids: [123],
+        workerSlots: 1,
+        ramBytes: 100,
+        gpuBytes: null,
+        ramPerWorkerEstimate: 100,
+        gpuPerWorkerEstimate: null,
+      }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/v1/jobs")) return response([recoveredPlaytest]);
+        if (url.endsWith("/api/v1/resources")) return response(occupiedResources);
+        return readResponse(url);
+      }),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("1 running")).toBeInTheDocument();
+    expect(screen.queryByText("Opening Pixi…")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Local playable table")).not.toBeInTheDocument();
   });
 
   test("one local setup button requests the composite controller job", async () => {
@@ -323,6 +380,63 @@ describe("guided onboarding", () => {
     });
   });
 
+  test("rotates League connections across all valid format decks", async () => {
+    const readyStatus: CapabilityStatus = {
+      ...status,
+      hosted: { ...status.hosted, api_key_configured: true },
+    };
+    const model = {
+      id: "league-agent",
+      name: "League Agent",
+      architecture: "v12",
+      format: "legacy",
+      description: "Legacy agent",
+      createdAt: "2026-08-30T00:00:00Z",
+      runPath: "run-league",
+      checkpointPath: "checkpoint-league",
+      status: "running",
+      ready: true,
+      reservePlaytest: true,
+      decks: [],
+    };
+    const leagueDecks = [
+      { id: "deck-one", name: "Deck One", version: 1, format: "legacy", colors: [], playableCardCount: 60 },
+      { id: "deck-two", name: "Deck Two", version: 1, format: "legacy", colors: [], playableCardCount: 60 },
+      { id: "deck-three", name: "Deck Three", version: 1, format: "legacy", colors: [], playableCardCount: 60 },
+    ];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/status")) return response(readyStatus);
+      if (url.endsWith("/api/v1/account/status")) return response({ configured: true, valid: true, reason: "Connected" });
+      if (url.endsWith("/api/v1/models")) return response({ items: [model] });
+      if (url.includes("/api/v1/catalog/decks?")) return response({ items: leagueDecks, pagination: { page: 1, totalPages: 1 } });
+      if (url.endsWith("/api/v1/catalog/competitions")) return response({ items: [{ versionId: "legacy-season", name: "Legacy season", status: "active", format: "legacy", timeControl: "standard" }] });
+      if (url.endsWith("/api/v1/models/league-agent/resources")) return response({ trainingMatches: 0, leagueMatches: 2, localMatches: 0, gpuMemoryMb: 0 });
+      if (url.endsWith("/api/v1/session")) return response({ token: "local-token" });
+      if (url.endsWith("/api/v1/jobs") && init?.method === "POST") return response(stackJob);
+      return readResponse(url, readyStatus);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Jobs/ }));
+    const deckModes = await screen.findByRole("group", { name: "Deck selection for League Agent" });
+    fireEvent.click(within(deckModes).getByRole("button", { name: "All legal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect allocated slots" }));
+
+    await waitFor(() => {
+      const payloads = fetchMock.mock.calls
+        .filter(([input, init]) => String(input).endsWith("/api/v1/jobs") && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body)));
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]).toMatchObject({
+        connections: 2,
+        deck_version_ids: ["deck-one", "deck-two", "deck-three"],
+        speed: "1s",
+      });
+    });
+  });
+
   test("downloads selected training decks without substituting smoke data", async () => {
     const trainingStatus: CapabilityStatus = {
       ...status,
@@ -394,6 +508,62 @@ describe("guided onboarding", () => {
           && init?.method === "POST"
           && JSON.parse(String(init.body)).kind === "training.smoke";
       })).toBe(false);
+    });
+  });
+
+  test("edits an existing agent and adds a deck without replacing its weights", async () => {
+    const readyStatus: CapabilityStatus = {
+      ...status,
+      hosted: { ...status.hosted, api_key_configured: true },
+    };
+    const firstDeck = { id: "deck-one", name: "Deck One", version: 1, format: "legacy", colors: [], playableCardCount: 60 };
+    const secondDeck = { id: "deck-two", name: "Deck Two", version: 2, format: "legacy", colors: [], playableCardCount: 60 };
+    const model = {
+      id: "editable-agent",
+      name: "Editable Agent",
+      architecture: "v12",
+      format: "legacy",
+      description: "Legacy agent",
+      createdAt: "2026-09-01T00:00:00Z",
+      runPath: "existing-run",
+      checkpointPath: "existing-checkpoint",
+      status: "stopped",
+      ready: true,
+      reservePlaytest: true,
+      selfPlayAllSeats: true,
+      decks: [firstDeck],
+      diskBytes: 1024,
+      weightsBytes: 512,
+      trainingState: { completedGames: 10, trainingStep: 2, parallelGames: 1, activeGames: 0 },
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/status")) return response(readyStatus);
+      if (url.endsWith("/api/v1/account/status")) return response({ configured: true, valid: true, reason: "Connected" });
+      if (url.endsWith("/api/v1/models") && !init?.method) return response({ items: [model] });
+      if (url.includes("/api/v1/catalog/decks?")) return response({ items: [firstDeck, secondDeck] });
+      if (url.endsWith("/api/v1/catalog/decks/deck-two/download") && init?.method === "POST") return response({ versionId: "deck-two", name: "Deck Two", format: "legacy", cardCount: 60, rawCardCount: 60, path: "deck-two.json" });
+      if (url.endsWith("/api/v1/models/editable-agent") && init?.method === "PUT") return response({ ...model, name: "Renamed Agent", decks: [firstDeck, secondDeck] });
+      if (url.endsWith("/api/v1/session")) return response({ token: "local-token" });
+      return readResponse(url, readyStatus);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit agent and decks" }));
+    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Renamed Agent" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Deck Two/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save agent" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(([input, init]) =>
+        String(input).endsWith("/api/v1/models/editable-agent") && init?.method === "PUT",
+      );
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        name: "Renamed Agent",
+        decks: [{ id: "deck-one" }, { id: "deck-two" }],
+      });
     });
   });
 });

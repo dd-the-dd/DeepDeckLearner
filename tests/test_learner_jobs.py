@@ -9,7 +9,8 @@ import httpx
 import pytest
 import yaml
 
-from deepdeck_learner.jobs import JobManager, JobValidationError, is_loopback_url
+from deepdeck_learner.card_models import enrich_card_characteristics, oracle_request
+from deepdeck_learner.jobs import Job, JobManager, JobValidationError, is_loopback_url
 
 
 def local_checkpoint(root: Path, architecture: str = "v12") -> Path:
@@ -67,6 +68,29 @@ def test_loopback_url_validation() -> None:
     assert is_loopback_url("http://localhost:8787")
     assert not is_loopback_url("https://deepdeckleague.com")
     assert not is_loopback_url("file:///tmp/engine")
+
+
+def test_league_match_markers_track_only_active_matches(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    job = Job(
+        id="league-job",
+        kind="matchmaking.agent",
+        label="My agent",
+        argv=[],
+        status="running",
+    )
+
+    manager._consume_process_marker(  # noqa: SLF001
+        job,
+        'DEEPDECK_LEAGUE_MATCH {"matchId":"match-1","status":"running"}',
+    )
+    assert job.details == {"leagueMatches": [{"matchId": "match-1", "status": "running"}]}
+
+    manager._consume_process_marker(  # noqa: SLF001
+        job,
+        'DEEPDECK_LEAGUE_MATCH {"matchId":"match-1","status":"complete"}',
+    )
+    assert job.details == {"leagueMatches": []}
 
 
 def test_smoke_command_is_argv_and_uses_current_python(tmp_path: Path) -> None:
@@ -303,6 +327,78 @@ def test_playtest_restores_missing_creature_stats_from_scryfall(
     }
 
 
+def test_modal_double_faced_card_characteristics_are_refreshed_from_scryfall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_path = tmp_path / ".deepdeck" / "scryfall-card-characteristics.json"
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "scryfall-card-characteristics/v1",
+                "cards": {"witch": {"power": "2", "toughness": "2"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def scryfall_collection(url: str, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "witch",
+                        "layout": "modal_dfc",
+                        "card_faces": [
+                            {
+                                "name": "Witch Enchanter",
+                                "type_line": "Creature - Human Warlock",
+                                "mana_cost": "{3}{W}",
+                                "oracle_text": (
+                                    "When Witch Enchanter enters, destroy target artifact "
+                                    "or enchantment an opponent controls."
+                                ),
+                                "power": "2",
+                                "toughness": "2",
+                            },
+                            {
+                                "name": "Witch-Blessed Meadow",
+                                "type_line": "Land",
+                                "mana_cost": "",
+                                "oracle_text": "Witch-Blessed Meadow enters tapped.\n{T}: Add {W}.",
+                            },
+                        ],
+                    }
+                ]
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr("deepdeck_learner.card_models.httpx.post", scryfall_collection)
+    [witch] = enrich_card_characteristics(
+        tmp_path,
+        [
+            {
+                "cardId": "witch-card",
+                "scryfallId": "witch",
+                "name": "Witch Enchanter // Witch-Blessed Meadow",
+                "typeLine": "Creature - Human Warlock // Land",
+                "power": "2",
+                "toughness": "2",
+                "imageBackUri": "https://example.test/witch-back.jpg",
+            }
+        ],
+    )
+
+    assert witch["layout"] == "modal_dfc"
+    assert witch["faces"][0]["name"] == "Witch Enchanter"
+    assert witch["faces"][1]["name"] == "Witch-Blessed Meadow"
+    assert witch["faces"][1]["typeLine"] == "Land"
+    assert oracle_request(witch)["layout"] == "modal_dfc"
+    assert len(oracle_request(witch)["faces"]) == 2
+
+
 def test_playtest_resolves_player_random_deck_before_weighting_ai_deck(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -355,6 +451,30 @@ def test_matchmaking_uses_selected_catalog_values_without_exposing_ids_in_ui(
     assert manager._child_environment()["DEEPDECK_API_KEY"] == "ddl_agent_test"  # noqa: SLF001
 
 
+def test_matchmaking_coerces_unsupported_deep_learning_speed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEEPDECK_API_KEY", "ddl_agent_test")
+    manager = JobManager(tmp_path)
+    checkpoint = local_checkpoint(tmp_path)
+    argv, _, _ = manager._matchmaking_command(  # noqa: SLF001
+        {
+            "agent": "v12",
+            "model_id": "my-local-ai",
+            "checkpoint": str(checkpoint),
+            "speed": "100ms",
+            "connections": 2,
+            "competition_version_id": "competition-version",
+            "deck_version_ids": ["deck-version-a", "deck-version-b"],
+        }
+    )
+
+    assert argv[argv.index("--speed") + 1] == "1s"
+    assert argv[argv.index("--matchmaking-concurrency") + 1] == "2"
+    assert argv[argv.index("--deck-version-id") + 1] == "deck-version-a"
+    assert argv[argv.index("--additional-deck-version-id") + 1] == "deck-version-b"
+
+
 def test_matchmaking_requires_an_account_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -391,6 +511,7 @@ def test_dependency_commands_are_allowlisted(
     )
 
     assert engine[:2] == ["cargo", "run"]
+    assert "--release" in engine
     assert engine_label == "DeepDeckEngine local server"
     assert pixi[2:5] == ["deepdeck_learner.dependencies", "prepare-pixi", "--root"]
     assert pixi_label == "Prepare DeepDeckPixi"
@@ -427,6 +548,35 @@ def test_restart_does_not_reopen_a_detached_playtest_overlay() -> None:
     assert reconciled["status"] == "stopped"
     assert reconciled["finished_at"]
     assert "no longer attached" in reconciled["logs"][-1]
+
+
+def test_restart_keeps_a_playtest_visible_when_its_agent_process_is_alive() -> None:
+    setup = "D:/workspace/.deepdeck/playtests/live-game.json"
+    reconciled = JobManager._reconcile_persisted_job(  # noqa: SLF001
+        {
+            "id": "live-playtest",
+            "kind": "playtest.agent",
+            "status": "running",
+            "finished_at": None,
+            "argv": [
+                "python",
+                "-m",
+                "deepdeck_examples.run",
+                "v12",
+                "--start-local-game",
+                "--local-game-setup",
+                setup,
+            ],
+            "details": {"sessionId": "game-session:6"},
+        },
+        [
+            "python -m deepdeck_examples.run v12 --start-local-game "
+            f"--local-game-setup {setup.casefold()}"
+        ],
+    )
+
+    assert reconciled["status"] == "running"
+    assert reconciled["details"]["sessionId"] == "game-session:6"
 
 
 def test_pool_training_builds_local_catalog_and_parallel_config(tmp_path: Path) -> None:
@@ -471,6 +621,14 @@ def test_pool_training_builds_local_catalog_and_parallel_config(tmp_path: Path) 
                         "section": "sideboard",
                         "rules": [],
                     },
+                    {
+                        "cardId": "zombie-token",
+                        "name": "Zombie",
+                        "typeLine": "Token Creature — Zombie",
+                        "quantity": 1,
+                        "section": "sideboard",
+                        "rules": [],
+                    },
                 ]
             }
         ),
@@ -503,5 +661,112 @@ def test_pool_training_builds_local_catalog_and_parallel_config(tmp_path: Path) 
     assert config["learnerSettings"]["reservePlaytest"] is True
     assert config["learnerSettings"]["modelName"] == "Test Pilot"
     assert "deckSource" not in config
-    assert len(cards) == 3
-    assert cards[-1]["isSideboard"] is True
+    assert len(cards) == 4
+    assert cards[2]["isSideboard"] is True
+    assert cards[-1]["isToken"] is True
+    assert cards[-1]["isGamePiece"] is True
+
+
+def test_existing_training_catalog_repairs_unmarked_tokens(tmp_path: Path) -> None:
+    checkpoint = local_checkpoint(tmp_path)
+    run = checkpoint.parent.parent
+    (run / "training-config.yaml").write_text("parallelGameWorkers: 1\n", encoding="utf-8")
+    catalog_path = run / "training-decks.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["Player Pool Deck"].append(
+        {
+            "id": "zombie-token",
+            "name": "Zombie",
+            "typeLine": "Token Creature — Zombie",
+            "isSideboard": True,
+            "sourceSessionId": "pool-deck-1",
+        }
+    )
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    JobManager(tmp_path)._existing_pool_training_command("my-local-ai")  # noqa: SLF001
+
+    repaired = json.loads(catalog_path.read_text(encoding="utf-8"))
+    token = repaired["Player Pool Deck"][-1]
+    assert token["isToken"] is True
+    assert token["isGamePiece"] is True
+    config = yaml.safe_load((run / "training-config.yaml").read_text(encoding="utf-8"))
+    assert config["resumeOptimizer"] is True
+
+
+def test_existing_agent_can_update_its_name_modes_and_deck_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = local_checkpoint(tmp_path)
+    run = checkpoint.parent.parent
+    metadata_path = run / "local-model.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        {
+            "format": "legacy",
+            "reservePlaytest": True,
+            "selfPlayAllSeats": True,
+            "source": "user-trained",
+        }
+    )
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    (run / "training-config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "engineUrl": "http://127.0.0.1:8787",
+                "learnerSettings": {"modelId": "my-local-ai"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    deck_dir = tmp_path / ".deepdeck" / "decks"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "new-deck.json").write_text(
+        json.dumps(
+            {
+                "cards": [
+                    {
+                        "cardId": "new-island",
+                        "name": "Island",
+                        "typeLine": "Basic Land — Island",
+                        "quantity": 60,
+                        "section": "main",
+                        "rules": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = JobManager(tmp_path)
+    monkeypatch.setattr(manager, "_compile_oracle_rules", lambda *_: {})
+
+    updated_id = manager.update_model(
+        "my-local-ai",
+        {
+            "name": "Edited Local AI",
+            "decks": [
+                {
+                    "id": "new-deck",
+                    "name": "New Legacy Deck",
+                    "version": 3,
+                    "format": "legacy",
+                }
+            ],
+            "reservePlaytest": False,
+            "selfPlayAllSeats": False,
+        },
+    )
+
+    updated = json.loads(metadata_path.read_text(encoding="utf-8"))
+    config = yaml.safe_load((run / "training-config.yaml").read_text(encoding="utf-8"))
+    catalog = json.loads((run / "training-decks.json").read_text(encoding="utf-8"))
+    assert updated_id == "my-local-ai"
+    assert checkpoint.is_dir()
+    assert updated["name"] == "Edited Local AI"
+    assert updated["decks"][0]["id"] == "new-deck"
+    assert updated["reservePlaytest"] is False
+    assert updated["selfPlayAllSeats"] is False
+    assert config["learnerSettings"]["selectedDeckVersionIds"] == ["new-deck"]
+    assert config["trainingOpponentMix"] == {"self": 0.5, "anchor": 0.5}
+    assert len(next(iter(catalog.values()))) == 60

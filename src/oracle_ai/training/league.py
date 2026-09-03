@@ -178,8 +178,7 @@ def _evaluation_benchmark_opponents(
             raise ValueError("evaluation benchmark opponent id cannot be empty")
         if not (checkpoint / "manifest.json").is_file():
             raise ValueError(
-                f"evaluation benchmark {opponent_id} has no checkpoint manifest at "
-                f"{checkpoint}"
+                f"evaluation benchmark {opponent_id} has no checkpoint manifest at {checkpoint}"
             )
         if port in used_ports:
             raise ValueError(f"evaluation benchmark port {port} is already in use")
@@ -311,9 +310,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -374,15 +371,11 @@ def _restore_league_state(
     training_records = _read_jsonl(output / "training.jsonl")
     error_records = _read_jsonl(output / "training-errors.jsonl")
     state.completed_episodes = max(
-        [state.completed_episodes]
-        + [int(record.get("episode", 0)) for record in training_records]
+        [state.completed_episodes] + [int(record.get("episode", 0)) for record in training_records]
     )
     state.attempted_episodes = max(
         [state.attempted_episodes]
-        + [
-            int(record.get("attempt", 0))
-            for record in [*training_records, *error_records]
-        ]
+        + [int(record.get("attempt", 0)) for record in [*training_records, *error_records]]
     )
     return state, _read_jsonl(output / "evaluations.jsonl")
 
@@ -410,9 +403,7 @@ def _deck_catalog(config: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 if str(creator).strip()
             ]
             if not creators:
-                raise ValueError(
-                    "metaLegacyDeckSelection requires at least one creator"
-                )
+                raise ValueError("metaLegacyDeckSelection requires at least one creator")
             command.extend(f"--creator={creator}" for creator in creators)
         result = subprocess.run(
             command,
@@ -432,9 +423,7 @@ def _deck_catalog(config: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         return {}
     catalog = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(catalog, dict):
-        raise ValueError(
-            "deck catalog must contain a mapping of deck names to card lists"
-        )
+        raise ValueError("deck catalog must contain a mapping of deck names to card lists")
     return catalog
 
 
@@ -458,11 +447,15 @@ def _deck_catalog_revision(config: dict[str, Any]) -> str | None:
     except (httpx.HTTPError, ValueError, AttributeError):
         return None
     meta_legacy = config.get("metaLegacyDeckSelection", {})
-    selected_creators = {
-        str(creator).strip().casefold()
-        for creator in meta_legacy.get("creators", [])
-        if str(creator).strip()
-    } if bool(meta_legacy.get("enabled", False)) else set()
+    selected_creators = (
+        {
+            str(creator).strip().casefold()
+            for creator in meta_legacy.get("creators", [])
+            if str(creator).strip()
+        }
+        if bool(meta_legacy.get("enabled", False))
+        else set()
+    )
     meta_decks = [
         {
             "id": session.get("id"),
@@ -474,8 +467,7 @@ def _deck_catalog_revision(config: dict[str, Any]) -> str | None:
         if session.get("isMetaDeck") is True
         and (
             not selected_creators
-            or str(session.get("creator", "")).strip().casefold()
-            in selected_creators
+            or str(session.get("creator", "")).strip().casefold() in selected_creators
         )
     ]
     meta_decks.sort(key=lambda session: (str(session["id"]), str(session["name"])))
@@ -488,9 +480,7 @@ def _deck_catalog_revision(config: dict[str, Any]) -> str | None:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _setup(
-    item: dict[str, Any], decks: dict[str, list[dict[str, Any]]]
-) -> dict[str, Any]:
+def _setup(item: dict[str, Any], decks: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     if "setup" in item:
         return item["setup"]
     deck_names = item.get("decks", [])
@@ -542,9 +532,7 @@ def _matchup(
         max_turns=int(item.get("maxTurns", 200)),
         mulligan_enabled=bool(item.get("mulliganEnabled", True)),
         free_mulligans=int(item.get("freeMulligans", 0)),
-        max_mulligans=(
-            int(item["maxMulligans"]) if item.get("maxMulligans") is not None else None
-        ),
+        max_mulligans=(int(item["maxMulligans"]) if item.get("maxMulligans") is not None else None),
         game_mode=str(item.get("gameMode", "free")),
         deck_names=deck_names,
         deck_session_ids=tuple(_deck_session_id(decks[name]) for name in deck_names),
@@ -584,14 +572,9 @@ def _commander_deck_is_legal(cards: list[dict[str, Any]]) -> bool:
     deck_cards = [
         card
         for card in cards
-        if not bool(card.get("isSideboard"))
-        and not bool(card.get("isGamePiece"))
-        and not bool(card.get("isToken"))
+        if not bool(card.get("isSideboard")) and not _is_auxiliary_game_piece(card)
     ]
-    if (
-        len(deck_cards) != 100
-        or sum(bool(card.get("isCommander")) for card in deck_cards) != 1
-    ):
+    if len(deck_cards) != 100 or sum(bool(card.get("isCommander")) for card in deck_cards) != 1:
         return False
     non_basic_names = [
         str(card.get("name", "")).strip().casefold()
@@ -606,21 +589,26 @@ def _legacy_deck_is_candidate(cards: list[dict[str, Any]]) -> bool:
     main_deck = [
         card
         for card in cards
-        if not bool(card.get("isSideboard"))
-        and not bool(card.get("isGamePiece"))
-        and not bool(card.get("isToken"))
+        if not bool(card.get("isSideboard")) and not _is_auxiliary_game_piece(card)
     ]
     sideboard = [
         card
         for card in cards
-        if bool(card.get("isSideboard"))
-        and not bool(card.get("isGamePiece"))
-        and not bool(card.get("isToken"))
+        if bool(card.get("isSideboard")) and not _is_auxiliary_game_piece(card)
     ]
     return (
         len(main_deck) >= 60
         and len(sideboard) <= 15
         and not any(bool(card.get("isCommander")) for card in cards)
+    )
+
+
+def _is_auxiliary_game_piece(card: dict[str, Any]) -> bool:
+    type_line = str(card.get("typeLine", "")).strip().casefold()
+    return (
+        bool(card.get("isGamePiece"))
+        or bool(card.get("isToken"))
+        or type_line.startswith(("token ", "emblem", "dungeon"))
     )
 
 
@@ -659,15 +647,11 @@ class RandomTrainingMatchupSampler:
                 "training scenario randomizer formatSampling must be random or roundRobin"
             )
         self.format_sample_index = 0
-        self.player_counts = [
-            int(value) for value in config.get("playerCounts", [2, 3, 4])
-        ]
+        self.player_counts = [int(value) for value in config.get("playerCounts", [2, 3, 4])]
         if not self.player_counts or any(
             player_count < 2 or player_count > 4 for player_count in self.player_counts
         ):
-            raise ValueError(
-                "training scenario randomizer player counts must be 2 to 4"
-            )
+            raise ValueError("training scenario randomizer player counts must be 2 to 4")
         free_config = config.get("free", {})
         self.free_life_range = self._integer_range(
             free_config.get("startingLifeRange", [20, 40]),
@@ -695,13 +679,9 @@ class RandomTrainingMatchupSampler:
         self.matchmaking_rating_scale = float(
             matchmaking.get("ratingScale", matchmaking.get("eloScale", 10.0))
         )
-        self.matchmaking_underplayed_strength = float(
-            matchmaking.get("underplayedStrength", 0.35)
-        )
+        self.matchmaking_underplayed_strength = float(matchmaking.get("underplayedStrength", 0.35))
         self.matchmaking_match_prior = float(matchmaking.get("matchPrior", 10.0))
-        self.matchmaking_plackett_luce_beta = float(
-            matchmaking.get("plackettLuceBeta", 25.0 / 6.0)
-        )
+        self.matchmaking_plackett_luce_beta = float(matchmaking.get("plackettLuceBeta", 25.0 / 6.0))
         self.matchmaking_plackett_luce_learning_rate = float(
             matchmaking.get("plackettLuceLearningRate", 1.0)
         )
@@ -724,9 +704,7 @@ class RandomTrainingMatchupSampler:
         self.legacy_deck_names = [
             name for name in self.deck_names if _legacy_deck_is_candidate(decks[name])
         ]
-        if {"commander", "training2"}.intersection(
-            self.formats
-        ) and not self.commander_deck_names:
+        if {"commander", "training2"}.intersection(self.formats) and not self.commander_deck_names:
             raise ValueError(
                 "Commander and Training 2 require a 100-card deck with exactly one commander"
             )
@@ -785,9 +763,7 @@ class RandomTrainingMatchupSampler:
             max_mulligans=max_mulligans,
             game_mode=game_format,
             deck_names=tuple(lineup),
-            deck_session_ids=tuple(
-                _deck_session_id(self.decks[deck_name]) for deck_name in lineup
-            ),
+            deck_session_ids=tuple(_deck_session_id(self.decks[deck_name]) for deck_name in lineup),
         )
 
     def _eligible_decks(self, game_format: str) -> list[str]:
@@ -803,9 +779,7 @@ class RandomTrainingMatchupSampler:
         game_format = self.formats[0]
         eligible_decks = self._eligible_decks(game_format)
         player_count = 2 if game_format == "legacy" else self.player_counts[0]
-        lineup = [
-            eligible_decks[index % len(eligible_decks)] for index in range(player_count)
-        ]
+        lineup = [eligible_decks[index % len(eligible_decks)] for index in range(player_count)]
         if game_format == "commander":
             starting_life = 40
             free_mulligans = 1
@@ -1074,9 +1048,7 @@ def _training_matrix_items(
     for player_count in player_counts:
         if player_count < 2 or player_count > 4:
             raise ValueError("training scenario matrix player counts must be 2 to 4")
-        for combination_index, lineup in enumerate(
-            combinations(deck_names, player_count)
-        ):
+        for combination_index, lineup in enumerate(combinations(deck_names, player_count)):
             for mulligan_index, free_mulligan_count in enumerate(free_mulligans):
                 items.append(
                     {
@@ -1085,8 +1057,7 @@ def _training_matrix_items(
                             + "-".join(_slug(name) for name in lineup)
                         ),
                         "decks": list(lineup),
-                        "startingPlayer": (combination_index + mulligan_index)
-                        % player_count,
+                        "startingPlayer": (combination_index + mulligan_index) % player_count,
                         "freeMulligans": free_mulligan_count,
                         "maxTurns": int(matrix.get("maxTurns", 80)),
                         "startingLife": int(matrix.get("startingLife", 20)),
@@ -1157,9 +1128,7 @@ def _evaluation_matrix_items(
             if game_format == "legacy" and player_count != 2:
                 continue
             if player_count < 2 or player_count > 4:
-                raise ValueError(
-                    "evaluation scenario matrix player counts must be 2 to 4"
-                )
+                raise ValueError("evaluation scenario matrix player counts must be 2 to 4")
             for candidate_index, candidate_deck in enumerate(eligible_decks):
                 opponents = [
                     eligible_decks[(candidate_index + offset) % len(eligible_decks)]
@@ -1175,9 +1144,7 @@ def _evaluation_matrix_items(
                     if game_format == "legacy"
                     else int(matrix.get("trainingFreeMulligans", 3))
                     if game_format == "training"
-                    else free_mulligans[
-                        (candidate_index + player_count) % len(free_mulligans)
-                    ]
+                    else free_mulligans[(candidate_index + player_count) % len(free_mulligans)]
                 )
                 scenario_prefix = {
                     "free": "eval-matrix",
@@ -1230,10 +1197,7 @@ def _evaluation_seed_map(
     games_per_scenario: int,
 ) -> dict[str, list[int]]:
     stream = UniqueSeedStream(seed)
-    return {
-        scenario_id: stream.take(games_per_scenario)
-        for scenario_id in sorted(scenarios)
-    }
+    return {scenario_id: stream.take(games_per_scenario) for scenario_id in sorted(scenarios)}
 
 
 def _write_learning_curve(evaluations: list[dict[str, Any]], output: Path) -> None:
@@ -1266,9 +1230,7 @@ def _write_learning_curve(evaluations: list[dict[str, Any]], output: Path) -> No
                     "training_step": evaluation["candidateTrainingStep"],
                     "champion_version": evaluation["opponentVersion"],
                     "candidate_win_rate": evaluation["summary"]["candidateWinRate"],
-                    "mean_rounds_to_win": evaluation["summary"][
-                        "meanRoundsToCandidateWin"
-                    ],
+                    "mean_rounds_to_win": evaluation["summary"]["meanRoundsToCandidateWin"],
                     "perfect_streak": evaluation["perfectStreakAfter"],
                     "promotion_count": evaluation["promotionCountAfter"],
                 }
@@ -1328,12 +1290,12 @@ def _write_learning_curve(evaluations: list[dict[str, Any]], output: Path) -> No
 <text x="28" y="{top + panel_height}" fill="#60a5fa" font-size="13">0%</text>
 <text x="18" y="{round_top + 16}" fill="#f59e0b" font-size="13">0 rounds</text>
 <text x="8" y="{round_top + panel_height}" fill="#f59e0b" font-size="13">{max_rounds:.1f} rounds</text>
-<polyline points="{' '.join(win_points)}" fill="none" stroke="#60a5fa" stroke-width="3"/>
-<polyline points="{' '.join(round_points)}" fill="none" stroke="#f59e0b" stroke-width="3"/>
-<g fill="#60a5fa">{''.join(f'<circle cx="{point.split(",")[0]}" cy="{point.split(",")[1]}" r="4"/>' for point in win_points)}</g>
+<polyline points="{" ".join(win_points)}" fill="none" stroke="#60a5fa" stroke-width="3"/>
+<polyline points="{" ".join(round_points)}" fill="none" stroke="#f59e0b" stroke-width="3"/>
+<g fill="#60a5fa">{"".join(f'<circle cx="{point.split(",")[0]}" cy="{point.split(",")[1]}" r="4"/>' for point in win_points)}</g>
 <text x="{left}" y="{top + panel_height + 28}" fill="#60a5fa" font-size="14">Candidate win rate</text>
 <text x="{left}" y="{round_top + panel_height + 28}" fill="#f59e0b" font-size="14">Mean rounds to candidate win</text>
-<g fill="#d1d5db">{''.join(labels)}</g>
+<g fill="#d1d5db">{"".join(labels)}</g>
 <text x="{width / 2}" y="{height - 4}" fill="#9ca3af" text-anchor="middle" font-size="12">Evaluation period (fixed seeds)</text>
 </svg>"""
     (output / "learning-curve.svg").write_text(svg, encoding="utf-8")
@@ -1357,9 +1319,7 @@ def _apply_promotion_result(
         return opponent_version, None
 
     next_version = state.champion_version + 1
-    champion_checkpoint = (
-        output / "champions" / f"ia-gt-{next_version}-step-{training_step}"
-    )
+    champion_checkpoint = output / "champions" / f"ia-gt-{next_version}-step-{training_step}"
     shutil.copytree(candidate_checkpoint, champion_checkpoint)
     state.champion_version = next_version
     state.champion_checkpoint = str(champion_checkpoint.resolve())
@@ -1430,9 +1390,7 @@ class LeagueTrainer:
         self.config = config
         self.output = Path(config.get("outputDir", "runs/oracle-ai-league"))
         self.output.mkdir(parents=True, exist_ok=True)
-        self.model_evaluation_enabled = bool(
-            config.get("modelEvaluationEnabled", True)
-        )
+        self.model_evaluation_enabled = bool(config.get("modelEvaluationEnabled", True))
         self.ground_truth_evaluation_enabled = bool(
             config.get("groundTruthEvaluationEnabled", True)
         )
@@ -1443,13 +1401,10 @@ class LeagueTrainer:
         if not isinstance(opponent_mix, dict):
             raise ValueError("trainingOpponentMix must be a mapping")
         self.training_opponent_mix = {
-            str(mode): float(weight)
-            for mode, weight in opponent_mix.items()
-            if float(weight) > 0.0
+            str(mode): float(weight) for mode, weight in opponent_mix.items() if float(weight) > 0.0
         }
         if not self.training_opponent_mix or any(
-            mode not in {"self", "v10", "anchor"}
-            for mode in self.training_opponent_mix
+            mode not in {"self", "v10", "anchor"} for mode in self.training_opponent_mix
         ):
             raise ValueError("trainingOpponentMix supports self, v10, and anchor")
         self.v10_opponent_client = (
@@ -1469,8 +1424,7 @@ class LeagueTrainer:
         ):
             raise ValueError("anchorDeadlineRounds must contain positive rounds")
         self.anchor_opening_hand_pool_sizes = tuple(
-            int(value)
-            for value in config.get("anchorOpeningHandPoolSizes", [20, 40, 60, 80, 100])
+            int(value) for value in config.get("anchorOpeningHandPoolSizes", [20, 40, 60, 80, 100])
         )
         if not self.anchor_opening_hand_pool_sizes or any(
             value < 7 for value in self.anchor_opening_hand_pool_sizes
@@ -1513,9 +1467,7 @@ class LeagueTrainer:
             self.output / "training-leaderboard.json",
             leaderboard_labels,
         )
-        self.training_participant_id = str(
-            config.get("trainingParticipantId", "v11")
-        ).strip()
+        self.training_participant_id = str(config.get("trainingParticipantId", "v11")).strip()
         if not self.training_participant_id:
             raise ValueError("trainingParticipantId cannot be empty")
         self.control_path = self.output / "training-control.json"
@@ -1556,9 +1508,7 @@ class LeagueTrainer:
         )
         self.hourly_gameplay_path = self.output / "training-gameplay-hourly.json"
         try:
-            self.hourly_gameplay = json.loads(
-                self.hourly_gameplay_path.read_text(encoding="utf-8")
-            )
+            self.hourly_gameplay = json.loads(self.hourly_gameplay_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             self.hourly_gameplay = {}
         decks = _deck_catalog(config)
@@ -1568,18 +1518,14 @@ class LeagueTrainer:
         if randomizer_config:
             randomizer_config = deepcopy(randomizer_config)
             matchmaking_config = randomizer_config.setdefault("matchmaking", {})
-            matchmaking_config.setdefault(
-                "plackettLuceBeta", self.training_leaderboard.beta
-            )
+            matchmaking_config.setdefault("plackettLuceBeta", self.training_leaderboard.beta)
             matchmaking_config.setdefault(
                 "plackettLuceLearningRate",
                 self.training_leaderboard.learning_rate,
             )
         self.training_randomizer_config = deepcopy(randomizer_config)
         self.training_matchup_sampler = (
-            RandomTrainingMatchupSampler(randomizer_config, decks)
-            if randomizer_config
-            else None
+            RandomTrainingMatchupSampler(randomizer_config, decks) if randomizer_config else None
         )
         if self.training_matchup_sampler is not None:
             self.training_matchup_sampler.validate_commander_decks(
@@ -1593,9 +1539,7 @@ class LeagueTrainer:
             self.training_matchups = _training_matchups(config, decks)
         evaluation_config = config.get("evaluation", {})
         self.evaluation_scenarios = (
-            _evaluation_scenarios(config, decks)
-            if self.model_evaluation_enabled
-            else {}
+            _evaluation_scenarios(config, decks) if self.model_evaluation_enabled else {}
         )
         self.evaluation_seed_map = (
             _evaluation_seed_map(
@@ -1607,13 +1551,9 @@ class LeagueTrainer:
             else {}
         )
         self.evaluation_benchmark_opponents = (
-            _evaluation_benchmark_opponents(config)
-            if self.model_evaluation_enabled
-            else []
+            _evaluation_benchmark_opponents(config) if self.model_evaluation_enabled else []
         )
-        evaluation_seeds = {
-            seed for seeds in self.evaluation_seed_map.values() for seed in seeds
-        }
+        evaluation_seeds = {seed for seeds in self.evaluation_seed_map.values() for seed in seeds}
         self.training_seed_stream = UniqueSeedStream(
             int(config.get("trainingSeed", config.get("seed", 20260729))),
             excluded=evaluation_seeds,
@@ -1650,9 +1590,7 @@ class LeagueTrainer:
         )
         self.gpu_memory_limit_mb = int(config.get("gpuMemoryLimitMb", 0))
         self.resource_plan_path = (
-            Path(str(config["learnerResourcePlan"]))
-            if config.get("learnerResourcePlan")
-            else None
+            Path(str(config["learnerResourcePlan"])) if config.get("learnerResourcePlan") else None
         )
         self._apply_gpu_memory_limit(self.gpu_memory_limit_mb)
         ppo_config = PPOConfig(**config.get("ppo", {}))
@@ -1682,7 +1620,7 @@ class LeagueTrainer:
             checkpoint_path = Path(resume_checkpoint)
             if not (checkpoint_path / "manifest.json").is_file():
                 resume_checkpoint = None
-        resume_optimizer = True
+        resume_optimizer = bool(config.get("resumeOptimizer", True))
         if resume_checkpoint:
             model, payload = load_checkpoint(Path(resume_checkpoint), self.device)
             if (
@@ -1711,7 +1649,7 @@ class LeagueTrainer:
             self.device,
         )
         if payload is not None:
-            if resume_optimizer:
+            if resume_optimizer and "optimizer" in payload:
                 self.learner.optimizer.load_state_dict(payload["optimizer"])
             self.learner.training_step = int(payload["training_step"])
         self.checkpoint_recovery: dict[str, Any] | None = None
@@ -1745,9 +1683,7 @@ class LeagueTrainer:
             if previous_signature != recovery_signature:
                 _append_jsonl(recoveries_path, self.checkpoint_recovery)
         self.parallel_game_workers = int(config.get("parallelGameWorkers", 1))
-        self.rollout_batch_games = int(
-            config.get("rolloutBatchGames", self.parallel_game_workers)
-        )
+        self.rollout_batch_games = int(config.get("rolloutBatchGames", self.parallel_game_workers))
         if self.parallel_game_workers <= 0:
             raise ValueError("parallelGameWorkers must be positive")
         if self.rollout_batch_games <= 0:
@@ -1762,9 +1698,7 @@ class LeagueTrainer:
         ]
         # Kept as a compatibility alias for diagnostics and existing callers.
         self.environment = self.environments[0]
-        self.candidate_model_name = str(
-            config.get("candidateModelName", "ia-in-training")
-        )
+        self.candidate_model_name = str(config.get("candidateModelName", "ia-in-training"))
         if not self.candidate_model_name:
             raise ValueError("candidateModelName cannot be empty")
         self.live_checkpoint = self.output / "live" / self.candidate_model_name
@@ -1777,15 +1711,9 @@ class LeagueTrainer:
         self.ground_truth_scenarios = (
             load_ground_truth_scenarios(
                 ground_truth_config.get("path"),
-                minimum_confidence=int(
-                    ground_truth_config.get("minimumConfidence", 1)
-                ),
-                deterministic_paths=ground_truth_config.get(
-                    "deterministicScenarioPaths"
-                ),
-                deterministic_scenario_ids=ground_truth_config.get(
-                    "deterministicScenarioIds"
-                ),
+                minimum_confidence=int(ground_truth_config.get("minimumConfidence", 1)),
+                deterministic_paths=ground_truth_config.get("deterministicScenarioPaths"),
+                deterministic_scenario_ids=ground_truth_config.get("deterministicScenarioIds"),
                 deterministic_decision_type=str(
                     ground_truth_config.get(
                         "deterministicDecisionType",
@@ -1809,9 +1737,7 @@ class LeagueTrainer:
         self._write_model_registry()
         resolved_config = dict(config)
         if self.training_matchup_sampler is not None:
-            resolved_config["resolvedTrainingDecks"] = list(
-                self.training_deck_names
-            )
+            resolved_config["resolvedTrainingDecks"] = list(self.training_deck_names)
             resolved_config["resolvedCommanderDecks"] = list(
                 self.training_matchup_sampler.commander_deck_names
             )
@@ -1821,15 +1747,15 @@ class LeagueTrainer:
             resolved_config["rejectedLegacyDecks"] = dict(
                 self.training_matchup_sampler.rejected_legacy_decks
             )
-            resolved_config[
-                "rejectedCommanderDecks"
-            ] = self.training_matchup_sampler.rejected_commander_decks
+            resolved_config["rejectedCommanderDecks"] = (
+                self.training_matchup_sampler.rejected_commander_decks
+            )
             resolved_config["resolvedTraining2Decks"] = list(
                 self.training_matchup_sampler.training2_deck_names
             )
-            resolved_config[
-                "rejectedTraining2Decks"
-            ] = self.training_matchup_sampler.rejected_training2_decks
+            resolved_config["rejectedTraining2Decks"] = (
+                self.training_matchup_sampler.rejected_training2_decks
+            )
         _write_json(self.output / "resolved-config.json", resolved_config)
         _write_json(
             self.output / "evaluation-seeds.json",
@@ -1910,9 +1836,7 @@ class LeagueTrainer:
             model_name=self.state.champion_name,
             registry=self.model_registry,
             device=str(
-                evaluation_config.get(
-                    "championDevice", evaluation_config.get("device", "cpu")
-                )
+                evaluation_config.get("championDevice", evaluation_config.get("device", "cpu"))
             ),
         )
         self.ground_truth_health = self.ground_truth_service.start()
@@ -1936,9 +1860,7 @@ class LeagueTrainer:
                 model_name=self.candidate_model_name,
                 checkpoint=self.live_checkpoint,
                 device=str(
-                    evaluation_config.get(
-                        "candidateDevice", evaluation_config.get("device", "cpu")
-                    )
+                    evaluation_config.get("candidateDevice", evaluation_config.get("device", "cpu"))
                 ),
             )
             self.training_health = self.training_service.start()
@@ -1991,9 +1913,7 @@ class LeagueTrainer:
         errors: list[dict[str, Any]] = []
         benchmarks: list[dict[str, Any]] = []
         started = time.perf_counter()
-        games_per_opponent = sum(
-            len(seeds) for seeds in self.evaluation_seed_map.values()
-        )
+        games_per_opponent = sum(len(seeds) for seeds in self.evaluation_seed_map.values())
         evaluated_opponent_count = 1 + sum(
             period % benchmark.every_periods == 0
             for benchmark in self.evaluation_benchmark_opponents
@@ -2021,8 +1941,7 @@ class LeagueTrainer:
                     evaluation_game_index += 1
                     scenario = self.evaluation_scenarios[scenario_id]
                     player_ids = [
-                        str(player["id"])
-                        for player in scenario.matchup.setup.get("players", [])
+                        str(player["id"]) for player in scenario.matchup.setup.get("players", [])
                     ]
                     participants_by_player = {
                         player_id: (
@@ -2035,10 +1954,7 @@ class LeagueTrainer:
                     with self._state_lock:
                         self.active_attempts = {
                             0: {
-                                "attempt": (
-                                    self.state.attempted_episodes
-                                    + evaluation_game_index
-                                ),
+                                "attempt": (self.state.attempted_episodes + evaluation_game_index),
                                 "worker": evaluation_game_index,
                                 "batchSize": evaluation_game_count,
                                 "status": "evaluatingModel",
@@ -2220,9 +2136,12 @@ class LeagueTrainer:
     def _apply_gpu_memory_limit(self, limit_mb: int) -> None:
         if self.device.type != "cuda":
             return
-        total = torch.cuda.get_device_properties(self.device).total_memory
+        device_index = (
+            self.device.index if self.device.index is not None else torch.cuda.current_device()
+        )
+        total = torch.cuda.get_device_properties(device_index).total_memory
         fraction = 1.0 if limit_mb <= 0 else min(1.0, (limit_mb * 1024 * 1024) / total)
-        torch.cuda.set_per_process_memory_fraction(fraction, self.device)
+        torch.cuda.set_per_process_memory_fraction(fraction, device_index)
 
     def _refresh_learner_resources(self) -> None:
         if self.resource_plan_path is None or not self.resource_plan_path.is_file():
@@ -2244,6 +2163,11 @@ class LeagueTrainer:
             self.parallel_game_workers = workers
             self.rollout_batch_games = workers
             self.environment = self.environments[0]
+            for worker_index, environment in enumerate(self.environments):
+                environment.progress_callback = partial(
+                    self._observe_training_view,
+                    worker_index,
+                )
         if gpu_limit != self.gpu_memory_limit_mb:
             self._apply_gpu_memory_limit(gpu_limit)
             self.gpu_memory_limit_mb = gpu_limit
@@ -2336,9 +2260,7 @@ class LeagueTrainer:
                 {"players": state.get("players", [])},
                 turn_number,
             )
-            events = (
-                state.get("events") if isinstance(state.get("events"), list) else []
-            )
+            events = state.get("events") if isinstance(state.get("events"), list) else []
             new_events = events[tracker["lastEventCount"] :]
             tracker["lastEventCount"] = len(events)
             loop_event_kinds = {
@@ -2371,9 +2293,7 @@ class LeagueTrainer:
                     *loop_events,
                 ][-10:]
                 attempt["recentLoopEvents"] = recent_loop_events
-                attempt["loopEventCount"] = int(attempt.get("loopEventCount", 0)) + len(
-                    loop_events
-                )
+                attempt["loopEventCount"] = int(attempt.get("loopEventCount", 0)) + len(loop_events)
             recent_events = [
                 {
                     "sequence": event.get("sequence"),
@@ -2420,12 +2340,8 @@ class LeagueTrainer:
                             "kind": decision.get("kind"),
                             "playerId": decision.get("playerId"),
                             "optionCount": len(decision.get("options") or []),
-                            "sourceCardInstanceId": decision.get(
-                                "sourceCardInstanceId"
-                            ),
-                            "sourceCardName": (decision.get("sourceCard") or {}).get(
-                                "name"
-                            ),
+                            "sourceCardInstanceId": decision.get("sourceCardInstanceId"),
+                            "sourceCardName": (decision.get("sourceCard") or {}).get("name"),
                         }
                         if decision is not None
                         else None
@@ -2472,9 +2388,7 @@ class LeagueTrainer:
         sampler = self.training_matchup_sampler
         random_floor = sampler.matchmaking_random_floor if sampler else 0.20
         rating_scale = sampler.matchmaking_rating_scale if sampler else 10.0
-        underplayed_strength = (
-            sampler.matchmaking_underplayed_strength if sampler else 0.35
-        )
+        underplayed_strength = sampler.matchmaking_underplayed_strength if sampler else 0.35
         game_prior = sampler.matchmaking_match_prior if sampler else 10.0
         training_participant_id = getattr(self, "training_participant_id", "v11")
         learner_stat = self.training_leaderboard.deck_matchmaking_stats(
@@ -2517,23 +2431,27 @@ class LeagueTrainer:
             k=1,
         )[0]
         deadline_round, pool_size, participant_id, stat = candidates[selected_index]
-        return deadline_round, pool_size, {
-            "participantId": participant_id,
-            "deck": "Anchor",
-            "playerCount": player_count,
-            "anchorOpponentCount": player_count - 1,
-            "mu": stat["mu"],
-            "sigma": stat["sigma"],
-            "ordinal": stat["ordinal"],
-            "rank": stat["rank"],
-            "games": stat["games"],
-            "weight": weights[selected_index],
-            "target": {
-                "participantId": training_participant_id,
-                "deck": learner_deck_name,
-                "ordinal": target_ordinal,
+        return (
+            deadline_round,
+            pool_size,
+            {
+                "participantId": participant_id,
+                "deck": "Anchor",
+                "playerCount": player_count,
+                "anchorOpponentCount": player_count - 1,
+                "mu": stat["mu"],
+                "sigma": stat["sigma"],
+                "ordinal": stat["ordinal"],
+                "rank": stat["rank"],
+                "games": stat["games"],
+                "weight": weights[selected_index],
+                "target": {
+                    "participantId": training_participant_id,
+                    "deck": learner_deck_name,
+                    "ordinal": target_ordinal,
+                },
             },
-        }
+        )
 
     def _refresh_training_decks_if_changed(self) -> None:
         revision = _deck_catalog_revision(self.config)
@@ -2549,9 +2467,7 @@ class LeagueTrainer:
                 float(self.config.get("engineTimeoutSeconds", 120)),
             )
             if self.training_matchup_sampler is not None:
-                sampler.format_sample_index = (
-                    self.training_matchup_sampler.format_sample_index
-                )
+                sampler.format_sample_index = self.training_matchup_sampler.format_sample_index
             self.training_matchup_sampler = sampler
             template = sampler.template()
             refreshed_matchups = {template.id: template}
@@ -2603,9 +2519,7 @@ class LeagueTrainer:
         if str(participant).startswith("anchor-m"):
             return self._anchor_action(step)
         if participant != "v10" or self.v10_opponent_client is None:
-            raise RuntimeError(
-                f"external training participant {participant!r} has no policy"
-            )
+            raise RuntimeError(f"external training participant {participant!r} has no policy")
         current_view = environment.current_view
         if not isinstance(current_view, dict) or not isinstance(
             current_view.get("decision"),
@@ -2626,16 +2540,12 @@ class LeagueTrainer:
             if number_value is not None and action.get("_numberValue") != number_value:
                 continue
             return index
-        raise RuntimeError(
-            f"V10 returned action {action_id!r} outside the expanded legal choices"
-        )
+        raise RuntimeError(f"V10 returned action {action_id!r} outside the expanded legal choices")
 
     def train(self) -> None:
         episode_limit = _training_episode_limit(self.config)
         evaluation_every = int(
-            self.config.get(
-                "modelEvaluationEvery", self.config.get("evaluationEvery", 100)
-            )
+            self.config.get("modelEvaluationEvery", self.config.get("evaluationEvery", 100))
         )
         ground_truth_every = int(self.config.get("groundTruthEvaluationEvery", 10))
         checkpoint_every = int(self.config.get("checkpointEvery", evaluation_every))
@@ -2684,9 +2594,7 @@ class LeagueTrainer:
                         self.matchup_randomizer
                     )
                 else:
-                    anchor_matchup_id = self.matchup_randomizer.choice(
-                        list(self.training_matchups)
-                    )
+                    anchor_matchup_id = self.matchup_randomizer.choice(list(self.training_matchups))
                     anchor_matchup = self.training_matchups[anchor_matchup_id]
                     anchor_player_count = len(anchor_matchup.setup["players"])
                     compatible_matchup_ids = [
@@ -2710,8 +2618,7 @@ class LeagueTrainer:
                             "anchor": self.training_participant_id,
                         }[opponent_mode]
                         sampling_participants = [self.training_participant_id] + [
-                            opponent_participant
-                            for _ in range(batch_profile.player_count - 1)
+                            opponent_participant for _ in range(batch_profile.player_count - 1)
                         ]
                         matchup = self.training_matchup_sampler.sample(
                             self.matchup_randomizer,
@@ -2719,20 +2626,14 @@ class LeagueTrainer:
                             profile=batch_profile,
                             participant_ids=sampling_participants,
                         )
-                        matchmaking = deepcopy(
-                            self.training_matchup_sampler.last_selection
-                        )
+                        matchmaking = deepcopy(self.training_matchup_sampler.last_selection)
                         display_matchup_id = matchup.id
-                        job_matchup_id = (
-                            f"{matchup.id}:parallel-attempt-{attempt_number}"
-                        )
+                        job_matchup_id = f"{matchup.id}:parallel-attempt-{attempt_number}"
                         matchup = replace(matchup, id=job_matchup_id)
                         self.training_matchups[job_matchup_id] = matchup
                         temporary_matchup_ids.append(job_matchup_id)
                     else:
-                        job_matchup_id = self.matchup_randomizer.choice(
-                            compatible_matchup_ids
-                        )
+                        job_matchup_id = self.matchup_randomizer.choice(compatible_matchup_ids)
                         matchup = self.training_matchups[job_matchup_id]
                         matchmaking = None
                         display_matchup_id = job_matchup_id
@@ -2774,10 +2675,7 @@ class LeagueTrainer:
                         self.training_matchups[anchor_matchup_id] = matchup
                         temporary_matchup_ids.append(anchor_matchup_id)
                         job_matchup_id = anchor_matchup_id
-                    player_ids = [
-                        str(player["id"])
-                        for player in matchup.setup.get("players", [])
-                    ]
+                    player_ids = [str(player["id"]) for player in matchup.setup.get("players", [])]
                     anchor_participant = (
                         anchor_participant_id(
                             matchup.anchor_deadline_round,
@@ -2808,9 +2706,7 @@ class LeagueTrainer:
                         for index, player in enumerate(matchup.setup["players"])
                     }
                     learner_player_ids = (
-                        None
-                        if opponent_mode == "self"
-                        else frozenset((player_ids[0],))
+                        None if opponent_mode == "self" else frozenset((player_ids[0],))
                     )
                     environment = self.environments[worker_index]
                     environment.participant_by_player_id = participant_by_player
@@ -2866,9 +2762,7 @@ class LeagueTrainer:
                         "anchorDeadlineRound": matchup.anchor_deadline_round,
                         "anchorOpeningHandPoolSize": matchup.anchor_opening_hand_pool_size,
                         "anchorPlayerCount": (
-                            len(matchup.setup["players"])
-                            if matchup.anchor_deadline_round
-                            else None
+                            len(matchup.setup["players"]) if matchup.anchor_deadline_round else None
                         ),
                         "anchorOpponentCount": (
                             len(matchup.setup["players"]) - 1
@@ -2899,9 +2793,7 @@ class LeagueTrainer:
                             seed,
                             learner_player_ids=learner_player_ids,
                             external_action_selector=(
-                                None
-                                if opponent_mode == "self"
-                                else self._external_action
+                                None if opponent_mode == "self" else self._external_action
                             ),
                         )
                     )
@@ -2976,8 +2868,7 @@ class LeagueTrainer:
                 self._write_state()
                 if consecutive_errors >= max_consecutive_errors:
                     raise RuntimeError(
-                        "training stopped after "
-                        f"{consecutive_errors} consecutive collection errors"
+                        f"training stopped after {consecutive_errors} consecutive collection errors"
                     )
                 continue
 
@@ -2994,9 +2885,7 @@ class LeagueTrainer:
                     )
             self._write_state()
             batch_trajectory = [
-                transition
-                for _, collection in successful
-                for transition in collection.trajectory
+                transition for _, collection in successful for transition in collection.trajectory
             ]
             update_started = time.perf_counter()
             try:
@@ -3004,9 +2893,7 @@ class LeagueTrainer:
                 if self.device.type == "cuda":
                     torch.cuda.synchronize(self.device)
             except Exception as error:
-                is_cuda_oom = (
-                    self.device.type == "cuda" and "out of memory" in str(error).lower()
-                )
+                is_cuda_oom = self.device.type == "cuda" and "out of memory" in str(error).lower()
                 if is_cuda_oom:
                     self.learner.optimizer.zero_grad(set_to_none=True)
                     gc.collect()
@@ -3030,9 +2917,7 @@ class LeagueTrainer:
                     self.training_matchups.pop(matchup_id, None)
                 self._write_state()
                 if is_cuda_oom:
-                    time.sleep(
-                        float(self.config.get("cudaOutOfMemoryBackoffSeconds", 30))
-                    )
+                    time.sleep(float(self.config.get("cudaOutOfMemoryBackoffSeconds", 30)))
                 if consecutive_errors >= max_consecutive_errors:
                     raise RuntimeError(
                         f"training stopped after {consecutive_errors} consecutive errors"
@@ -3109,14 +2994,10 @@ class LeagueTrainer:
                     "anchorDeadlineRound": matchup.anchor_deadline_round,
                     "anchorOpeningHandPoolSize": matchup.anchor_opening_hand_pool_size,
                     "anchorPlayerCount": (
-                        len(matchup.setup["players"])
-                        if matchup.anchor_deadline_round
-                        else None
+                        len(matchup.setup["players"]) if matchup.anchor_deadline_round else None
                     ),
                     "anchorOpponentCount": (
-                        len(matchup.setup["players"]) - 1
-                        if matchup.anchor_deadline_round
-                        else None
+                        len(matchup.setup["players"]) - 1 if matchup.anchor_deadline_round else None
                     ),
                     "decisions": len(collection.trajectory),
                     "decisionsByPlayer": dict(decisions_by_player),
@@ -3142,9 +3023,7 @@ class LeagueTrainer:
                         "gameMode": matchup.game_mode,
                         "players": len(matchup.setup["players"]),
                         "totalDecisions": len(batch_trajectory),
-                        "gameDurationsSeconds": [
-                            item.collection_seconds for _, item in successful
-                        ],
+                        "gameDurationsSeconds": [item.collection_seconds for _, item in successful],
                         "gameSimulationSeconds": sum(
                             item.collection_seconds for _, item in successful
                         ),
@@ -3192,21 +3071,13 @@ class LeagueTrainer:
                 torch.cuda.empty_cache()
 
             def crossed(cadence: int) -> bool:
-                return (
-                    previous_completed // cadence
-                    < self.state.completed_episodes // cadence
-                )
+                return previous_completed // cadence < self.state.completed_episodes // cadence
 
             checkpoint: Path | None = None
-            evaluation_due = self.model_evaluation_enabled and crossed(
-                evaluation_every
-            )
-            ground_truth_due = self.ground_truth_evaluation_enabled and crossed(
-                ground_truth_every
-            )
+            evaluation_due = self.model_evaluation_enabled and crossed(evaluation_every)
+            ground_truth_due = self.ground_truth_evaluation_enabled and crossed(ground_truth_every)
             final_episode = (
-                episode_limit is not None
-                and self.state.completed_episodes >= episode_limit
+                episode_limit is not None and self.state.completed_episodes >= episode_limit
             )
             if (
                 crossed(service_refresh_every)
@@ -3230,9 +3101,7 @@ class LeagueTrainer:
                         {
                             "evaluation": {
                                 "period": evaluation["period"],
-                                "candidateTrainingStep": evaluation[
-                                    "candidateTrainingStep"
-                                ],
+                                "candidateTrainingStep": evaluation["candidateTrainingStep"],
                                 "opponentVersion": evaluation["opponentVersion"],
                                 "summary": evaluation["summary"],
                                 "perfectStreakAfter": evaluation["perfectStreakAfter"],

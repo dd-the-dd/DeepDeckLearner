@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import shutil
 import subprocess
 from io import StringIO
@@ -42,7 +43,9 @@ def load_resource_plan(run: Path) -> dict[str, int]:
 
 
 def save_resource_plan(root: Path, model_id: str, payload: dict[str, Any]) -> dict[str, int]:
-    run, _ = find_model_run(root, model_id)
+    run, metadata = find_model_run(root, model_id)
+    if metadata.get("source") == "local-frozen-checkpoint":
+        raise ValueError("Reference implementations do not own trainable resource slots.")
     limits = {
         "trainingMatches": (0, 32),
         "leagueMatches": (0, 32),
@@ -76,6 +79,8 @@ def save_resource_plan(root: Path, model_id: str, payload: dict[str, Any]) -> di
 
 def delete_model_run(root: Path, model_id: str) -> dict[str, Any]:
     run, metadata = find_model_run(root, model_id)
+    if metadata.get("source") == "local-frozen-checkpoint":
+        raise ValueError("Reference implementations cannot be deleted as user agents.")
     runs_root = (root / ".deepdeck" / "runs").resolve()
     resolved = run.resolve()
     if resolved.parent != runs_root or not (resolved / "local-model.json").is_file():
@@ -104,15 +109,21 @@ def _json_object(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _job_value(job: Any, key: str, default: Any = None) -> Any:
+    if isinstance(job, dict):
+        return job.get(key, default)
+    return getattr(job, key, default)
+
+
 def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
     games: list[dict[str, Any]] = []
     for metadata_path in (root / ".deepdeck" / "runs").glob("*/local-model.json"):
         metadata = _json_object(metadata_path)
         state = _json_object(metadata_path.parent / "league-state.json")
         attached = any(
-            job.kind == "training.pool"
-            and job.model_id == metadata.get("id")
-            and job.status == "running"
+            _job_value(job, "kind") == "training.pool"
+            and _job_value(job, "model_id") == metadata.get("id")
+            and _job_value(job, "status") == "running"
             for job in jobs
         )
         process_id = int(state.get("processId", 0) or 0)
@@ -124,6 +135,8 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
         for attempt in attempts:
             if not isinstance(attempt, dict):
                 continue
+            if attempt.get("status", "collecting") != "collecting":
+                continue
             session_id = str(attempt.get("sessionId", "")).strip()
             worker = int(attempt.get("worker", 0) or 0)
             game_id = session_id or f"{metadata.get('id', 'model')}-worker-{worker}"
@@ -134,11 +147,11 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
                     "source": "training",
                     "jobId": next(
                         (
-                            job.id
+                            _job_value(job, "id")
                             for job in jobs
-                            if job.kind == "training.pool"
-                            and job.model_id == metadata.get("id")
-                            and job.status == "running"
+                            if _job_value(job, "kind") == "training.pool"
+                            and _job_value(job, "model_id") == metadata.get("id")
+                            and _job_value(job, "status") == "running"
                         ),
                         None,
                     ),
@@ -163,9 +176,45 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
                 }
             )
     for job in jobs:
-        if job.kind != "playtest.agent" or job.status != "running":
+        if (
+            _job_value(job, "kind") == "matchmaking.agent"
+            and _job_value(job, "status") == "running"
+        ):
+            details = _job_value(job, "details", {}) or {}
+            matches = details.get("leagueMatches", [])
+            if isinstance(matches, list):
+                for match in matches:
+                    if not isinstance(match, dict) or not match.get("matchId"):
+                        continue
+                    status = str(match.get("status", "scheduled"))
+                    if status not in {"scheduled", "running"}:
+                        continue
+                    games.append(
+                        {
+                            "id": str(match["matchId"]),
+                            "sessionId": match.get("gameId"),
+                            "source": "league",
+                            "jobId": _job_value(job, "id"),
+                            "modelId": _job_value(job, "model_id"),
+                            "modelName": _job_value(job, "label"),
+                            "worker": 0,
+                            "status": status,
+                            "mode": "League match",
+                            "decks": match.get("decks", []),
+                            "players": match.get("players", 0),
+                            "playersState": [],
+                            "turnNumber": match.get("turnNumber"),
+                            "roundNumber": match.get("roundNumber"),
+                            "decisions": match.get("decisions", 0),
+                            "startedAtUnixMs": match.get("startedAtUnixMs"),
+                            "updatedAtUnixMs": match.get("updatedAtUnixMs"),
+                            "canCancel": False,
+                            "watchUrl": match.get("watchUrl"),
+                        }
+                    )
+        if _job_value(job, "kind") != "playtest.agent" or _job_value(job, "status") != "running":
             continue
-        details = job.details or {}
+        details = _job_value(job, "details", {}) or {}
         session_id = str(details.get("sessionId", "")).strip()
         if not session_id:
             continue
@@ -174,9 +223,9 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
                 "id": session_id,
                 "sessionId": session_id,
                 "source": "local",
-                "jobId": job.id,
-                "modelId": job.model_id,
-                "modelName": job.label,
+                "jobId": _job_value(job, "id"),
+                "modelId": _job_value(job, "model_id"),
+                "modelName": _job_value(job, "label"),
                 "worker": 1,
                 "status": "playing",
                 "mode": "Local playtest",
@@ -353,10 +402,9 @@ def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
                 kind = "training.pool"
                 slots = load_resource_plan(metadata_path.parent)["trainingMatches"]
             elif "deepdeck_examples.run" in command and checkpoint_text in command:
-                kind = (
-                    "playtest.agent" if "--start-local-game" in command else "matchmaking.agent"
-                )
-                slots = 1
+                kind = "playtest.agent" if "--start-local-game" in command else "matchmaking.agent"
+                concurrency = re.search(r"--matchmaking-concurrency(?:=|\s+)(\d+)", command)
+                slots = int(concurrency.group(1)) if concurrency else 1
             else:
                 continue
             try:

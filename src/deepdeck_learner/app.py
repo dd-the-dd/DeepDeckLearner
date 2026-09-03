@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ from .catalogs import (
     local_deck_presentation,
     local_legal_decks,
     platform_decks,
+    scryfall_card_names,
     scryfall_image,
 )
 from .jobs import JobManager, JobValidationError
@@ -41,6 +44,7 @@ def create_app(root: Path | None = None) -> FastAPI:
     app = FastAPI(title="DeepDeckLearner local controller", version="1.0")
     app.state.manager = manager
     app.state.session_token = session_token
+    account_cache: dict[str, Any] = {"key": None, "checked": 0.0, "value": None}
 
     def authorize(value: str | None) -> None:
         if not value or not secrets.compare_digest(value, session_token):
@@ -58,6 +62,27 @@ def create_app(root: Path | None = None) -> FastAPI:
     def status(engine_url: str = "http://127.0.0.1:8787") -> dict[str, Any]:
         return capability_status(resolved_root, engine_url)
 
+    @app.get("/api/v1/account/status")
+    def account_status() -> dict[str, Any]:
+        key = os.getenv("DEEPDECK_API_KEY", "").strip()
+        if not key:
+            return {"configured": False, "valid": False, "reason": "Add an agent API key."}
+        now = time.monotonic()
+        cached = account_cache.get("value")
+        if account_cache.get("key") == key and isinstance(cached, dict) and now - float(
+            account_cache.get("checked", 0.0)
+        ) < 60:
+            return cached
+        try:
+            active_competitions()
+            value = {"configured": True, "valid": True, "reason": "League account connected."}
+        except CatalogAuthenticationError as error:
+            value = {"configured": True, "valid": False, "reason": str(error)}
+        except CatalogError as error:
+            value = {"configured": True, "valid": None, "reason": str(error)}
+        account_cache.update({"key": key, "checked": now, "value": value})
+        return value
+
     @app.post("/api/v1/settings/api-key")
     def configure_api_key(
         payload: dict[str, Any], x_deepdeck_token: str | None = Header(default=None)
@@ -67,6 +92,7 @@ def create_app(root: Path | None = None) -> FastAPI:
             save_api_key(resolved_root, str(payload.get("api_key", "")))
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        account_cache.update({"key": None, "checked": 0.0, "value": None})
         return {"configured": True}
 
     @app.get("/api/v1/jobs")
@@ -106,6 +132,23 @@ def create_app(root: Path | None = None) -> FastAPI:
             return delete_model_run(resolved_root, model_id)
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.put("/api/v1/models/{model_id}")
+    def update_model(
+        model_id: str,
+        payload: dict[str, Any],
+        x_deepdeck_token: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        authorize(x_deepdeck_token)
+        try:
+            updated_id = manager.update_model(model_id, payload)
+        except (JobValidationError, OSError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return next(
+            model
+            for model in local_models(resolved_root, manager.list_jobs())
+            if model.get("id") == updated_id
+        )
 
     @app.get("/api/v1/models/{model_id}/resources")
     def model_resources(model_id: str) -> dict[str, int]:
@@ -198,6 +241,13 @@ def create_app(root: Path | None = None) -> FastAPI:
             media_type=content_type,
             headers={"Cache-Control": "public, max-age=604800, immutable"},
         )
+
+    @app.get("/api/v1/catalog/cards/autocomplete")
+    def card_name_autocomplete(query: str = "") -> dict[str, list[str]]:
+        try:
+            return {"data": scryfall_card_names(query)}
+        except CatalogError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.get("/api/v1/training/deck-pool")
     def training_deck_pool() -> dict[str, Any]:

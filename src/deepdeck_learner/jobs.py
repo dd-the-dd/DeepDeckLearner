@@ -121,16 +121,53 @@ class JobManager:
             rows = connection.execute(
                 "SELECT payload FROM jobs ORDER BY created_at DESC LIMIT 100"
             ).fetchall()
-        persisted = [self._reconcile_persisted_job(json.loads(row[0])) for row in rows]
+        stored = [json.loads(row[0]) for row in rows]
+        live_commands = (
+            self._live_process_commands()
+            if any(item.get("status") == "running" for item in stored)
+            else []
+        )
+        persisted = [self._reconcile_persisted_job(item, live_commands) for item in stored]
         merged = {item["id"]: item for item in persisted}
         merged.update(current)
         return sorted(merged.values(), key=lambda item: item["created_at"], reverse=True)[:100]
 
     @staticmethod
-    def _reconcile_persisted_job(job: dict[str, Any]) -> dict[str, Any]:
+    def _live_process_commands() -> list[str]:
+        commands: list[str] = []
+        for process in psutil.process_iter(["cmdline"]):
+            try:
+                command = " ".join(process.info.get("cmdline") or []).casefold()
+            except (psutil.Error, OSError):
+                continue
+            if command:
+                commands.append(command)
+        return commands
+
+    @staticmethod
+    def _reconcile_persisted_job(
+        job: dict[str, Any], live_commands: list[str] | None = None
+    ) -> dict[str, Any]:
         if job.get("status") != "running":
             return job
-        if job.get("kind") != "training.pool":
+        commands = live_commands
+        if commands is None:
+            commands = JobManager._live_process_commands()
+        kind = job.get("kind")
+        if kind in {PLAYTEST_KIND, MATCHMAKING_KIND}:
+            argv = [str(value).casefold() for value in job.get("argv", [])]
+            signature = next(
+                (
+                    argv[index + 1]
+                    for flag in ("--local-game-setup", "--checkpoint")
+                    for index, value in enumerate(argv[:-1])
+                    if value == flag
+                ),
+                "",
+            )
+            for command in commands:
+                if "deepdeck_examples.run" in command and signature and signature in command:
+                    return job
             return {
                 **job,
                 "status": "stopped",
@@ -140,15 +177,17 @@ class JobManager:
                     "The workbench restarted; this local process is no longer attached.",
                 ][-MAX_LOG_LINES:],
             }
+        if kind != "training.pool":
+            return {
+                **job,
+                "status": "stopped",
+                "finished_at": job.get("finished_at") or utc_now(),
+            }
         artifact = str(job.get("artifact_path", "")).strip()
         if not artifact:
             return job
         expected = str(Path(artifact).resolve()).casefold()
-        for process in psutil.process_iter(["cmdline"]):
-            try:
-                command = " ".join(process.info.get("cmdline") or []).casefold()
-            except (psutil.Error, OSError):
-                continue
+        for command in commands:
             if "oracle_ai.training.league" in command and expected in command:
                 return job
         return {**job, "status": "stopped"}
@@ -178,17 +217,20 @@ class JobManager:
     def resources(self) -> dict[str, Any]:
         with self._lock:
             jobs = list(self._jobs.values())
-        return resource_snapshot(self.root, jobs)
+        snapshot = resource_snapshot(self.root, jobs)
+        game_count = len(self.games())
+        snapshot["engine"]["activeLocalGames"] = game_count
+        snapshot["engine"]["ramPerGameEstimate"] = (
+            snapshot["engine"]["ramBytes"] // game_count if game_count else 0
+        )
+        return snapshot
 
     def games(self) -> list[dict[str, Any]]:
-        with self._lock:
-            jobs = list(self._jobs.values())
-        return active_games(self.root, jobs)
+        return active_games(self.root, self.list_jobs())
 
     def model_has_active_workers(self, model_id: str) -> bool:
         return any(
-            worker.get("modelId") == model_id
-            for worker in self.resources().get("workers", [])
+            worker.get("modelId") == model_id for worker in self.resources().get("workers", [])
         )
 
     def prepare_model(self, raw: dict[str, Any]) -> str:
@@ -206,6 +248,144 @@ class JobManager:
         )
         metadata = json.loads((run / "local-model.json").read_text(encoding="utf-8"))
         return str(metadata["id"])
+
+    def update_model(self, model_id: str, raw: dict[str, Any]) -> str:
+        if self.model_has_active_workers(model_id):
+            raise JobValidationError("Stop this agent's active jobs before editing it.")
+        try:
+            import yaml
+        except ModuleNotFoundError as error:
+            raise JobValidationError(
+                "Install DeepDeckLearner's deep-learning dependencies."
+            ) from error
+        try:
+            run, metadata = find_model_run(self.root, model_id)
+        except ValueError as error:
+            raise JobValidationError(str(error)) from error
+        if metadata.get("source") == "local-frozen-checkpoint":
+            raise JobValidationError("Built-in reference agents cannot be edited.")
+
+        model_name = self._local_model_name({"model_name": raw.get("name", metadata.get("name"))})
+        required_format = str(metadata.get("format", "")).casefold()
+        decks = raw.get("decks")
+        if not isinstance(decks, list) or not 1 <= len(decks) <= 100:
+            raise JobValidationError("Select between 1 and 100 decks for this agent.")
+        compatible = [
+            deck
+            for deck in decks
+            if isinstance(deck, dict)
+            and isinstance(deck.get("id"), str)
+            and str(deck.get("format", "")).casefold() == required_format
+        ]
+        if len(compatible) != len(decks):
+            raise JobValidationError(f"Every selected deck must be a valid {required_format} deck.")
+
+        config_path = run / "training-config.yaml"
+        try:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise JobValidationError(
+                "This agent's training configuration is unavailable."
+            ) from error
+        if not isinstance(config, dict):
+            raise JobValidationError("This agent's training configuration is invalid.")
+        engine_url = str(config.get("engineUrl", "http://127.0.0.1:8787"))
+        catalog: dict[str, list[dict[str, Any]]] = {}
+        for deck in compatible:
+            version_id = str(deck["id"])
+            snapshot_path = self.root / ".deepdeck" / "decks" / f"{version_id}.json"
+            try:
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise JobValidationError(
+                    f"Download {deck.get('name', version_id)} again before saving."
+                ) from error
+            entries = [
+                entry
+                for entry in snapshot.get("cards", [])
+                if isinstance(entry, dict) and entry.get("section") != "considering"
+            ]
+            entries = self._enrich_card_characteristics(entries)
+            compiled_rules = self._compile_oracle_rules(engine_url, entries)
+            cards: list[dict[str, Any]] = []
+            for entry in entries:
+                quantity = max(0, int(entry.get("quantity", 0)))
+                card_id = self._card_identifier(entry)
+                if not card_id:
+                    raise JobValidationError(
+                        f"{deck.get('name', version_id)} contains a card without an id."
+                    )
+                raw_rules = entry.get("rules")
+                current_rules = compiled_rules.get(card_id)
+                rules = (
+                    current_rules
+                    if isinstance(current_rules, list)
+                    else raw_rules
+                    if isinstance(raw_rules, list)
+                    else []
+                )
+                section = str(entry.get("section", "main"))
+                is_token, is_game_piece = self._auxiliary_game_piece_flags(entry)
+                normalized = {
+                    "id": card_id,
+                    "name": str(entry.get("name", "")),
+                    "typeLine": str(entry.get("typeLine", "")),
+                    "manaCost": str(entry.get("manaCost") or ""),
+                    "oracleText": entry.get("oracleText"),
+                    "layout": entry.get("layout"),
+                    "faces": entry.get("faces", []),
+                    "power": entry.get("power"),
+                    "toughness": entry.get("toughness"),
+                    "rules": rules,
+                    "isToken": is_token,
+                    "isGamePiece": is_game_piece,
+                    "isSideboard": section in {"sideboard", "companion"},
+                    "isCommander": section == "commander",
+                    "sourceSessionId": version_id,
+                }
+                cards.extend(dict(normalized) for _ in range(quantity))
+            label = f"{deck.get('name', 'Deck')} · v{deck.get('version', 1)} · {version_id[:8]}"
+            catalog[label] = cards
+
+        reserve_playtest = bool(raw.get("reservePlaytest", metadata.get("reservePlaytest", True)))
+        shared_self_play = bool(raw.get("selfPlayAllSeats", metadata.get("selfPlayAllSeats", True)))
+        settings = config.setdefault("learnerSettings", {})
+        settings.update(
+            {
+                "modelId": model_id,
+                "modelName": model_name,
+                "reservePlaytest": reserve_playtest,
+                "selfPlayAllSeats": shared_self_play,
+                "selectedDeckVersionIds": [str(deck["id"]) for deck in compatible],
+            }
+        )
+        config["trainingOpponentMix"] = (
+            {"self": 1.0} if shared_self_play else {"self": 0.5, "anchor": 0.5}
+        )
+        config["serviceRefreshEvery"] = 1 if reserve_playtest else 1_000_000
+        metadata.update(
+            {
+                "name": model_name,
+                "reservePlaytest": reserve_playtest,
+                "selfPlayAllSeats": shared_self_play,
+                "decks": compatible,
+            }
+        )
+
+        pending_catalog = run / "training-decks.json.pending"
+        pending_config = run / "training-config.yaml.pending"
+        pending_metadata = run / "local-model.json.pending"
+        pending_catalog.write_text(
+            json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        pending_config.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+        pending_metadata.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        pending_catalog.replace(run / "training-decks.json")
+        pending_config.replace(config_path)
+        pending_metadata.replace(run / "local-model.json")
+        return model_id
 
     def create(self, raw: dict[str, Any]) -> dict[str, Any]:
         kind = str(raw.get("kind", ""))
@@ -246,7 +426,11 @@ class JobManager:
             argv, label, artifact = self._command(kind, raw)
             deferred_payload = None
             model_id = str(raw.get("model_id", "")).strip() or None
-            worker_slots = 1
+            worker_slots = (
+                self._bounded_int(raw, "connections", default=1, minimum=1, maximum=32)
+                if kind == MATCHMAKING_KIND
+                else 1
+            )
         job = Job(
             id=str(uuid.uuid4()),
             kind=kind,
@@ -271,19 +455,19 @@ class JobManager:
                 plan = load_resource_plan(run)
                 limit_key = "localMatches" if kind == PLAYTEST_KIND else "leagueMatches"
                 running = sum(
-                    worker["kind"] == kind and worker["modelId"] == model_id
-                    for worker in resource_snapshot(self.root, list(self._jobs.values()))[
-                        "workers"
-                    ]
+                    int(worker.get("workerSlots", 1))
+                    for worker in resource_snapshot(self.root, list(self._jobs.values()))["workers"]
+                    if worker["kind"] == kind and worker["modelId"] == model_id
                 )
                 queued = sum(
-                    candidate.kind == kind
+                    candidate.worker_slots
+                    for candidate in self._jobs.values()
+                    if candidate.kind == kind
                     and candidate.model_id == model_id
                     and candidate.status == "queued"
-                    for candidate in self._jobs.values()
                 )
                 active = running + queued
-                if active >= plan[limit_key]:
+                if active + worker_slots > plan[limit_key]:
                     raise JobValidationError(
                         f"{limit_key} allocation is full for this local model."
                     )
@@ -454,6 +638,7 @@ class JobManager:
                 [
                     cargo,
                     "run",
+                    "--release",
                     "--manifest-path",
                     str(manifest),
                     "--locked",
@@ -618,29 +803,28 @@ class JobManager:
                 elif isinstance(raw_rules, list):
                     rules = raw_rules
                 else:
-                    raise JobValidationError(
-                        f"Engine did not return rules for {entry.get('name', card_id)}."
-                    )
+                    rules = []
                 section = str(entry.get("section", "main"))
+                is_token, is_game_piece = self._auxiliary_game_piece_flags(entry)
                 normalized = {
                     "id": card_id,
                     "name": str(entry.get("name", "")),
                     "typeLine": str(entry.get("typeLine", "")),
                     "manaCost": str(entry.get("manaCost") or ""),
                     "oracleText": entry.get("oracleText"),
+                    "layout": entry.get("layout"),
                     "faces": entry.get("faces", []),
                     "power": entry.get("power"),
                     "toughness": entry.get("toughness"),
                     "rules": rules,
+                    "isToken": is_token,
+                    "isGamePiece": is_game_piece,
                     "isSideboard": section in {"sideboard", "companion"},
                     "isCommander": section == "commander",
                     "sourceSessionId": version_id,
                 }
                 cards.extend(dict(normalized) for _ in range(quantity))
-            name = (
-                f"{deck.get('name', 'Deck')} · v{deck.get('version', 1)} · "
-                f"{version_id[:8]}"
-            )
+            name = f"{deck.get('name', 'Deck')} · v{deck.get('version', 1)} · {version_id[:8]}"
             catalog[name] = cards
         catalog_path = run / "training-decks.json"
         catalog_path.write_text(
@@ -677,8 +861,15 @@ class JobManager:
         config["modelEvaluationEnabled"] = False
         config["groundTruthEvaluationEnabled"] = False
         config["resumeLeagueState"] = False
-        config.pop("resumeCheckpoint", None)
-        config.pop("resumeCheckpointOptional", None)
+        base_model = self._reference_checkpoint(model)
+        if base_model is not None:
+            config["resumeCheckpoint"] = str(base_model)
+            config["resumeCheckpointOptional"] = False
+            config["resumeOptimizer"] = False
+        else:
+            config.pop("resumeCheckpoint", None)
+            config.pop("resumeCheckpointOptional", None)
+            config.pop("resumeOptimizer", None)
         config["serviceRefreshEvery"] = 1 if reserve_playtest else 1_000_000
         config["learnerSettings"] = {
             "modelId": model_id,
@@ -704,6 +895,9 @@ class JobManager:
             "createdAt": utc_now(),
             "checkpointPath": str(checkpoint_path),
             "reservePlaytest": reserve_playtest,
+            "selfPlayAllSeats": shared_self_play,
+            "source": "user-trained",
+            "baseCheckpointPath": str(base_model) if base_model is not None else None,
             "decks": compatible,
             "resourcePlan": resource_plan,
         }
@@ -725,6 +919,10 @@ class JobManager:
             run, metadata = find_model_run(self.root, model_id)
         except ValueError as error:
             raise JobValidationError(str(error)) from error
+        if metadata.get("source") == "local-frozen-checkpoint":
+            raise JobValidationError(
+                "Create your own agent from V11 or V12 before starting training."
+            )
         config_path = run / "training-config.yaml"
         try:
             config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -742,6 +940,12 @@ class JobManager:
         if resumable:
             config["resumeCheckpoint"] = str(checkpoint)
             config["resumeCheckpointOptional"] = True
+            config["resumeOptimizer"] = True
+        elif metadata.get("baseCheckpointPath"):
+            config["resumeCheckpoint"] = str(metadata["baseCheckpointPath"])
+            config["resumeCheckpointOptional"] = False
+            config["resumeOptimizer"] = False
+        self._sanitize_training_catalog(run)
         plan = load_resource_plan(run)
         config["parallelGameWorkers"] = max(1, plan["trainingMatches"])
         config["rolloutBatchGames"] = max(1, plan["trainingMatches"])
@@ -777,9 +981,48 @@ class JobManager:
     def _card_identifier(card: dict[str, Any]) -> str:
         return card_identifier(card)
 
-    def _enrich_card_characteristics(
-        self, cards: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    @staticmethod
+    def _auxiliary_game_piece_flags(card: dict[str, Any]) -> tuple[bool, bool]:
+        type_line = str(card.get("typeLine", "")).strip().casefold()
+        section = str(card.get("section", "")).strip().casefold()
+        inferred_piece = type_line.startswith(("token ", "emblem", "dungeon")) or section in {
+            "token",
+            "tokens",
+            "emblem",
+            "dungeon",
+        }
+        is_token = bool(card.get("isToken")) or type_line.startswith("token ")
+        return is_token, bool(card.get("isGamePiece")) or inferred_piece or is_token
+
+    def _sanitize_training_catalog(self, run: Path) -> dict[str, list[dict[str, Any]]] | None:
+        catalog_path = run / "training-decks.json"
+        try:
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(catalog, dict):
+            return None
+        changed = False
+        for cards in catalog.values():
+            if not isinstance(cards, list):
+                continue
+            for card in cards:
+                if not isinstance(card, dict):
+                    continue
+                is_token, is_game_piece = self._auxiliary_game_piece_flags(card)
+                if card.get("isToken") is not is_token:
+                    card["isToken"] = is_token
+                    changed = True
+                if card.get("isGamePiece") is not is_game_piece:
+                    card["isGamePiece"] = is_game_piece
+                    changed = True
+        if changed:
+            catalog_path.write_text(
+                json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        return catalog
+
+    def _enrich_card_characteristics(self, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         try:
             return enrich_card_characteristics(self.root, cards)
         except CardModelError as error:
@@ -827,15 +1070,16 @@ class JobManager:
         if game_format not in {"legacy", "commander"}:
             raise JobValidationError("Format must be legacy or commander.")
         run = checkpoint_path.parent.parent
-        try:
-            catalog = json.loads((run / "training-decks.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise JobValidationError(
-                "This model's local training deck catalog is unavailable."
-            ) from error
-        if not isinstance(catalog, dict):
-            raise JobValidationError("This model's training deck catalog is invalid.")
-
+        catalog = self._sanitize_training_catalog(run)
+        if catalog is None:
+            try:
+                catalog = self._materialize_playtest_catalog(run, game_format)
+            except JobValidationError:
+                raise
+            except (OSError, ValueError) as fallback_error:
+                raise JobValidationError(
+                    "This model's local training deck catalog is unavailable."
+                ) from fallback_error
         validated_names = self._playtest_validated_deck_names(run, game_format)
         eligible_catalog = {
             str(deck_name): cards
@@ -967,6 +1211,87 @@ class JobManager:
         }
         return argv, f"{model_name} · local {game_format}", None
 
+    def _materialize_playtest_catalog(
+        self, run: Path, game_format: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        try:
+            metadata = json.loads((run / "local-model.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise JobValidationError("The selected local model metadata is unavailable.") from error
+        configured = metadata.get("decks", []) if isinstance(metadata, dict) else []
+        version_ids = [
+            str(deck.get("id", ""))
+            for deck in configured
+            if isinstance(deck, dict) and deck.get("id")
+        ]
+        if not version_ids:
+            try:
+                resolved = json.loads((run / "resolved-config.json").read_text(encoding="utf-8"))
+                raw_ids = resolved.get("learnerSettings", {}).get("selectedDeckVersionIds", [])
+                version_ids = [str(value) for value in raw_ids]
+            except (AttributeError, OSError, ValueError):
+                version_ids = []
+        catalog: dict[str, list[dict[str, Any]]] = {}
+        for version_id in version_ids:
+            try:
+                snapshot = json.loads(
+                    (self.root / ".deepdeck" / "decks" / f"{version_id}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (OSError, ValueError):
+                continue
+            if not isinstance(snapshot, dict) or str(snapshot.get("format", "")) != game_format:
+                continue
+            cards: list[dict[str, Any]] = []
+            for entry in snapshot.get("cards", []):
+                if not isinstance(entry, dict) or entry.get("section") == "considering":
+                    continue
+                card_id = self._card_identifier(entry)
+                if not card_id:
+                    continue
+                is_token, is_game_piece = self._auxiliary_game_piece_flags(entry)
+                normalized = {
+                    **entry,
+                    "id": card_id,
+                    "isToken": is_token,
+                    "isGamePiece": is_game_piece,
+                    "isSideboard": entry.get("section") in {"sideboard", "companion"},
+                    "isCommander": entry.get("section") == "commander",
+                    "sourceSessionId": version_id,
+                    "rules": entry.get("rules", []),
+                }
+                cards.extend(dict(normalized) for _ in range(max(0, int(entry.get("quantity", 0)))))
+            if cards:
+                name = (
+                    f"{snapshot.get('name', 'Deck')} · v{snapshot.get('version', 1)} · "
+                    f"{version_id[:8]}"
+                )
+                catalog[name] = cards
+        if not catalog:
+            raise JobValidationError("This model has no downloaded deck in its training pool.")
+        (run / "training-decks.json").write_text(
+            json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return catalog
+
+    def _reference_checkpoint(self, architecture: str) -> Path | None:
+        runs = self.root / ".deepdeck" / "runs"
+        for metadata_path in runs.glob("*/local-model.json"):
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            checkpoint = Path(str(metadata.get("checkpointPath", "")))
+            if (
+                metadata.get("source") == "local-frozen-checkpoint"
+                and metadata.get("architecture") == architecture
+                and (checkpoint / "manifest.json").is_file()
+                and (checkpoint / "checkpoint.pt").is_file()
+            ):
+                return checkpoint
+        return None
+
     def _deck_statistics_for_model(self, model_id: str) -> list[dict[str, Any]]:
         from .models import deck_statistics
 
@@ -998,12 +1323,20 @@ class JobManager:
             )
         example, checkpoint_path, model_name = self._owned_model(raw)
         competition = str(raw.get("competition_version_id", "")).strip()
-        deck = str(raw.get("deck_version_id", "")).strip()
-        if not competition or not deck:
+        deck_ids = raw.get("deck_version_ids")
+        decks = (
+            [str(deck).strip() for deck in deck_ids if str(deck).strip()]
+            if isinstance(deck_ids, list)
+            else [str(raw.get("deck_version_id", "")).strip()]
+        )
+        if not competition or not decks or not decks[0]:
             raise JobValidationError("Choose an active competition and a deck.")
+        connections = self._bounded_int(raw, "connections", default=1, minimum=1, maximum=32)
         speed = str(raw.get("speed", "1s"))
         if speed not in {"100ms", "1s", "10s"}:
             raise JobValidationError("Speed must be 100ms, 1s, or 10s.")
+        if example in {"v11", "v12"} and speed == "100ms":
+            speed = "1s"
         argv = [
             sys.executable,
             "-m",
@@ -1016,8 +1349,12 @@ class JobManager:
             "--competition-version-id",
             competition,
             "--deck-version-id",
-            deck,
+            decks[0],
+            "--matchmaking-concurrency",
+            str(connections),
         ]
+        for deck in decks[1:]:
+            argv.extend(["--additional-deck-version-id", deck])
         if not bool(raw.get("continuous", False)):
             argv.append("--once")
         argv.extend(["--checkpoint", str(checkpoint_path)])
@@ -1038,6 +1375,10 @@ class JobManager:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise JobValidationError("The selected local model metadata is unavailable.") from error
+        if metadata.get("source") == "local-frozen-checkpoint":
+            raise JobValidationError(
+                "Choose an agent trained in this workspace, not a reference implementation."
+            )
         if (
             metadata.get("architecture") != architecture
             or Path(str(metadata.get("checkpointPath", ""))).resolve() != checkpoint
@@ -1045,9 +1386,10 @@ class JobManager:
             raise JobValidationError("The selected local model does not match its checkpoint.")
         if str(raw.get("model_id", "")).strip() != str(metadata.get("id", "")):
             raise JobValidationError("Choose the registered identity of your local model.")
-        if not (checkpoint / "manifest.json").is_file() or not (
-            checkpoint / "checkpoint.pt"
-        ).is_file():
+        if (
+            not (checkpoint / "manifest.json").is_file()
+            or not (checkpoint / "checkpoint.pt").is_file()
+        ):
             raise JobValidationError("This model is still preparing its first playable weights.")
         return architecture, checkpoint, str(metadata.get("name", architecture.upper()))
 
@@ -1123,20 +1465,10 @@ class JobManager:
                 for line in process.stdout:
                     clean = line.rstrip()
                     job.logs.append(clean)
-                    marker = "DEEPDECK_PLAYTEST_SESSION "
-                    if clean.startswith(marker):
-                        try:
-                            session = json.loads(clean[len(marker):])
-                        except ValueError:
-                            session = None
-                        if isinstance(session, dict):
-                            job.details = {**(job.details or {}), **session}
-                            self._persist(job)
+                    self._consume_process_marker(job, clean)
                 job.exit_code = process.wait()
             job.status = (
-                "stopped"
-                if job.stop_requested
-                else "completed" if job.exit_code == 0 else "failed"
+                "stopped" if job.stop_requested else "completed" if job.exit_code == 0 else "failed"
             )
         except OSError as error:
             job.logs.append(f"Unable to start process: {error}")
@@ -1147,9 +1479,43 @@ class JobManager:
             job.finished_at = utc_now()
             self._persist(job)
 
-    def _run_durable_training_process(
-        self, job: Job, environment: dict[str, str]
-    ) -> int:
+    def _consume_process_marker(self, job: Job, clean: str) -> None:
+        playtest_marker = "DEEPDECK_PLAYTEST_SESSION "
+        if clean.startswith(playtest_marker):
+            try:
+                session = json.loads(clean[len(playtest_marker) :])
+            except ValueError:
+                session = None
+            if isinstance(session, dict):
+                job.details = {**(job.details or {}), **session}
+                self._persist(job)
+            return
+
+        league_marker = "DEEPDECK_LEAGUE_MATCH "
+        if not clean.startswith(league_marker):
+            return
+        try:
+            match = json.loads(clean[len(league_marker) :])
+        except ValueError:
+            match = None
+        if not isinstance(match, dict) or not match.get("matchId"):
+            return
+        details = dict(job.details or {})
+        matches = {
+            str(item.get("matchId")): item
+            for item in details.get("leagueMatches", [])
+            if isinstance(item, dict) and item.get("matchId")
+        }
+        match_id = str(match["matchId"])
+        if match.get("status") in {"complete", "failed", "cancelled"}:
+            matches.pop(match_id, None)
+        else:
+            matches[match_id] = match
+        details["leagueMatches"] = list(matches.values())
+        job.details = details
+        self._persist(job)
+
+    def _run_durable_training_process(self, job: Job, environment: dict[str, str]) -> int:
         log_path = Path(str(job.artifact_path)) / "learner-process.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         offset = log_path.stat().st_size if log_path.is_file() else 0

@@ -70,7 +70,7 @@ def has_local_changes(root: Path, dependency: str) -> bool:
 
 def engine_binary(root: Path) -> Path:
     name = "mtg-engine-server.exe" if os.name == "nt" else "mtg-engine-server"
-    return dependency_path(root, "engine") / "target" / "debug" / name
+    return dependency_path(root, "engine") / "target" / "release" / name
 
 
 def engine_build_current(root: Path) -> bool:
@@ -174,6 +174,7 @@ def start_engine(root: Path) -> None:
         command = [
             cargo,
             "run",
+            "--release",
             "--manifest-path",
             str(manifest),
             "--locked",

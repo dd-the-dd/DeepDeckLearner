@@ -9,6 +9,12 @@ export type CapabilityStatus = {
   workflows: Record<string, boolean>;
 };
 
+export type AccountStatus = {
+  configured: boolean;
+  valid: boolean | null;
+  reason: string;
+};
+
 export type Job = {
   id: string;
   kind: string;
@@ -70,6 +76,7 @@ export type LocalModel = {
   status: string;
   ready: boolean;
   reservePlaytest: boolean;
+  source?: "user-trained" | "local-frozen-checkpoint";
   selfPlayAllSeats?: boolean;
   decks: DeckSummary[];
   diskBytes: number;
@@ -111,6 +118,7 @@ export type ActiveGame = {
   startedAtUnixMs: number | null;
   updatedAtUnixMs: number | null;
   canCancel: boolean;
+  watchUrl?: string | null;
 };
 
 export type TrainingStatistic = {
@@ -196,7 +204,16 @@ export type DeckStatistic = {
   winRate: number | null;
 };
 
-type Page<T> = { items: T[] };
+type Page<T> = {
+  items: T[];
+  pagination?: {
+    page?: number;
+    totalPages?: number;
+    total_pages?: number;
+    hasNextPage?: boolean;
+    has_next_page?: boolean;
+  };
+};
 
 let sessionToken = '';
 
@@ -208,11 +225,29 @@ async function json<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-async function token(): Promise<string> {
+async function token(forceRefresh = false): Promise<string> {
+  if (forceRefresh) {
+    sessionToken = '';
+  }
   if (!sessionToken) {
     sessionToken = (await json<{ token: string }>(await fetch('/api/v1/session'))).token;
   }
   return sessionToken;
+}
+
+async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('X-DeepDeck-Token', await token());
+  let response = await fetch(input, { ...init, headers });
+  if (response.status !== 403) return response;
+
+  const body = await response.clone().json().catch(() => null) as { detail?: string } | null;
+  if (body?.detail !== 'Invalid local session token.') return response;
+
+  const retryHeaders = new Headers(init.headers);
+  retryHeaders.set('X-DeepDeck-Token', await token(true));
+  response = await fetch(input, { ...init, headers: retryHeaders });
+  return response;
 }
 
 export async function loadStatus(): Promise<CapabilityStatus> {
@@ -227,11 +262,15 @@ export async function loadModels(): Promise<LocalModel[]> {
   return (await json<Page<LocalModel>>(await fetch('/api/v1/models'))).items;
 }
 
+export async function loadAccountStatus(): Promise<AccountStatus> {
+  return json<AccountStatus>(await fetch('/api/v1/account/status'));
+}
+
 export async function createModel(payload: Record<string, unknown>): Promise<LocalModel> {
   return json<LocalModel>(
-    await fetch('/api/v1/models', {
+    await authorizedFetch('/api/v1/models', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
   );
@@ -239,9 +278,8 @@ export async function createModel(payload: Record<string, unknown>): Promise<Loc
 
 export async function deleteModel(modelId: string): Promise<{ id: string; name: string; deleted: boolean; reclaimedBytes: number }> {
   return json(
-    await fetch(`/api/v1/models/${encodeURIComponent(modelId)}`, {
+    await authorizedFetch(`/api/v1/models/${encodeURIComponent(modelId)}`, {
       method: 'DELETE',
-      headers: { 'X-DeepDeck-Token': await token() },
     }),
   );
 }
@@ -261,9 +299,9 @@ export async function saveModelResources(
   plan: ResourcePlan,
 ): Promise<ResourcePlan> {
   return json<ResourcePlan>(
-    await fetch(`/api/v1/models/${encodeURIComponent(modelId)}/resources`, {
+    await authorizedFetch(`/api/v1/models/${encodeURIComponent(modelId)}/resources`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(plan),
     }),
   );
@@ -283,32 +321,67 @@ export async function loadActiveGames(): Promise<ActiveGame[]> {
 
 export async function stopGame(gameId: string): Promise<ActiveGame> {
   return json<ActiveGame>(
-    await fetch(`/api/v1/games/${encodeURIComponent(gameId)}/stop`, {
+    await authorizedFetch(`/api/v1/games/${encodeURIComponent(gameId)}/stop`, {
       method: 'POST',
-      headers: { 'X-DeepDeck-Token': await token() },
     }),
   );
 }
 
 export async function saveApiKey(apiKey: string): Promise<{ configured: boolean }> {
   return json<{ configured: boolean }>(
-    await fetch('/api/v1/settings/api-key', {
+    await authorizedFetch('/api/v1/settings/api-key', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey }),
     }),
   );
 }
 
-export async function searchDecks(search: string, format: string): Promise<DeckSummary[]> {
-  const query = new URLSearchParams({ search, format });
-  return (await json<Page<DeckSummary>>(await fetch(`/api/v1/catalog/decks?${query}`))).items;
+export async function searchDeckPage(search: string, format: string, page = 1): Promise<Page<DeckSummary>> {
+  const query = new URLSearchParams({ search, format, page: String(page) });
+  return json<Page<DeckSummary>>(await fetch(`/api/v1/catalog/decks?${query}`));
 }
 
-export async function downloadDeck(versionId: string): Promise<{ versionId: string; name: string; format: string; cardCount: number; path: string }> {
-  return json(await fetch(`/api/v1/catalog/decks/${encodeURIComponent(versionId)}/download`, {
+export async function updateModel(
+  modelId: string,
+  payload: Pick<LocalModel, 'name' | 'decks' | 'reservePlaytest' | 'selfPlayAllSeats'>,
+): Promise<LocalModel> {
+  return json<LocalModel>(
+    await authorizedFetch(`/api/v1/models/${encodeURIComponent(modelId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+export async function searchDecks(search: string, format: string): Promise<DeckSummary[]> {
+  return (await searchDeckPage(search, format)).items;
+}
+
+export async function loadAllFormatDecks(format: string): Promise<DeckSummary[]> {
+  const decks = new Map<string, DeckSummary>();
+  for (let page = 1; page <= 100; page += 1) {
+    const result = await searchDeckPage("", format, page);
+    result.items.forEach((deck) => decks.set(deck.id, deck));
+    const pagination = result.pagination;
+    const totalPages = pagination?.totalPages ?? pagination?.total_pages;
+    const hasNextPage = pagination?.hasNextPage ?? pagination?.has_next_page;
+    if (
+      result.items.length === 0 ||
+      (typeof totalPages === "number" && page >= totalPages) ||
+      hasNextPage === false ||
+      (!pagination && result.items.length < 12)
+    ) {
+      break;
+    }
+  }
+  return [...decks.values()];
+}
+
+export async function downloadDeck(versionId: string): Promise<{ versionId: string; name: string; format: string; cardCount: number; rawCardCount: number; path: string }> {
+  return json(await authorizedFetch(`/api/v1/catalog/decks/${encodeURIComponent(versionId)}/download`, {
     method: 'POST',
-    headers: { 'X-DeepDeck-Token': await token() },
   }));
 }
 
@@ -317,9 +390,9 @@ export async function loadTrainingDeckPool(): Promise<{ decks: DeckSummary[] }> 
 }
 
 export async function saveTrainingDeckPool(decks: DeckSummary[]): Promise<{ decks: DeckSummary[] }> {
-  return json(await fetch('/api/v1/training/deck-pool', {
+  return json(await authorizedFetch('/api/v1/training/deck-pool', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decks }),
   }));
 }
@@ -335,9 +408,9 @@ export async function loadLocalDecks(format: string, engineUrl: string): Promise
 
 export async function startJob(payload: Record<string, unknown>): Promise<Job> {
   return json<Job>(
-    await fetch('/api/v1/jobs', {
+    await authorizedFetch('/api/v1/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-DeepDeck-Token': await token() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
   );
@@ -345,9 +418,8 @@ export async function startJob(payload: Record<string, unknown>): Promise<Job> {
 
 export async function stopJob(jobId: string): Promise<Job> {
   return json<Job>(
-    await fetch(`/api/v1/jobs/${jobId}/stop`, {
+    await authorizedFetch(`/api/v1/jobs/${jobId}/stop`, {
       method: 'POST',
-      headers: { 'X-DeepDeck-Token': await token() },
     }),
   );
 }

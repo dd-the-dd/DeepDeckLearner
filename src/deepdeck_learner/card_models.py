@@ -40,13 +40,29 @@ def oracle_request(card: dict[str, Any]) -> dict[str, Any]:
         "typeLine": str(card.get("typeLine", "")),
         "manaCost": card.get("manaCost"),
         "oracleText": card.get("oracleText"),
+        "layout": card.get("layout"),
         "faces": faces if isinstance(faces, list) else [],
     }
 
 
 def requires_power_toughness(card: dict[str, Any]) -> bool:
     type_line = str(card.get("typeLine", "")).casefold()
+    if (
+        bool(card.get("isToken"))
+        or bool(card.get("isGamePiece"))
+        or type_line.startswith(("token ", "emblem", "dungeon"))
+    ):
+        return False
     return "creature" in type_line or "vehicle" in type_line
+
+
+def requires_face_characteristics(card: dict[str, Any]) -> bool:
+    faces = card.get("faces")
+    return (
+        bool(card.get("imageBackUri"))
+        or "//" in str(card.get("name", ""))
+        or "//" in str(card.get("typeLine", ""))
+    ) and not (isinstance(faces, list) and len(faces) >= 2 and card.get("layout"))
 
 
 def enrich_card_characteristics(root: Path, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -66,11 +82,25 @@ def enrich_card_characteristics(root: Path, cards: list[dict[str, Any]]) -> list
     missing: dict[str, dict[str, Any]] = {}
     for card in cards:
         scryfall_id = str(card.get("scryfallId") or "").strip()
+        cached = cached_cards.get(scryfall_id, {})
+        cached_has_power_toughness = isinstance(cached, dict) and (
+            cached.get("power") is not None and cached.get("toughness") is not None
+        )
+        cached_has_faces = isinstance(cached, dict) and (
+            bool(cached.get("layout"))
+            and isinstance(cached.get("faces"), list)
+            and len(cached["faces"]) >= 2
+        )
         if (
             scryfall_id
-            and requires_power_toughness(card)
-            and (card.get("power") is None or card.get("toughness") is None)
-            and scryfall_id not in cached_cards
+            and (
+                (
+                    requires_power_toughness(card)
+                    and (card.get("power") is None or card.get("toughness") is None)
+                    and not cached_has_power_toughness
+                )
+                or (requires_face_characteristics(card) and not cached_has_faces)
+            )
         ):
             missing[scryfall_id] = card
 
@@ -116,10 +146,28 @@ def enrich_card_characteristics(root: Path, cards: list[dict[str, Any]]) -> list
                     power = creature_face.get("power")
                     toughness = creature_face.get("toughness")
             if scryfall_id:
-                cached_cards[scryfall_id] = {
+                normalized_faces = [
+                    {
+                        "id": f"{scryfall_id}:{index}",
+                        "name": str(face.get("name", "")),
+                        "typeLine": str(face.get("type_line", "")),
+                        "manaCost": face.get("mana_cost"),
+                        "oracleText": face.get("oracle_text"),
+                        "power": face.get("power"),
+                        "toughness": face.get("toughness"),
+                    }
+                    for index, face in enumerate(faces if isinstance(faces, list) else [])
+                    if isinstance(face, dict)
+                ]
+                facts: dict[str, Any] = {
                     "power": power,
                     "toughness": toughness,
                 }
+                if result.get("layout"):
+                    facts["layout"] = result["layout"]
+                if len(normalized_faces) >= 2:
+                    facts["faces"] = normalized_faces
+                cached_cards[scryfall_id] = facts
 
     if missing:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,8 +190,13 @@ def enrich_card_characteristics(root: Path, cards: list[dict[str, Any]]) -> list
     unresolved: list[str] = []
     for card in cards:
         current = dict(card)
+        facts = cached_cards.get(str(current.get("scryfallId") or ""), {})
+        if requires_face_characteristics(current) and isinstance(facts, dict):
+            if facts.get("layout"):
+                current["layout"] = facts["layout"]
+            if isinstance(facts.get("faces"), list) and len(facts["faces"]) >= 2:
+                current["faces"] = facts["faces"]
         if requires_power_toughness(current):
-            facts = cached_cards.get(str(current.get("scryfallId") or ""), {})
             if isinstance(facts, dict):
                 if current.get("power") is None and facts.get("power") is not None:
                     current["power"] = facts["power"]
@@ -285,6 +338,10 @@ def refresh_playtest_deck(
             current["power"] = source["power"]
         if current.get("toughness") is None and source.get("toughness") is not None:
             current["toughness"] = source["toughness"]
+        if source.get("layout"):
+            current["layout"] = source["layout"]
+        if isinstance(source.get("faces"), list) and len(source["faces"]) >= 2:
+            current["faces"] = source["faces"]
         rules = compiled.get(card_id)
         if isinstance(rules, list):
             current["rules"] = rules
