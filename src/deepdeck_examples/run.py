@@ -299,7 +299,11 @@ async def run(arguments: argparse.Namespace) -> None:
         logger = logging.getLogger(__name__)
         while True:
             await runner.wait_until_connected(timeout=30)
-            ticket = await runner.join_matchmaking(entry)
+            ticket = await (
+                runner.join_matchmaking(entry)
+                if arguments.once
+                else runner.join_matchmaking_with_retry(entry)
+            )
             ticket_id = str(ticket.get("id", ""))
             if ticket_id:
                 active_tickets[seat] = ticket_id
