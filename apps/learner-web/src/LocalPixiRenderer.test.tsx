@@ -26,9 +26,62 @@ vi.mock("@deepdeck/pixi", () => ({
   ],
 }));
 
-import { pixiScene, visibleCardNameChoices } from "./LocalPixiRenderer";
+import {
+  pixiScene,
+  stackEventPlaybackEntries,
+  visibleCardNameChoices,
+} from "./LocalPixiRenderer";
 
 describe("Pixi local-seat projection", () => {
+  test("plays every new stack object for 300ms and compresses repeated triggers", () => {
+    expect(stackEventPlaybackEntries([
+      {
+        cardInstanceId: "spell",
+        detail: { stackId: "stack:1" },
+        kind: "spellCast",
+        sequence: 8,
+      },
+      {
+        cardInstanceId: "permanent",
+        detail: { stackId: "stack:2" },
+        kind: "triggeredAbilityPutOnStack",
+        sequence: 9,
+      },
+      {
+        cardInstanceId: "permanent",
+        detail: { stackId: "stack:3" },
+        kind: "triggeredAbilityPutOnStack",
+        sequence: 10,
+      },
+      {
+        cardInstanceId: "copy:spell:spell:1",
+        detail: { stackId: "stack:4" },
+        kind: "stackObjectCopied",
+        sequence: 11,
+      },
+      { kind: "lifeLost", sequence: 12 },
+    ], 7)).toEqual([
+      expect.objectContaining({
+        cardInstanceId: "spell",
+        count: 1,
+        durationMs: 300,
+        kind: "spell",
+      }),
+      expect.objectContaining({
+        cardInstanceId: "permanent",
+        count: 2,
+        durationMs: 3,
+        firstSequence: 9,
+        lastSequence: 10,
+      }),
+      expect.objectContaining({
+        cardInstanceId: "copy:spell:spell:1",
+        durationMs: 300,
+        kind: "stackCopy",
+      }),
+    ]);
+  });
+
   test("offers only visible hand, graveyard, and exile cards as clickable names", () => {
     const choices = visibleCardNameChoices({
       players: [

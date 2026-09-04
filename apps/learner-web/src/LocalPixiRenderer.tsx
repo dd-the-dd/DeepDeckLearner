@@ -44,6 +44,16 @@ type Interaction = {
   prompt?: string;
 };
 
+export type StackPlaybackEntry = {
+  cardInstanceId: string;
+  count: number;
+  durationMs: number;
+  firstSequence: number;
+  kind: "spell" | "stackCopy" | "activatedAbility" | "triggeredAbility";
+  lastSequence: number;
+  stackId: string;
+};
+
 const pixi = DeepDeckPixi as unknown as PixiRuntime;
 
 function sceneCard(card: any, kind: string, zone: string, interaction: Interaction) {
@@ -243,6 +253,115 @@ export function visibleCardNameChoices(projection: Projection) {
     .map((card: any) => [String(card.id), card])).values()];
 }
 
+// The Engine transports its complete event log with every session view. Convert only newly
+// observed stack insertions into short visual frames; rules execution itself never waits.
+// eslint-disable-next-line react-refresh/only-export-components -- exported for playback regression coverage.
+export function stackEventPlaybackEntries(events: any[], afterSequence: number) {
+  const entries: StackPlaybackEntry[] = [];
+  for (const event of events ?? []) {
+    const sequence = Number(event?.sequence ?? 0);
+    const kind = ({
+      activatedAbilityPutOnStack: "activatedAbility",
+      cardCycled: "activatedAbility",
+      cardTypecycled: "activatedAbility",
+      equipAbilityPutOnStack: "activatedAbility",
+      reflexiveTriggeredAbilityPutOnStack: "triggeredAbility",
+      spellCast: "spell",
+      stackObjectCopied: "stackCopy",
+      triggeredAbilityCopied: "triggeredAbility",
+      triggeredAbilityPutOnStack: "triggeredAbility",
+    } as Record<string, StackPlaybackEntry["kind"] | undefined>)[String(event?.kind)];
+    if (!kind || sequence <= afterSequence) continue;
+    const cardInstanceId = String(event?.cardInstanceId ?? "");
+    const stackId = String(event?.detail?.stackId ?? `stack-event:${sequence}`);
+    const previous = entries.at(-1);
+    if (
+      kind === "triggeredAbility" &&
+      previous?.kind === kind &&
+      previous.cardInstanceId === cardInstanceId &&
+      sequence === previous.lastSequence + 1
+    ) {
+      previous.count += 1;
+      previous.durationMs = 3;
+      previous.lastSequence = sequence;
+      continue;
+    }
+    entries.push({
+      cardInstanceId,
+      count: 1,
+      durationMs: 300,
+      firstSequence: sequence,
+      kind,
+      lastSequence: sequence,
+      stackId,
+    });
+  }
+  return entries;
+}
+
+function projectedCardById(projection: Projection, cardInstanceId: string) {
+  const originalCopyId = cardInstanceId.match(/^copy:spell:(.*):\d+$/u)?.[1];
+  const candidateIds = new Set([cardInstanceId, originalCopyId].filter(Boolean));
+  const stackCard = (projection.stack ?? [])
+    .find((item: any) => candidateIds.has(String(item?.card?.id ?? "")))?.card;
+  if (stackCard) return stackCard;
+  for (const player of projection.players ?? []) {
+    const battlefield = player.zones?.battlefield ?? {};
+    const cards = [
+      ...(player.zones?.hand ?? []),
+      ...(player.zones?.graveyard?.cards ?? []),
+      ...(player.zones?.exile?.cards ?? []),
+      ...(player.zones?.commandZone?.cards ?? []),
+      ...(player.zones?.sideboard?.cards ?? []),
+      ...(battlefield.lands ?? []),
+      ...(battlefield.creatures ?? []),
+      ...(battlefield.nonCreaturePermanents ?? []),
+    ];
+    const found = cards.find((card: any) => candidateIds.has(String(card?.id ?? "")));
+    if (found) return found;
+  }
+  return null;
+}
+
+function sceneWithStackPlayback(
+  scene: Record<string, any>,
+  projection: Projection,
+  playback: StackPlaybackEntry | undefined,
+) {
+  if (!playback) return scene;
+  const event = (projection.state?.events ?? []).find(
+    (candidate: any) => Number(candidate?.sequence) === playback.firstSequence,
+  );
+  const card = projectedCardById(projection, playback.cardInstanceId);
+  const name = String(card?.name ?? event?.detail?.cardName ?? "Unknown card");
+  const activity = playback.kind === "spell"
+    ? "Spell cast"
+    : playback.kind === "stackCopy"
+      ? "Stack object copied"
+      : playback.kind === "triggeredAbility" ? "Triggered ability" : "Activated ability";
+  const count = playback.count > 1 ? ` ×${playback.count}` : "";
+  const replayItem = {
+    card: card ?? { id: playback.cardInstanceId, imageUrl: "", name },
+    detail: `${activity}${count}`,
+    id: playback.stackId,
+    imageUrl: card?.imageUrl ?? "",
+    name: `${name} — ${activity}${count}`,
+    raw: { event, playback },
+    targetable: false,
+    type: playback.kind,
+  };
+  const stack = [...(scene.stack ?? [])];
+  const existing = stack.findIndex((item: any) => item.id === playback.stackId);
+  if (existing >= 0) stack[existing] = { ...stack[existing], ...replayItem };
+  else stack.push(replayItem);
+  return {
+    ...scene,
+    replay: true,
+    stack,
+    status: `${activity}${count}: ${name}`,
+  };
+}
+
 function abstractResolutionLabel(action: any, projection: Projection) {
   const label = actionLabel(action);
   if (projection.decisionSourceCard?.name !== "Ponder") return label;
@@ -272,7 +391,9 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const [searchedCardNames, setSearchedCardNames] = useState<string[]>([]);
   const [hoveredCard, setHoveredCard] = useState<any | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [stackPlaybackQueue, setStackPlaybackQueue] = useState<StackPlaybackEntry[]>([]);
   const [visualError, setVisualError] = useState("");
+  const playbackCursor = useRef({ sequence: 0, sessionId: "" });
 
   const cardCatalog = useMemo(
     () => pixi.gameSessionCardCatalogFromDeckSelections(deckSelections),
@@ -347,7 +468,15 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     targetableIds,
     targeting: Boolean(activeTargetPlan || cardChoice || cardNameChoice),
   }), [activeTargetPlan, cardChoice, cardNameChoice, selectedCardIds, selectedIds, tableChoiceCards.length, targetableIds]);
-  const scene = useMemo(() => pixiScene(projection, interaction), [interaction, projection]);
+  const activeStackPlayback = stackPlaybackQueue[0];
+  const scene = useMemo(
+    () => sceneWithStackPlayback(
+      pixiScene(projection, interaction),
+      projection,
+      activeStackPlayback,
+    ),
+    [activeStackPlayback, interaction, projection],
+  );
   const initialScene = useRef(scene);
   const initialSelectionKey = JSON.stringify(
     projection.resolutionCardChoice?.initialSelectedCardIds ?? [],
@@ -504,6 +633,34 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       controller.abort();
     };
   }, [cardNameChoice, cardNameQuery]);
+  useEffect(() => {
+    const events = projection.state?.events ?? [];
+    const latestSequence = events.reduce(
+      (latest: number, event: any) => Math.max(latest, Number(event?.sequence ?? 0)),
+      0,
+    );
+    const sessionId = String(view.sessionId ?? "");
+    if (playbackCursor.current.sessionId !== sessionId) {
+      playbackCursor.current = { sequence: latestSequence, sessionId };
+      setStackPlaybackQueue([]);
+      return;
+    }
+    if (latestSequence < playbackCursor.current.sequence) {
+      playbackCursor.current.sequence = latestSequence;
+      setStackPlaybackQueue([]);
+      return;
+    }
+    const additions = stackEventPlaybackEntries(events, playbackCursor.current.sequence);
+    playbackCursor.current.sequence = latestSequence;
+    if (additions.length) setStackPlaybackQueue((current) => [...current, ...additions]);
+  }, [projection.state?.events, view.sessionId]);
+  useEffect(() => {
+    if (!activeStackPlayback) return;
+    const timer = window.setTimeout(() => {
+      setStackPlaybackQueue((current) => current.slice(1));
+    }, activeStackPlayback.durationMs);
+    return () => window.clearTimeout(timer);
+  }, [activeStackPlayback]);
   useEffect(() => {
     if (!host.current) return;
     try {
