@@ -27,19 +27,20 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     training_step: int,
     matchup_ids: list[str],
+    *,
+    include_optimizer: bool = True,
 ) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     checkpoint_path = directory / "checkpoint.pt"
     checkpoint_temporary = directory / "checkpoint.pt.tmp"
     checkpoint_temporary.unlink(missing_ok=True)
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "training_step": training_step,
-        },
-        checkpoint_temporary,
-    )
+    payload = {
+        "model": model.state_dict(),
+        "training_step": training_step,
+    }
+    if include_optimizer:
+        payload["optimizer"] = optimizer.state_dict()
+    torch.save(payload, checkpoint_temporary)
     checkpoint_temporary.replace(checkpoint_path)
     manifest = CheckpointManifest(
         schema_version="oracle-ai-checkpoint/v1",
