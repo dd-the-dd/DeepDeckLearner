@@ -67,10 +67,12 @@ class AgentClient:
     async def _starting(self, payload: dict[str, Any]) -> None:
         request = StartingSituationRequest.model_validate(payload)
         await self.agent.analyze_starting_situation(request)
-        await self._send({
-            "type": "startingSituationCompleted",
-            "requestId": request.request_id,
-        })
+        await self._send(
+            {
+                "type": "startingSituationCompleted",
+                "requestId": request.request_id,
+            }
+        )
 
     async def _decision(self, payload: dict[str, Any]) -> None:
         request = DecisionRequest.model_validate(payload)
@@ -94,11 +96,13 @@ class AgentClient:
         )
         if not isinstance(response, DecisionResponse):
             response = DecisionResponse.model_validate(response)
-        await self._send({
-            "type": "decisionSubmitted",
-            "requestId": request.request_id,
-            **response.model_dump(by_alias=True, exclude_none=True),
-        })
+        await self._send(
+            {
+                "type": "decisionSubmitted",
+                "requestId": request.request_id,
+                **response.model_dump(by_alias=True, exclude_none=True),
+            }
+        )
 
     async def _dispatch(self, payload: dict[str, Any]) -> None:
         message_type = payload.get("type")
@@ -111,7 +115,14 @@ class AgentClient:
         elif message_type == "decisionResolved":
             await self.agent.decision_resolved(DecisionResolvedRequest.model_validate(payload))
         elif message_type == "gameEnded":
-            await self.agent.game_ended(GameEndedRequest.model_validate(payload))
+            request = GameEndedRequest.model_validate(payload)
+            try:
+                await self.agent.game_ended(request)
+            finally:
+                # Context ids are unique per game. Keeping a replica after the
+                # terminal message retains the complete observation forever and
+                # makes long-running League clients grow once per played seat.
+                self._replicas.pop(request.context_id, None)
         elif message_type == "ping":
             await self._send({"type": "pong", "requestId": payload.get("requestId")})
 
@@ -131,14 +142,16 @@ class AgentClient:
             max_size=32 * 1024 * 1024,
         ) as socket:
             self._socket = socket
-            await self._send({
-                "type": "registerAgent",
-                "protocolVersion": "mtg-agent/v1",
-                "manifest": self.manifest.model_dump(by_alias=True, mode="json"),
-                "observationStream": self.observation_stream.value,
-                "timeoutCategory": self.timeout_category.value,
-                "gameSharing": self.game_sharing.value,
-            })
+            await self._send(
+                {
+                    "type": "registerAgent",
+                    "protocolVersion": "mtg-agent/v1",
+                    "manifest": self.manifest.model_dump(by_alias=True, mode="json"),
+                    "observationStream": self.observation_stream.value,
+                    "timeoutCategory": self.timeout_category.value,
+                    "gameSharing": self.game_sharing.value,
+                }
+            )
             first = json.loads(await socket.recv())
             self.registration = RegistrationAccepted.model_validate(first)
             async for raw in socket:

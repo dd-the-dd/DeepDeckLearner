@@ -657,6 +657,7 @@ def test_pool_training_builds_local_catalog_and_parallel_config(tmp_path: Path) 
     assert label == "Test Pilot · V12 · 1 deck"
     assert config["parallelGameWorkers"] == 3
     assert config["rolloutBatchGames"] == 3
+    assert config["maxCheckpoints"] == 2
     assert config["continuous"] is True
     assert config["learnerSettings"]["reservePlaytest"] is True
     assert config["learnerSettings"]["modelName"] == "Test Pilot"

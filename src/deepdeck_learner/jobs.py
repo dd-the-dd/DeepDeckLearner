@@ -844,6 +844,12 @@ class JobManager:
         config["continuous"] = True
         config["parallelGameWorkers"] = workers
         config["rolloutBatchGames"] = workers
+        # A V12 checkpoint includes both weights and Adam optimizer state and
+        # can occupy hundreds of megabytes. Keep two resumable historical
+        # points in addition to the live checkpoint by default.
+        config["maxCheckpoints"] = self._bounded_int(
+            raw, "max_checkpoints", default=2, minimum=1, maximum=3
+        )
         resource_plan = {
             "trainingMatches": workers,
             "leagueMatches": 1,
