@@ -338,6 +338,7 @@ def test_learner_resource_plan_resizes_training_workers_between_batches(
     trainer.resource_plan_path = resource_path
     trainer.parallel_game_workers = 1
     trainer.rollout_batch_games = 1
+
     class Environment:
         progress_callback = None
 
@@ -3227,7 +3228,24 @@ def test_ppo_updates_and_checkpoint_round_trip(tmp_path: Path) -> None:
     save_checkpoint(checkpoint, model, learner.optimizer, learner.training_step, ["smoke"])
     restored, payload = load_checkpoint(checkpoint, torch.device("cpu"))
     assert payload["training_step"] == learner.training_step
+    assert "optimizer" in payload
     assert restored.config == model.config
+
+    playable_checkpoint = tmp_path / "playable-checkpoint"
+    save_checkpoint(
+        playable_checkpoint,
+        model,
+        learner.optimizer,
+        learner.training_step,
+        ["smoke"],
+        include_optimizer=False,
+    )
+    playable_model, playable_payload = load_checkpoint(playable_checkpoint, torch.device("cpu"))
+    assert "optimizer" not in playable_payload
+    assert playable_model.config == model.config
+    assert (playable_checkpoint / "checkpoint.pt").stat().st_size < (
+        checkpoint / "checkpoint.pt"
+    ).stat().st_size
 
 
 def test_v2_ppo_and_checkpoint_round_trip(tmp_path: Path) -> None:

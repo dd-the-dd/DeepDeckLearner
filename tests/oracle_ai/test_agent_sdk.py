@@ -8,6 +8,7 @@ from oracle_ai.agents.protocol import (
     AgentCompatibility,
     AgentManifest,
     DeckSelection,
+    GameEndedRequest,
     GameSharing,
     ObservationStream,
     TimeoutCategory,
@@ -65,6 +66,31 @@ def test_merge_patch_does_not_mutate_the_source() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_client_releases_finished_game_observations() -> None:
+    from oracle_ai.agents.base import MagicAgent
+    from oracle_ai.agents.client import AgentClient
+
+    client = AgentClient(
+        "ws://localhost",
+        manifest(),
+        MagicAgent(),
+        observation_stream=ObservationStream.FULL,
+        timeout_category=TimeoutCategory.STANDARD,
+    )
+    client._replicas["game-1:player-1"] = ObservationReplica()
+
+    await client._dispatch(
+        {
+            "type": "gameEnded",
+            "contextId": "game-1:player-1",
+            "outcome": {"winner": "player-1"},
+        }
+    )
+
+    assert client._replicas == {}
+
+
+@pytest.mark.asyncio
 async def test_v11_v12_adapter_expands_numeric_decisions() -> None:
     from oracle_ai.agents.model_agent import OracleModelAgent
     from oracle_ai.agents.protocol import DecisionRequest, StartingSituationRequest
@@ -82,43 +108,69 @@ async def test_v11_v12_adapter_expands_numeric_decisions() -> None:
             return 2, None, "test-v12"
 
     adapter = OracleModelAgent(Runtime())
-    await adapter.analyze_starting_situation(StartingSituationRequest.model_validate({
-        "type": "startingSituationRequested",
-        "schemaVersion": "mtg-agent/v1",
-        "requestId": "start",
-        "contextId": "game:p1",
-        "deadlineUnixMs": 1,
-        "targetDurationMs": 5,
-        "analysisDurationMs": 25,
-        "observation": {"players": [{"id": "p1", "library": []}]},
-        "knownDeck": [{"id": "known-card", "name": "Known Card", "typeLine": "Land"}],
-    }))
-    response = await adapter.make_decision(DecisionRequest.model_validate({
-        "type": "decisionRequested",
-        "schemaVersion": "mtg-agent/v1",
-        "observationSchemaVersion": "player-observation/v1",
-        "requestId": "d1",
-        "contextId": "game:p1",
-        "playerId": "p1",
-        "deadlineUnixMs": 1,
-        "observationUpdate": {
-            "kind": "fullObservation",
-            "sequence": 1,
-            "observation": {"players": [{"id": "p1"}]},
-        },
-        "decision": {
-            "id": "d1",
-            "kind": "resolutionChoice",
-            "playerId": "p1",
-            "choice": {
-                "kind": "numberSelection",
-                "decisionId": "amount",
-                "minimum": 1,
-                "maximum": 3,
-            },
-            "options": [{"id": "choose", "kind": "chooseResolution", "playerId": "p1", "label": "Choose"}],
-        },
-        "observation": {"players": [{"id": "p1"}]},
-    }))
+    await adapter.analyze_starting_situation(
+        StartingSituationRequest.model_validate(
+            {
+                "type": "startingSituationRequested",
+                "schemaVersion": "mtg-agent/v1",
+                "requestId": "start",
+                "contextId": "game:p1",
+                "deadlineUnixMs": 1,
+                "targetDurationMs": 5,
+                "analysisDurationMs": 25,
+                "observation": {"players": [{"id": "p1", "library": []}]},
+                "knownDeck": [{"id": "known-card", "name": "Known Card", "typeLine": "Land"}],
+            }
+        )
+    )
+    response = await adapter.make_decision(
+        DecisionRequest.model_validate(
+            {
+                "type": "decisionRequested",
+                "schemaVersion": "mtg-agent/v1",
+                "observationSchemaVersion": "player-observation/v1",
+                "requestId": "d1",
+                "contextId": "game:p1",
+                "playerId": "p1",
+                "deadlineUnixMs": 1,
+                "observationUpdate": {
+                    "kind": "fullObservation",
+                    "sequence": 1,
+                    "observation": {"players": [{"id": "p1"}]},
+                },
+                "decision": {
+                    "id": "d1",
+                    "kind": "resolutionChoice",
+                    "playerId": "p1",
+                    "choice": {
+                        "kind": "numberSelection",
+                        "decisionId": "amount",
+                        "minimum": 1,
+                        "maximum": 3,
+                    },
+                    "options": [
+                        {
+                            "id": "choose",
+                            "kind": "chooseResolution",
+                            "playerId": "p1",
+                            "label": "Choose",
+                        }
+                    ],
+                },
+                "observation": {"players": [{"id": "p1"}]},
+            }
+        )
+    )
     assert response.action_id == "choose"
     assert response.number_value == 3
+    await adapter.game_ended(
+        GameEndedRequest.model_validate(
+            {
+                "type": "gameEnded",
+                "contextId": "game:p1",
+                "outcome": {"winner": "p1"},
+            }
+        )
+    )
+    assert adapter._pregame_by_context == {}
+    assert adapter._known_deck_by_context == {}

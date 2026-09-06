@@ -1848,6 +1848,7 @@ class LeagueTrainer:
             self.learner.optimizer,
             self.learner.training_step,
             list(self.training_matchups),
+            include_optimizer=False,
         )
 
     def _refresh_training_service(self, *, checkpoint_is_current: bool = False) -> None:
@@ -2848,7 +2849,18 @@ class LeagueTrainer:
                     "recentLoopEvents": attempt.get("recentLoopEvents", []),
                 }
                 _append_jsonl(self.output / "training-errors.jsonl", error_record)
-                print(json.dumps({"trainingError": error_record}), flush=True)
+                print(
+                    json.dumps(
+                        {
+                            "trainingError": {
+                                "attempt": error_record["attempt"],
+                                "worker": error_record["worker"],
+                                "error": error_record["error"],
+                            }
+                        }
+                    ),
+                    flush=True,
+                )
                 self.last_attempt = {
                     **attempt,
                     "status": "failed",
@@ -2909,7 +2921,18 @@ class LeagueTrainer:
                     "error": f"{type(error).__name__}: {error}",
                 }
                 _append_jsonl(self.output / "training-errors.jsonl", batch_error)
-                print(json.dumps({"trainingBatchError": batch_error}), flush=True)
+                print(
+                    json.dumps(
+                        {
+                            "trainingBatchError": {
+                                "attempt": batch_error["attempt"],
+                                "batchSize": batch_error["batchSize"],
+                                "error": batch_error["error"],
+                            }
+                        }
+                    ),
+                    flush=True,
+                )
                 with self._state_lock:
                     self.active_attempts = {}
                     self._active_attempt_trackers = {}
@@ -3046,7 +3069,22 @@ class LeagueTrainer:
                     ),
                 }
                 _append_jsonl(self.output / "training.jsonl", training_record)
-                print(json.dumps({"training": training_record}), flush=True)
+                # The full record already lives in training.jsonl. Emitting it
+                # again made learner-process.log grow by several kilobytes per
+                # game, so stdout carries only the live progress summary.
+                print(
+                    json.dumps(
+                        {
+                            "training": {
+                                "episode": training_record["episode"],
+                                "trainingStep": training_record["trainingStep"],
+                                "gameStatus": training_record["gameStatus"],
+                                "gameDurationSeconds": training_record["gameDurationSeconds"],
+                            }
+                        }
+                    ),
+                    flush=True,
+                )
                 self.last_attempt = {
                     **attempt,
                     "status": "completed",

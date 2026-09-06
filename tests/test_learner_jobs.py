@@ -155,6 +155,32 @@ def test_playtest_uses_inline_decks_from_the_models_training_pool(tmp_path: Path
     assert setup["setup"]["players"][1]["name"] == "AI Pool Deck"
 
 
+def test_playtest_uses_deck_added_after_the_last_training_resolution(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    checkpoint = local_checkpoint(tmp_path)
+    run = checkpoint.parent.parent
+    (run / "resolved-config.json").write_text(
+        json.dumps({"resolvedLegacyDecks": ["Player Pool Deck"]}),
+        encoding="utf-8",
+    )
+
+    argv, _, _ = manager._playtest_command(  # noqa: SLF001
+        {
+            "agent": "v12",
+            "model_id": "my-local-ai",
+            "checkpoint": str(checkpoint),
+            "engine_url": "http://127.0.0.1:8787",
+            "format": "legacy",
+            "deck_version_id": "pool-deck-2",
+            "opponent_deck_version_id": "pool-deck-1",
+        }
+    )
+
+    setup_path = Path(argv[argv.index("--local-game-setup") + 1])
+    setup = json.loads(setup_path.read_text(encoding="utf-8"))
+    assert setup["setup"]["players"][0]["name"] == "AI Pool Deck"
+
+
 def test_playtest_recompiles_cached_card_rules_with_the_current_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -657,6 +683,7 @@ def test_pool_training_builds_local_catalog_and_parallel_config(tmp_path: Path) 
     assert label == "Test Pilot · V12 · 1 deck"
     assert config["parallelGameWorkers"] == 3
     assert config["rolloutBatchGames"] == 3
+    assert config["maxCheckpoints"] == 2
     assert config["continuous"] is True
     assert config["learnerSettings"]["reservePlaytest"] is True
     assert config["learnerSettings"]["modelName"] == "Test Pilot"
