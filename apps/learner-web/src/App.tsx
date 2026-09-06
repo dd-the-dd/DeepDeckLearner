@@ -1161,8 +1161,9 @@ function formatBytes(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
-function AgentEditor({ model, onClose, refresh }: {
+function AgentEditor({ model, activeWorkers, onClose, refresh }: {
   model: LocalModel;
+  activeWorkers: ResourceSnapshot["workers"];
   onClose: () => void;
   refresh: () => void;
 }) {
@@ -1174,6 +1175,7 @@ function AgentEditor({ model, onClose, refresh }: {
   const [selfPlayAllSeats, setSelfPlayAllSeats] = useState(model.selfPlayAllSeats !== false);
   const [busy, setBusy] = useState("");
   const [saving, setSaving] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1222,6 +1224,19 @@ function AgentEditor({ model, onClose, refresh }: {
     }
   }
 
+  async function stopActiveWorkers() {
+    setStopping(true);
+    setError("");
+    try {
+      await Promise.all(activeWorkers.map((worker) => stopJob(worker.jobId)));
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to stop this agent's active services.");
+    } finally {
+      setStopping(false);
+    }
+  }
+
   return <div className="agent-editor">
     <div className="training-launch">
       <label>Agent name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label>
@@ -1237,8 +1252,9 @@ function AgentEditor({ model, onClose, refresh }: {
       <label className="check-setting"><input type="checkbox" checked={selfPlayAllSeats} onChange={(event) => setSelfPlayAllSeats(event.target.checked)} /><span><strong>Shared-model self-play</strong><small>The same model controls every training seat.</small></span></label>
       <label className="check-setting"><input type="checkbox" checked={reservePlaytest} onChange={(event) => setReservePlaytest(event.target.checked)} /><span><strong>Publish playable weights</strong><small>Keep a stable checkpoint available for playtests.</small></span></label>
     </div>
+    {activeWorkers.length > 0 && <div className="notice warning" role="status"><strong>{activeWorkers.length} active service{activeWorkers.length === 1 ? "" : "s"} must stop before saving</strong><span>Your edits stay in this form. Stop the agent's services, then save the changes.</span><button className="danger subtle" type="button" disabled={stopping} onClick={() => void stopActiveWorkers()}>{stopping ? "Stopping services…" : `Stop ${activeWorkers.length} active service${activeWorkers.length === 1 ? "" : "s"}`}</button></div>}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="form-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="button" disabled={saving || name.trim().length < 2 || decks.length === 0} onClick={() => void save()}>{saving ? "Saving agent…" : "Save agent"}</button><small>Stop all of this agent's jobs before saving changes.</small></div>
+    <div className="form-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="button" disabled={saving || activeWorkers.length > 0 || name.trim().length < 2 || decks.length === 0} onClick={() => void save()}>{saving ? "Saving agent…" : "Save agent"}</button><small>{activeWorkers.length > 0 ? "Stop the active services above to enable saving." : "The existing weights are preserved when these settings change."}</small></div>
   </div>;
 }
 
@@ -1294,8 +1310,8 @@ function AgentCatalog({
           <div><dt>Games learned</dt><dd>{model.trainingState?.completedGames ?? 0}</dd></div>
         </dl>
         <div className="agent-deck-list">{model.decks.map((deck) => <span key={deck.id}>{deck.name}</span>)}</div>
-        {!isConfirming && <div className="agent-card-actions"><button type="button" disabled={activeWorkers.length > 0} onClick={() => { setEditing(editing === model.id ? "" : model.id); setMessage(""); }}>{editing === model.id ? "Close editor" : "Edit agent and decks"}</button><button className="danger subtle" type="button" onClick={() => { setEditing(""); setConfirming(model.id); setConfirmation(""); setMessage(""); }}>Delete agent and weights</button></div>}
-        {editing === model.id && <AgentEditor model={model} refresh={refresh} onClose={() => setEditing("")} />}
+        {!isConfirming && <div className="agent-card-actions"><button type="button" onClick={() => { setEditing(editing === model.id ? "" : model.id); setMessage(""); }}>{editing === model.id ? "Close editor" : "Edit agent and decks"}</button><button className="danger subtle" type="button" onClick={() => { setEditing(""); setConfirming(model.id); setConfirmation(""); setMessage(""); }}>Delete agent and weights</button></div>}
+        {editing === model.id && <AgentEditor model={model} activeWorkers={activeWorkers} refresh={refresh} onClose={() => setEditing("")} />}
         {isConfirming && <div className="delete-agent-confirm" role="alertdialog" aria-label={`Delete ${model.name}`}>
           <strong>Delete {formatBytes(model.diskBytes)} permanently?</strong>
           <p>The agent, checkpoints, training history and local statistics in this run will be removed.</p>
