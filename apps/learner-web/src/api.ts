@@ -46,6 +46,7 @@ export type DeckPresentation = {
 
 export type DeckSummary = {
   id: string;
+  deckId?: string;
   name: string;
   creator?: string;
   version: number;
