@@ -1086,11 +1086,19 @@ class JobManager:
                 raise JobValidationError(
                     "This model's local training deck catalog is unavailable."
                 ) from fallback_error
-        validated_names = self._playtest_validated_deck_names(run, game_format)
+        configured_version_ids = self._playtest_configured_deck_ids(run)
         eligible_catalog = {
             str(deck_name): cards
             for deck_name, cards in catalog.items()
-            if not validated_names or str(deck_name) in validated_names
+            if isinstance(cards, list)
+            and (
+                not configured_version_ids
+                or any(
+                    isinstance(card, dict)
+                    and str(card.get("sourceSessionId", "")) in configured_version_ids
+                    for card in cards
+                )
+            )
         }
 
         def selected_deck(version_id: str) -> tuple[str, list[dict[str, Any]]]:
@@ -1313,13 +1321,27 @@ class JobManager:
             return {}
 
     @staticmethod
-    def _playtest_validated_deck_names(run: Path, game_format: str) -> set[str]:
-        key = "resolvedCommanderDecks" if game_format == "commander" else "resolvedLegacyDecks"
+    def _playtest_configured_deck_ids(run: Path) -> set[str]:
+        """Return the agent's current pool, not a stale trainer resolution by deck name."""
         try:
-            resolved = json.loads((run / "resolved-config.json").read_text(encoding="utf-8"))
-            names = resolved.get(key, [])
-            return {str(name) for name in names} if isinstance(names, list) else set()
+            metadata = json.loads((run / "local-model.json").read_text(encoding="utf-8"))
+            decks = metadata.get("decks", [])
+            ids = {
+                str(deck.get("id"))
+                for deck in decks
+                if isinstance(deck, dict) and deck.get("id")
+            }
+            if ids:
+                return ids
         except (OSError, ValueError):
+            pass
+        try:
+            import yaml
+
+            config = yaml.safe_load((run / "training-config.yaml").read_text(encoding="utf-8"))
+            raw_ids = config.get("learnerSettings", {}).get("selectedDeckVersionIds", [])
+            return {str(value) for value in raw_ids} if isinstance(raw_ids, list) else set()
+        except (AttributeError, OSError, ValueError):
             return set()
 
     def _matchmaking_command(self, raw: dict[str, Any]) -> tuple[list[str], str, None]:
