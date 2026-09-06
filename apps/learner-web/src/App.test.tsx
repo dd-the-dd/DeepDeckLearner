@@ -511,13 +511,14 @@ describe("guided onboarding", () => {
     });
   });
 
-  test("edits an existing agent and adds a deck without replacing its weights", async () => {
+  test("edits an agent, adds a deck, and replaces an older deck version", async () => {
     const readyStatus: CapabilityStatus = {
       ...status,
       hosted: { ...status.hosted, api_key_configured: true },
     };
-    const firstDeck = { id: "deck-one", name: "Deck One", version: 1, format: "legacy", colors: [], playableCardCount: 60 };
-    const secondDeck = { id: "deck-two", name: "Deck Two", version: 2, format: "legacy", colors: [], playableCardCount: 60 };
+    const firstDeck = { id: "deck-one-v1", deckId: "deck-one", name: "Deck One", version: 1, format: "legacy", colors: [], playableCardCount: 60 };
+    const updatedFirstDeck = { ...firstDeck, id: "deck-one-v2", version: 2, playableCardCount: 61 };
+    const secondDeck = { id: "deck-two", deckId: "deck-two", name: "Deck Two", version: 2, format: "legacy", colors: [], playableCardCount: 60 };
     const model = {
       id: "editable-agent",
       name: "Editable Agent",
@@ -541,9 +542,10 @@ describe("guided onboarding", () => {
       if (url.endsWith("/api/v1/status")) return response(readyStatus);
       if (url.endsWith("/api/v1/account/status")) return response({ configured: true, valid: true, reason: "Connected" });
       if (url.endsWith("/api/v1/models") && !init?.method) return response({ items: [model] });
-      if (url.includes("/api/v1/catalog/decks?")) return response({ items: [firstDeck, secondDeck] });
+      if (url.includes("/api/v1/catalog/decks?")) return response({ items: [updatedFirstDeck, secondDeck] });
+      if (url.endsWith("/api/v1/catalog/decks/deck-one-v2/download") && init?.method === "POST") return response({ versionId: "deck-one-v2", name: "Deck One", format: "legacy", cardCount: 61, rawCardCount: 61, path: "deck-one-v2.json" });
       if (url.endsWith("/api/v1/catalog/decks/deck-two/download") && init?.method === "POST") return response({ versionId: "deck-two", name: "Deck Two", format: "legacy", cardCount: 60, rawCardCount: 60, path: "deck-two.json" });
-      if (url.endsWith("/api/v1/models/editable-agent") && init?.method === "PUT") return response({ ...model, name: "Renamed Agent", decks: [firstDeck, secondDeck] });
+      if (url.endsWith("/api/v1/models/editable-agent") && init?.method === "PUT") return response({ ...model, name: "Renamed Agent", decks: [updatedFirstDeck, secondDeck] });
       if (url.endsWith("/api/v1/session")) return response({ token: "local-token" });
       return readResponse(url, readyStatus);
     });
@@ -552,6 +554,7 @@ describe("guided onboarding", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit agent and decks" }));
     fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Renamed Agent" } });
+    fireEvent.click(await within(screen.getByLabelText("Deck results for Editable Agent")).findByRole("button", { name: /Deck One/i }));
     fireEvent.click(await screen.findByRole("button", { name: /Deck Two/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Save agent" }));
 
@@ -562,7 +565,7 @@ describe("guided onboarding", () => {
       expect(request).toBeDefined();
       expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
         name: "Renamed Agent",
-        decks: [{ id: "deck-one" }, { id: "deck-two" }],
+        decks: [{ id: "deck-one-v2", deckId: "deck-one" }, { id: "deck-two" }],
       });
     });
   });
@@ -603,6 +606,7 @@ describe("guided onboarding", () => {
       const url = String(input);
       if (url.endsWith("/api/v1/models") && !init?.method) return response({ items: [model] });
       if (url.endsWith("/api/v1/resources")) return response({ ...resources, workers: workerActive ? [worker] : [] });
+      if (url.includes("/api/v1/catalog/decks?")) return response({ items: [] });
       if (url.endsWith("/api/v1/session")) return response({ token: "local-token" });
       if (url.endsWith("/api/v1/jobs/league-worker/stop") && init?.method === "POST") {
         workerActive = false;

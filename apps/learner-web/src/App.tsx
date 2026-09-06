@@ -1095,7 +1095,10 @@ function LocalTrainingForm({ status, account, refresh }: { status: CapabilitySta
     setError("");
     try {
       const downloaded = await downloadDeck(deck.id);
-      const next = [...selected, { ...deck, playableCardCount: downloaded.cardCount }];
+      const next = [
+        ...selected.filter((item) => !isSameDeckLineage(item, deck)),
+        { ...deck, playableCardCount: downloaded.cardCount },
+      ];
       setSelected(next);
       await saveTrainingDeckPool(next);
     } catch (reason) {
@@ -1161,6 +1164,10 @@ function formatBytes(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
+function isSameDeckLineage(left: DeckSummary, right: DeckSummary) {
+  return left.id === right.id || Boolean(left.deckId && right.deckId && left.deckId === right.deckId);
+}
+
 function AgentEditor({ model, activeWorkers, onClose, refresh }: {
   model: LocalModel;
   activeWorkers: ResourceSnapshot["workers"];
@@ -1197,7 +1204,10 @@ function AgentEditor({ model, activeWorkers, onClose, refresh }: {
     setError("");
     try {
       const downloaded = await downloadDeck(deck.id);
-      setDecks((current) => [...current, { ...deck, playableCardCount: downloaded.cardCount }]);
+      setDecks((current) => [
+        ...current.filter((item) => !isSameDeckLineage(item, deck)),
+        { ...deck, playableCardCount: downloaded.cardCount },
+      ]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to download this deck.");
     } finally {
