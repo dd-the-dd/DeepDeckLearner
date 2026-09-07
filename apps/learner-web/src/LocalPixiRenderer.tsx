@@ -44,6 +44,61 @@ type Interaction = {
   prompt?: string;
 };
 
+export type GameNoteSort = "observed" | "name" | "type" | "mana" | "quantity";
+
+function normalizedCardName(value: unknown) {
+  return String(value ?? "").normalize("NFKC").trim().toLocaleLowerCase().replace(/\s+/gu, " ");
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- exported for presentation regression coverage.
+export function gameNoteCardPresentation(card: any, cardCatalog: Record<string, unknown>) {
+  const cardName = normalizedCardName(card?.name);
+  const presentations = Object.values(cardCatalog) as any[];
+  const metadata = presentations.find((candidate) => {
+    return [candidate?.name, candidate?.flavorName].some(name => normalizedCardName(name) === cardName);
+  }) ?? presentations.find((candidate) => {
+    return (candidate?.faces ?? []).some((face: any) => normalizedCardName(face?.name) === cardName);
+  }) ?? {};
+  const hasManaValue = metadata.manaValue !== null && metadata.manaValue !== undefined;
+  const manaValue = Number(metadata.manaValue);
+  return {
+    ...card,
+    imageUrl: metadata.imageUrl ?? metadata.urlFront ?? "",
+    manaValue: hasManaValue && Number.isFinite(manaValue) ? manaValue : null,
+    typeLine: metadata.typeLine ?? "",
+  };
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- exported for presentation regression coverage.
+export function sortGameNoteCards(cards: any[], sort: GameNoteSort, direction: "asc" | "desc") {
+  if (sort === "observed") return [...cards];
+  const multiplier = direction === "asc" ? 1 : -1;
+  const text = (value: unknown) => String(value ?? "").toLocaleLowerCase();
+  return [...cards].sort((left, right) => {
+    if (sort === "mana") {
+      const leftValue = left.manaValue !== null && left.manaValue !== undefined && Number.isFinite(Number(left.manaValue))
+        ? Number(left.manaValue)
+        : null;
+      const rightValue = right.manaValue !== null && right.manaValue !== undefined && Number.isFinite(Number(right.manaValue))
+        ? Number(right.manaValue)
+        : null;
+      if (leftValue === null || rightValue === null) {
+        if (leftValue === rightValue) return text(left.name).localeCompare(text(right.name));
+        return leftValue === null ? 1 : -1;
+      }
+      if (leftValue !== rightValue) return (leftValue - rightValue) * multiplier;
+    } else if (sort === "quantity") {
+      const comparison = (Number(left.count ?? 0) - Number(right.count ?? 0)) * multiplier;
+      if (comparison !== 0) return comparison;
+    } else {
+      const field = sort === "type" ? "typeLine" : "name";
+      const comparison = text(left[field]).localeCompare(text(right[field])) * multiplier;
+      if (comparison !== 0) return comparison;
+    }
+    return text(left.name).localeCompare(text(right.name));
+  });
+}
+
 export type StackPlaybackEntry = {
   cardInstanceId: string;
   count: number;
@@ -391,6 +446,9 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const [searchedCardNames, setSearchedCardNames] = useState<string[]>([]);
   const [hoveredCard, setHoveredCard] = useState<any | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [notePreview, setNotePreview] = useState<any | null>(null);
+  const [noteSort, setNoteSort] = useState<GameNoteSort>("observed");
+  const [noteSortDirection, setNoteSortDirection] = useState<"asc" | "desc">("asc");
   const [stackPlaybackQueue, setStackPlaybackQueue] = useState<StackPlaybackEntry[]>([]);
   const [visualError, setVisualError] = useState("");
   const playbackCursor = useRef({ sequence: 0, sessionId: "" });
@@ -726,19 +784,56 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     <div className="local-pixi-vue-host" ref={host} />
     <div className="pixi-matchup-badge">{matchup}</div>
     {(projection.gameNotes?.length ?? 0) > 0 && <aside className={`pixi-game-notes${notesOpen ? " open" : ""}`}>
-      <button type="button" aria-expanded={notesOpen} onClick={() => setNotesOpen((open) => !open)}>
+      <button type="button" aria-expanded={notesOpen} onClick={() => setNotesOpen((open) => {
+        if (open) setNotePreview(null);
+        return !open;
+      })}>
         <span aria-hidden="true">◉</span> Notes <b>{projection.gameNotes.length}</b>
       </button>
       {notesOpen && <div className="pixi-game-notes-panel">
-        <header><strong>Cards seen</strong><button type="button" aria-label="Close notes" onClick={() => setNotesOpen(false)}>×</button></header>
+        <header><strong>Cards seen</strong><button type="button" aria-label="Close notes" onClick={() => { setNotesOpen(false); setNotePreview(null); }}>×</button></header>
+        <div className="pixi-game-notes-toolbar">
+          <label><span>Sort cards</span><select value={noteSort} onChange={(event) => setNoteSort(event.target.value as GameNoteSort)}>
+            <option value="observed">Observed order</option>
+            <option value="name">Name</option>
+            <option value="type">Type</option>
+            <option value="mana">Mana value</option>
+            <option value="quantity">Quantity</option>
+          </select></label>
+          <button
+            type="button"
+            disabled={noteSort === "observed"}
+            aria-label={`Sort ${noteSortDirection === "asc" ? "descending" : "ascending"}`}
+            onClick={() => setNoteSortDirection((direction) => direction === "asc" ? "desc" : "asc")}
+          >{noteSortDirection === "asc" ? "↑ Asc" : "↓ Desc"}</button>
+        </div>
         {projection.gameNotes.map((note: any, noteIndex: number) => <section key={`${note.sourceName}:${note.turnNumber}:${noteIndex}`}>
           <div><strong>{note.playerName}</strong><small>{note.sourceName} · turn {note.turnNumber}</small></div>
           {note.zones.map((zone: any) => <div className="pixi-game-note-zone" key={zone.zone}>
             <h4>{zone.zone === "library" ? "Library" : zone.zone === "hand" ? "Hand" : "Graveyard"}</h4>
-            {zone.cards.length > 0 ? <ul>{zone.cards.map((card: any) => <li key={card.name}><b>{card.count}×</b>{card.name}</li>)}</ul> : <p>Empty</p>}
+            {zone.cards.length > 0 ? <ul>{sortGameNoteCards(
+              zone.cards.map((card: any) => gameNoteCardPresentation(card, cardCatalog)),
+              noteSort,
+              noteSortDirection,
+            ).map((card: any) => <li key={card.name}>
+              <b>{card.count}×</b>
+              <button
+                type="button"
+                onMouseEnter={() => setNotePreview(card)}
+                onMouseLeave={() => setNotePreview(null)}
+                onFocus={() => setNotePreview(card)}
+                onBlur={() => setNotePreview(null)}
+              >
+                <span>{card.name}</span>
+                <small>{card.typeLine || "Unknown type"} · MV {card.manaValue ?? "—"}</small>
+              </button>
+            </li>)}</ul> : <p>Empty</p>}
           </div>)}
           {!note.orderKnown && note.zones.some((zone: any) => zone.zone === "library") && <p className="pixi-game-note-warning">Known contents; order unknown after shuffle.</p>}
         </section>)}
+      </div>}
+      {notesOpen && notePreview?.imageUrl && <div className="pixi-note-card-preview" aria-hidden="true">
+        <img src={notePreview.imageUrl} alt="" />
       </div>}
     </aside>}
     {hoveredCard?.imageUrl && <div className="pixi-hover-preview" aria-hidden="true">
