@@ -27,12 +27,59 @@ vi.mock("@deepdeck/pixi", () => ({
 }));
 
 import {
+  gameNoteCardPresentation,
   pixiScene,
+  sortGameNoteCards,
   stackEventPlaybackEntries,
   visibleCardNameChoices,
 } from "./LocalPixiRenderer";
 
 describe("Pixi local-seat projection", () => {
+  test("enriches observed cards with their catalog art and sortable characteristics", () => {
+    expect(gameNoteCardPresentation({ count: 2, name: "Force of Will" }, {
+      force: {
+        imageUrl: "force.jpg",
+        manaValue: 5,
+        name: "Force of Will",
+        typeLine: "Instant",
+      },
+    })).toEqual({
+      count: 2,
+      imageUrl: "force.jpg",
+      manaValue: 5,
+      name: "Force of Will",
+      typeLine: "Instant",
+    });
+  });
+
+  test("sorts observed cards by name, type, mana value, or quantity without losing their original order", () => {
+    const cards = [
+      { count: 1, manaValue: 5, name: "Force of Will", typeLine: "Instant" },
+      { count: 4, manaValue: 1, name: "Birds of Paradise", typeLine: "Creature — Bird" },
+      { count: 2, manaValue: null, name: "Unknown", typeLine: "" },
+      { count: 3, manaValue: 0, name: "Forest", typeLine: "Basic Land — Forest" },
+    ];
+
+    expect(sortGameNoteCards(cards, "observed", "desc").map(card => card.name)).toEqual([
+      "Force of Will", "Birds of Paradise", "Unknown", "Forest",
+    ]);
+    expect(sortGameNoteCards(cards, "name", "asc").map(card => card.name)).toEqual([
+      "Birds of Paradise", "Force of Will", "Forest", "Unknown",
+    ]);
+    expect(sortGameNoteCards(cards, "type", "asc").map(card => card.name)).toEqual([
+      "Unknown", "Forest", "Birds of Paradise", "Force of Will",
+    ]);
+    expect(sortGameNoteCards(cards, "mana", "desc").map(card => card.name)).toEqual([
+      "Force of Will", "Birds of Paradise", "Forest", "Unknown",
+    ]);
+    expect(sortGameNoteCards(cards, "quantity", "desc").map(card => card.name)).toEqual([
+      "Birds of Paradise", "Forest", "Unknown", "Force of Will",
+    ]);
+    expect(cards.map(card => card.name)).toEqual([
+      "Force of Will", "Birds of Paradise", "Unknown", "Forest",
+    ]);
+  });
+
   test("plays every new stack object for 300ms and compresses repeated triggers", () => {
     expect(stackEventPlaybackEntries([
       {
