@@ -78,7 +78,7 @@ sends your API key to React.
 - Train from a JSONL decision trajectory and resume a checkpoint.
 - Prefer CUDA automatically and fall back to CPU when no compatible GPU is available.
 - Configure trajectory input, CPU/CUDA, epochs, learning rate, and seed under Advanced.
-- Run random, Alexios, V11, or V12 against a local Engine session.
+- Run random, configurable heuristic, Alexios, Omnath, V11, or V12 against a local Engine session.
 - Inspect dependency readiness and bounded job logs.
 - Connect an inference agent to Deep Deck League with your account API key.
 
@@ -128,8 +128,14 @@ React.
 ## Public examples
 
 - `random`: reproducible random selection from exact legal actions.
-- `alexios`: a readable priority policy for Alexios, equipment, protection,
-  removal, goad, combat tricks, Food, and Clues.
+- `heuristic`: deterministic, explainable scoring for all eleven decision
+  families, configured by a bounded JSON profile generated manually or by the
+  Deep Deck League MCP.
+- `alexios`: casts Alexios as early as possible, accelerates when needed, keeps
+  reactive protection available, and ranks equipment by offensive impact.
+- `omnath`: casts Omnath, Locus of All early, develops mana engines, protects
+  Omnath, holds instant-speed X spells for removal attempts or lethal, and uses
+  sorcery-speed X spells for lethal, large card advantage, or threat removal.
 - `v11`: recurrent PyTorch policy with multiplayer value estimates.
 - `v12`: two-player variant with antisymmetric value estimates.
 
@@ -138,8 +144,17 @@ The original command-line interfaces remain available:
 ```sh
 deepdeck-train v12 --smoke --epochs 2 --output runs/v12-smoke
 deepdeck-example v12 --target local --checkpoint runs/v12-smoke
+deepdeck-example heuristic --target local --heuristic-profile heuristic-profile.json
 deepdeck-example alexios --target ddl --speed 1s
+deepdeck-example omnath --target ddl --speed 1s
 ```
+
+The heuristic profile adjusts mulligan, mana reservation and efficiency,
+interaction, removal, card draw, ramp, protection, aggression, combat trades,
+life preservation, and sideboard stability. Unknown fields and out-of-range
+weights are rejected. Every choice uses only actions already declared legal by
+Rust, resolves score ties by stable action ID, and retains the latest scores and
+reasons in `HeuristicAgent.trace_mapping()` for local diagnostics.
 
 The complete Oracle AI implementation is also installed with the workbench:
 

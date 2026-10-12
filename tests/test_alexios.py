@@ -127,6 +127,24 @@ async def test_mulligan_requires_at_least_three_lands(lands: int, expected: str)
 
 
 @pytest.mark.asyncio
+async def test_keeps_two_lands_with_a_cheap_accelerator() -> None:
+    lands = [card(f"land-{index}", "Mountain", "Basic Land") for index in range(2)]
+    ring = card(
+        "ring",
+        "Sol Ring",
+        "Artifact",
+        mana_cost="{1}",
+        rules=[{"effect": {"kind": "addMana"}}],
+    )
+    decision = choice(
+        "mulligan",
+        [option("keep", "keepHand"), option("mulligan", "takeMulligan")],
+        state(hand=[*lands, ring]),
+    )
+    assert (await AlexiosAgent().make_decision(decision)).action_id == "keep"
+
+
+@pytest.mark.asyncio
 async def test_casts_alexios_before_other_permanents() -> None:
     alexios = card(
         "alexios-zone",
@@ -147,6 +165,107 @@ async def test_casts_alexios_before_other_permanents() -> None:
         state(hand=[equipment], command_zone=[alexios]),
     )
     assert (await AlexiosAgent().make_decision(decision)).action_id == "cast-alexios"
+
+
+@pytest.mark.asyncio
+async def test_accelerates_when_alexios_is_not_yet_castable() -> None:
+    ring = card(
+        "ring",
+        "Sol Ring",
+        "Artifact",
+        mana_cost="{1}",
+        rules=[{"effect": {"kind": "addMana"}}],
+    )
+    filler = card("filler", "Filler", "Creature", mana_cost="{1}")
+    decision = choice(
+        "priority",
+        [
+            option("cast-filler", "castSpell", source="filler"),
+            option("cast-ring", "castSpell", source="ring"),
+            option("pass", "passPriority"),
+        ],
+        state(hand=[ring, filler]),
+    )
+    assert (await AlexiosAgent().make_decision(decision)).action_id == "cast-ring"
+
+
+@pytest.mark.asyncio
+async def test_equips_the_most_violent_option_first() -> None:
+    alexios = card(
+        "alexios",
+        "Alexios, Deimos of Kosmos",
+        "Legendary Creature",
+        power=4,
+        toughness=4,
+    )
+    pick = card("pick", "Goldvein Pick", "Artifact - Equipment")
+    fireshrieker = card(
+        "fireshrieker",
+        "Fireshrieker",
+        "Artifact - Equipment",
+        rules=[{"ability": {"kind": "double strike"}}],
+    )
+    decision = choice(
+        "priority",
+        [
+            option(
+                "equip-pick",
+                "activateAbility",
+                source="pick",
+                targets=permanent_target("alexios"),
+            ),
+            option(
+                "equip-fireshrieker",
+                "activateAbility",
+                source="fireshrieker",
+                targets=permanent_target("alexios"),
+            ),
+            option("pass", "passPriority"),
+        ],
+        state(battlefield=[alexios, pick, fireshrieker]),
+    )
+    assert (await AlexiosAgent().make_decision(decision)).action_id == "equip-fireshrieker"
+
+
+@pytest.mark.asyncio
+async def test_uses_non_redirect_protection_when_alexios_is_targeted() -> None:
+    alexios = card(
+        "alexios",
+        "Alexios, Deimos of Kosmos",
+        "Legendary Creature",
+        power=4,
+        toughness=4,
+    )
+    protection = card(
+        "protection",
+        "Keep Safe",
+        "Instant",
+        rules=[{"effect": {"kind": "indestructible"}}],
+    )
+    decision = choice(
+        "priority",
+        [
+            option(
+                "protect",
+                "castSpell",
+                source="protection",
+                targets=permanent_target("alexios"),
+            ),
+            option("pass", "passPriority"),
+        ],
+        state(
+            hand=[protection],
+            battlefield=[alexios],
+            stack=[
+                {
+                    "id": "removal",
+                    "controller": "p2",
+                    "targets": permanent_target("alexios"),
+                }
+            ],
+        ),
+    )
+    assert (await AlexiosAgent().make_decision(decision)).action_id == "protect"
 
 
 @pytest.mark.asyncio
