@@ -6,6 +6,14 @@ from deepdeck_agent import Action, Agent, Card, Decision, DecisionResult
 
 ALEXIOS_NAME = "alexios, deimos of kosmos"
 REDIRECTION_KINDS = ("changeTargets", "chooseNewTargets", "redirect")
+PROTECTION_KINDS = (
+    "counterSpell",
+    "hexproof",
+    "indestructible",
+    "phaseOut",
+    "protection",
+    "shroud",
+)
 REMOVAL_KINDS = (
     "destroyPermanent",
     "exilePermanent",
@@ -57,6 +65,26 @@ def _is_redirect(card: Card | None) -> bool:
     )
 
 
+def _is_protection(card: Card | None) -> bool:
+    return card is not None and (
+        _is_redirect(card)
+        or card.rules_contain(*PROTECTION_KINDS)
+        or card.name.casefold() in {"chef's kiss", "return the favor", "smoke bomb"}
+    )
+
+
+def _is_reactive_protection(card: Card | None) -> bool:
+    return (
+        card is not None
+        and _is_protection(card)
+        and (
+            card.is_type("Instant")
+            or card.rules_contain("flash")
+            or card.name.casefold() in {"deflecting swat", "ricochet trap"}
+        )
+    )
+
+
 def _is_boost(card: Card | None) -> bool:
     return card is not None and card.is_type("Instant") and card.rules_contain(*BOOST_KINDS)
 
@@ -71,10 +99,54 @@ def _is_goad(action: Action, card: Card | None) -> bool:
 
 def _is_food_or_clue(card: Card | None) -> bool:
     return card is not None and (
-        card.is_type("Food")
-        or card.is_type("Clue")
-        or card.name.casefold() in {"food", "clue"}
+        card.is_type("Food") or card.is_type("Clue") or card.name.casefold() in {"food", "clue"}
     )
+
+
+def _is_ramp(card: Card | None) -> bool:
+    return card is not None and (
+        card.rules_contain("addMana", "reduceCost", "costsLess")
+        or card.name.casefold()
+        in {
+            "bladegraft aspirant",
+            "foundry inspector",
+            "freya crescent",
+            "sol ring",
+        }
+    )
+
+
+def _equipment_score(card: Card | None) -> int:
+    if card is None:
+        return 0
+    rules_bonus = sum(
+        weight
+        for kind, weight in (
+            ("additionalCombat", 8),
+            ("double strike", 7),
+            ("loses half", 7),
+            ("can't be blocked", 6),
+            ("trample", 4),
+            ("indestructible", 4),
+            ("shroud", 3),
+            ("createTreasure", 3),
+            ("drawCard", 2),
+        )
+        if card.rules_contain(kind)
+    )
+    deck_bonus = {
+        "genji glove": 12,
+        "scytheclaw": 11,
+        "quietus spike": 11,
+        "the reaver cleaver": 10,
+        "fireshrieker": 9,
+        "whispersilk cloak": 8,
+        "adaptive omnitool": 7,
+        "nettlecyst": 7,
+        "lightning greaves": 6,
+        "darksteel plate": 6,
+    }.get(card.name.casefold(), 0)
+    return max(rules_bonus, deck_bonus)
 
 
 def _action_cost(action: Action, card: Card | None) -> int:
@@ -100,7 +172,10 @@ class AlexiosAgent(Agent):
 
     async def choose_mulligan(self, decision: Decision) -> DecisionResult:
         land_count = sum(card.is_type("Land") for card in decision.game.me.hand)
-        if land_count >= 3:
+        early_ramp = any(
+            _is_ramp(card) and _mana_value(card.mana_cost) <= 2 for card in decision.game.me.hand
+        )
+        if 3 <= land_count <= 5 or (land_count == 2 and early_ramp):
             return decision.first("keepHand") or self._safe_default(decision)
         return decision.first("takeMulligan") or self._safe_default(decision)
 
@@ -143,13 +218,22 @@ class AlexiosAgent(Agent):
                 for target in targets.values()
             ):
                 return True
+            stack_card = stack_object.get("card")
+            if (
+                not targets
+                and isinstance(stack_card, dict)
+                and Card(stack_card).rules_contain(*REMOVAL_KINDS)
+            ):
+                return True
         return False
 
     def _reserve(self, decision: Decision, alexios: Card | None) -> int:
-        redirect_costs = [
-            _mana_value(card.mana_cost) for card in decision.game.me.hand if _is_redirect(card)
+        protection_costs = [
+            _mana_value(card.mana_cost)
+            for card in decision.game.me.hand
+            if _is_reactive_protection(card)
         ]
-        reserve = min(redirect_costs) if redirect_costs else 0
+        reserve = min(protection_costs) if protection_costs else 0
         if alexios is None:
             return reserve
         defending_ids = {
@@ -175,8 +259,7 @@ class AlexiosAgent(Agent):
 
     def _can_spend(self, decision: Decision, action: Action, reserve: int) -> bool:
         return (
-            decision.game.me.available_mana_count
-            - _action_cost(action, _source(decision, action))
+            decision.game.me.available_mana_count - _action_cost(action, _source(decision, action))
             >= reserve
         )
 
@@ -187,7 +270,8 @@ class AlexiosAgent(Agent):
             (
                 action
                 for action in decision.actions_of("castSpell")
-                if _is_redirect(_source(decision, action)) and action.target_stack_ids
+                if _is_reactive_protection(_source(decision, action))
+                and (action.target_stack_ids or action.targets_permanent(alexios.id))
             ),
             None,
         )
@@ -274,30 +358,54 @@ class AlexiosAgent(Agent):
             if alexios_cast:
                 return alexios_cast
 
-            if alexios is not None:
-                equip = next(
+            if alexios is None:
+                ramp = max(
                     (
+                        action
+                        for action in decision.actions
+                        if action.kind in {"castSpell", "activateAbility"}
+                        and _is_ramp(_source(decision, action))
+                    ),
+                    key=lambda action: -_action_cost(action, _source(decision, action)),
+                    default=None,
+                )
+                if ramp:
+                    return ramp
+
+            if alexios is not None:
+                equip = max(
+                    [
                         action
                         for action in decision.actions_of("activateAbility")
                         if _is_equipment(_source(decision, action))
                         and action.targets_permanent(alexios.id)
                         and self._can_spend(decision, action, reserve)
+                    ],
+                    key=lambda action: (
+                        _equipment_score(_source(decision, action)),
+                        -_action_cost(action, _source(decision, action)),
+                        action.id,
                     ),
-                    None,
+                    default=None,
                 )
                 if equip:
                     return equip
                 if removal := self._dangerous_blocker_removal(decision, alexios, reserve):
                     return removal
 
-            equipment = next(
-                (
+            equipment = max(
+                [
                     action
                     for action in decision.actions_of("castSpell")
                     if _is_equipment(_source(decision, action))
                     and self._can_spend(decision, action, reserve)
+                ],
+                key=lambda action: (
+                    _equipment_score(_source(decision, action)),
+                    -_action_cost(action, _source(decision, action)),
+                    action.id,
                 ),
-                None,
+                default=None,
             )
             if equipment:
                 return equipment
@@ -400,7 +508,7 @@ class AlexiosAgent(Agent):
             card = _source(decision, action)
             if card is None:
                 return (0, 0)
-            protected = int(_is_alexios(card) or _is_redirect(card) or _is_equipment(card))
+            protected = int(_is_alexios(card) or _is_protection(card) or _is_equipment(card))
             return (protected, -_mana_value(card.mana_cost))
 
         return min(discards, key=keep_value)
