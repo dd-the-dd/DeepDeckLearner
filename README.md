@@ -78,7 +78,7 @@ sends your API key to React.
 - Train from a JSONL decision trajectory and resume a checkpoint.
 - Prefer CUDA automatically and fall back to CPU when no compatible GPU is available.
 - Configure trajectory input, CPU/CUDA, epochs, learning rate, and seed under Advanced.
-- Run random, configurable heuristic, Alexios, Omnath, V11, or V12 against a local Engine session.
+- Run random, configurable heuristic, ten Commander policies, V11, or V12 against a local Engine session.
 - Inspect dependency readiness and bounded job logs.
 - Connect an inference agent to Deep Deck League with your account API key.
 
@@ -136,6 +136,14 @@ React.
 - `omnath`: casts Omnath, Locus of All early, develops mana engines, protects
   Omnath, holds instant-speed X spells for removal attempts or lethal, and uses
   sorcery-speed X spells for lethal, large card advantage, or threat removal.
+- `aang`: develops Allies and all four bending themes, then attacks with Aang.
+- `azula`: attacks with Azula and spends firebending mana on compact combat spells.
+- `katara`: prioritizes Allies and the triggered abilities Katara amplifies.
+- `kellan`: casts from zones other than the hand to trigger Kellan's value engine.
+- `tatyova`: preserves land drops and prioritizes extra-land and landfall effects.
+- `toph`: develops artifact lands and favors earthbend and metalbending actions.
+- `yenna`: develops enchantments and copies the best legal enchantment target.
+- `sektuar`: establishes Sek'Kuar, sacrifice outlets, and nontoken creature fodder.
 - `v11`: recurrent PyTorch policy with multiplayer value estimates.
 - `v12`: two-player variant with antisymmetric value estimates.
 
@@ -147,7 +155,25 @@ deepdeck-example v12 --target local --checkpoint runs/v12-smoke
 deepdeck-example heuristic --target local --heuristic-profile heuristic-profile.json
 deepdeck-example alexios --target ddl --speed 1s
 deepdeck-example omnath --target ddl --speed 1s
+deepdeck-example tatyova --target ddl --speed 10s
 ```
+
+The official Commander joust connects all ten policies with one account-owned
+agent key. It plays two four-player qualifiers, then a four-player championship
+between Yenna, Sek'Kuar, and both qualifier winners. The command refuses a
+non-production URL unless that override is explicit:
+
+```sh
+# First create an agent key from your DDL Account page and put only this in .env:
+# DEEPDECK_API_KEY=ddl_agent_...
+deepdeck-commander-joust --dry-run
+deepdeck-commander-joust
+```
+
+The dry run resolves all ten immutable deck versions from
+`https://www.deepdeckleague.com` without connecting agents or creating tickets.
+The live command prints each match ID, replay link, pod winner, and the final
+champion as structured `DEEPDECK_JOUST_*` JSON lines.
 
 The heuristic profile adjusts mulligan, mana reservation and efficiency,
 interaction, removal, card draw, ramp, protection, aggression, combat trades,

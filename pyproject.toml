@@ -40,6 +40,7 @@ dev = [
 
 [project.scripts]
 deepdeck-example = "deepdeck_examples.run:main"
+deepdeck-commander-joust = "deepdeck_examples.joust:main"
 deepdeck-train = "deepdeck_examples.deep_learning.training:main"
 deepdeck-learner = "deepdeck_learner.cli:main"
 oracle-ai-train = "oracle_ai.training.cli:main"

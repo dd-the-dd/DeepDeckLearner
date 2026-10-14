@@ -23,8 +23,10 @@ from deepdeck_agent import (
 from dotenv import find_dotenv, load_dotenv
 
 from .alexios import AlexiosAgent
+from .commanders import COMMANDER_AGENT_TYPES, build_commander_agent
 from .configuration import (
     alexios_config,
+    commander_config,
     deep_learning_config,
     heuristic_config,
     omnath_config,
@@ -48,7 +50,15 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "example",
         nargs="?",
-        choices=("random", "heuristic", "alexios", "omnath", "v11", "v12"),
+        choices=(
+            "random",
+            "heuristic",
+            "alexios",
+            "omnath",
+            *COMMANDER_AGENT_TYPES,
+            "v11",
+            "v12",
+        ),
         default=os.getenv("DEEPDECK_EXAMPLE", "alexios"),
     )
     result.add_argument(
@@ -153,6 +163,8 @@ def _agent_and_config(arguments: argparse.Namespace) -> tuple[Agent, AgentConfig
         return AlexiosAgent(), alexios_config()
     if arguments.example == "omnath":
         return OmnathAgent(), omnath_config()
+    if arguments.example in COMMANDER_AGENT_TYPES:
+        return build_commander_agent(arguments.example), commander_config(arguments.example)
     if arguments.example == "heuristic":
         profile = (
             HeuristicProfile.from_json_file(arguments.heuristic_profile)

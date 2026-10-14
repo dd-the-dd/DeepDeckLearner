@@ -4,6 +4,8 @@ import os
 
 from deepdeck_agent import AgentConfig, DeckPolicy, PlaySpeed
 
+from .commanders import commander_plan
+
 
 def _repository_commit() -> str:
     return os.getenv("DEEPDECK_AGENT_COMMIT", "local-worktree").strip() or "local-worktree"
@@ -37,36 +39,62 @@ def random_config() -> AgentConfig:
     )
 
 
-def alexios_config() -> AgentConfig:
-    deck_id = os.getenv("ALEXIOS_DECK_ID", "alexios").strip() or "alexios"
+def commander_config(
+    key: str,
+    *,
+    deck_id: str | None = None,
+    agent_id: str | None = None,
+    version: str | None = None,
+) -> AgentConfig:
+    normalized = key.casefold().replace("'", "").replace("-", "").replace(" ", "")
+    aliases = {"sekkuar": "sektuar", "kellanthekid": "kellan"}
+    normalized = aliases.get(normalized, normalized)
+    existing = {
+        "alexios": (
+            "Alexios fast equipment",
+            "Transparent rule-based Alexios equipment and protection policy.",
+        ),
+        "omnath": (
+            "Omnath mana and X spells",
+            "Mana-first Omnath policy that protects its commander and times X spells.",
+        ),
+    }
+    if normalized in existing:
+        name, description = existing[normalized]
+    else:
+        plan = commander_plan(normalized)
+        name, description = plan.name, plan.description
+    env_prefix = normalized.upper()
+    resolved_deck_id = (
+        deck_id
+        or os.getenv(f"{env_prefix}_DECK_ID", normalized).strip()
+        or normalized
+    )
     return AgentConfig(
-        agent_id=os.getenv("DEEPDECK_AGENT_ID", "com.deepdeckleague.example.alexios").strip(),
-        name="Alexios fast equipment",
-        version=os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
+        agent_id=(
+            agent_id
+            or os.getenv(
+                "DEEPDECK_AGENT_ID", f"com.deepdeckleague.example.{normalized}"
+            ).strip()
+        ),
+        name=name,
+        version=version or os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
         author="Deep Deck League",
-        description="Transparent rule-based Alexios equipment and protection policy.",
+        description=description,
         formats=("commander",),
-        decks=DeckPolicy.only(deck_id),
+        decks=DeckPolicy.only(resolved_deck_id),
         speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
         repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
         repository_commit=_repository_commit(),
     )
+
+
+def alexios_config() -> AgentConfig:
+    return commander_config("alexios")
 
 
 def omnath_config() -> AgentConfig:
-    deck_id = os.getenv("OMNATH_DECK_ID", "omnath").strip() or "omnath"
-    return AgentConfig(
-        agent_id=os.getenv("DEEPDECK_AGENT_ID", "com.deepdeckleague.example.omnath").strip(),
-        name="Omnath mana and X spells",
-        version=os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
-        author="Deep Deck League",
-        description="Mana-first Omnath policy that protects its commander and times X spells.",
-        formats=("commander",),
-        decks=DeckPolicy.only(deck_id),
-        speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
-        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
-        repository_commit=_repository_commit(),
-    )
+    return commander_config("omnath")
 
 
 def heuristic_config() -> AgentConfig:
