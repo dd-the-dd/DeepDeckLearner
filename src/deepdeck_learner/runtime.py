@@ -97,4 +97,6 @@ def worker_argv(arguments: list[str]) -> list[str]:
 
 
 def hidden_process_options() -> dict[str, Any]:
-    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}

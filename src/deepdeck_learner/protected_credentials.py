@@ -5,12 +5,15 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
 
 def _windows_protect(data: bytes, *, decrypt: bool = False) -> bytes:
+    if sys.platform != "win32":
+        raise OSError("Windows credential protection is only available on Windows.")
     from ctypes import wintypes
 
     class Blob(ctypes.Structure):

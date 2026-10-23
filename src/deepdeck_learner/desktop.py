@@ -49,7 +49,7 @@ class ProfileLock:
             stream.flush()
         stream.seek(0)
         try:
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
 
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
@@ -96,7 +96,7 @@ def _write_instance(path: Path, value: dict[str, Any]) -> None:
 
 
 def _message(title: str, text: str) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":
         import ctypes
 
         ctypes.windll.user32.MessageBoxW(None, text, title, 0x10)

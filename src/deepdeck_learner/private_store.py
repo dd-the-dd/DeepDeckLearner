@@ -5,6 +5,7 @@ import ctypes
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,8 @@ def _path(root: Path, name: str) -> Path:
 
 
 def _windows_crypt(value: bytes, *, decrypt: bool = False) -> bytes:
+    if sys.platform != "win32":
+        raise OSError("Windows credential protection is only available on Windows.")
     from ctypes import wintypes
 
     class Blob(ctypes.Structure):
