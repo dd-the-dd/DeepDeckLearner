@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "deepdeck-strategy-evaluation-summary/v1",
+  "modelVersion": "strategy-graph/v1",
+  "evaluatedAt": "2026-10-17",
+  "protocol": {
+    "decks": 10,
+    "gamesPerDeck": 1,
+    "opponent": "engine-deterministic-random",
+    "pairing": "each benchmark deck versus the next benchmark deck",
+    "gameMode": "free-single-game",
+    "maxTurns": 35,
+    "seedBase": 20261017,
+    "decisionSpeed": "1s"
+  },
+  "engine": {
+    "sourceRevision": "c4e69fa4ab3e2e0192c85063f99b535c6c584799",
+    "binarySha256": "1bff7bdecc066cd297833808a30828d36b1c2f58275a3ea9d3176fd884a21bdf",
+    "binaryMatchesSource": false,
+    "note": "The current main checkout could not be rebuilt because the local MSVC import libraries are missing; evaluation used the existing local release binary and records its hash."
+  },
+  "iterations": [
+    {
+      "id": "baseline",
+      "wins": 3,
+      "losses": 3,
+      "draws": 4,
+      "winRateOverAllGames": 0.3
+    },
+    {
+      "id": "mulligan-land-resolution-and-action-compaction",
+      "wins": 5,
+      "losses": 2,
+      "draws": 3,
+      "winRateOverAllGames": 0.5,
+      "kept": true
+    }
+  ],
+  "latestDeckResults": {
+    "Izzet Delver": "draw",
+    "Reanimator": "loss",
+    "Eldrazi": "win",
+    "Mill dd": "win",
+    "Mono-Green Lands": "draw",
+    "Sultai Aluren": "loss",
+    "Naya Energy": "win",
+    "Death and Taxes (Yorion)": "win",
+    "Sneak and Show": "draw",
+    "Dimir tempo": "win"
+  }
+}

@@ -1,4 +1,10 @@
 import { describe, expect, test } from "vitest";
+import * as DeepDeckPixi from '@deepdeck/pixi';
+
+// The package currently declares its Vue component, not its JSON projection helpers.
+const {projectGameSessionView} = DeepDeckPixi as unknown as {
+  projectGameSessionView: (view: unknown) => {resolutionTargetChoice: {actions: unknown[]; targetKey: string}};
+};
 
 import {
   cardOrderLegend,
@@ -12,6 +18,23 @@ import {
 } from "./pixiInteraction";
 
 describe("visual Pixi targeting", () => {
+  test('a copied Bolt maps direct player/card clicks to the exact Engine retarget action', () => {
+    const decisionId='chooseOption:stack:bolt-copy:0';
+    const creature={instanceId:'p2:bear:9',owner:'p2',controller:'p2',definition:{id:'bear',name:'Bear',typeLine:'Creature',rules:[]}};
+    const player=(id:string)=>({id,name:id,life:20,hand:[],battlefield:id==='p2'?[creature]:[],library:[],graveyard:[],exile:[],commandZone:[],manaPool:[]});
+    const options=['player:p1','player:p2','permanent:p2:bear:9'].map((selected,index)=>({id:`retarget:${index}`,kind:'chooseResolution',playerId:'p1',decisions:{[decisionId]:[selected]}}));
+    const projected=projectGameSessionView({schemaVersion:'mtg-game-session/v1',sessionId:'copy-test',revision:1,
+      state:{players:[player('p1'),player('p2')],stack:[],events:[],activePlayer:0,priorityPlayer:0,turnNumber:1,step:'precombatMain'},
+      decision:{id:'copy',kind:'resolutionChoice',playerId:'p1',choice:{kind:'optionSelection',decisionId,prompt:'Choose a legal target.'},options},
+    });
+    const choice=projected.resolutionTargetChoice;
+    const plan=targetPlanFromAction({engineTargetActions:choice.actions,engineTargetKeys:[choice.targetKey]});
+    expect([...candidateTargetIds(plan)]).toEqual(['p1','p2','p2:bear:9']);
+    expect(selectPlanTarget(plan!,['p2'])).toEqual({actionId:'retarget:1'});
+    expect(selectPlanTarget(plan!,['p2:bear:9'])).toEqual({actionId:'retarget:2'});
+    expect(selectPlanTarget(plan!,['p2:not-a-legal-target'])).toBeNull();
+    expect(options[2].decisions[decisionId]).toEqual(['permanent:p2:bear:9']);
+  });
   test("turns repeated variable-cost casts into one bounded integer choice", () => {
     const actions = [0, 1, 2].map((xValue) => ({
       id: `cast:chalice:${xValue}`,

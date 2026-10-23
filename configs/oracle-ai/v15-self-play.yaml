@@ -1,0 +1,26 @@
+outputDir: .deepdeck/runs/v15-engine-20261003-161329
+checkpoint: .deepdeck/runs/v15-engine-20261003-161329/checkpoints/step-10000
+deckCatalog: .deepdeck/runs/20261003-041840-v13-structured-world-v13/training-decks.json
+engineUrl: http://127.0.0.1:8787
+engineTimeoutSeconds: 300
+trainingScenarioRandomizer:
+  formats: [free]
+  playerCounts: [2]
+  maxTurns: 40
+  free:
+    startingLifeRange: [20, 20]
+    freeMulliganRange: [0, 0]
+  matchmaking:
+    enabled: false
+selfPlay:
+  episodes: 100
+  seed: 151500
+  max_decisions: 512
+  updates_per_episode: 32
+  batch_size: 8
+  learning_rate: 0.0001
+  delta_error_threshold: 0.01
+  temperature: 1.0
+  device: auto
+  max_connection_retries: 60
+  connection_retry_seconds: 5.0

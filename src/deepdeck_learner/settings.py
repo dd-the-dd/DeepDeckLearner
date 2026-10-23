@@ -10,17 +10,15 @@ def secrets_path(root: Path) -> Path:
 
 
 def load_api_key(root: Path) -> bool:
-    if os.getenv("DEEPDECK_API_KEY", "").strip():
-        return True
     path = secrets_path(root)
     if not path.is_file():
-        return False
+        return bool(os.getenv("DEEPDECK_API_KEY", "").strip())
     try:
         value = json.loads(path.read_text(encoding="utf-8")).get("api_key", "")
     except (OSError, ValueError, AttributeError):
-        return False
+        return bool(os.getenv("DEEPDECK_API_KEY", "").strip())
     if not isinstance(value, str) or not value.strip():
-        return False
+        return bool(os.getenv("DEEPDECK_API_KEY", "").strip())
     os.environ["DEEPDECK_API_KEY"] = value.strip()
     return True
 
@@ -32,7 +30,14 @@ def save_api_key(root: Path, value: str) -> None:
     path = secrets_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     pending = path.with_suffix(".pending")
-    pending.write_text(json.dumps({"api_key": key}), encoding="utf-8")
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    existing["api_key"] = key
+    pending.write_text(json.dumps(existing), encoding="utf-8")
     os.chmod(pending, 0o600)
     pending.replace(path)
     os.environ["DEEPDECK_API_KEY"] = key

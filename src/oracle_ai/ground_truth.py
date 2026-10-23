@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
@@ -52,8 +52,7 @@ def _deterministic_root_record(
         (
             index
             for index, option in enumerate(options)
-            if isinstance(option, Mapping)
-            and str(option.get("id", "")) == selected_action_id
+            if isinstance(option, Mapping) and str(option.get("id", "")) == selected_action_id
         ),
         None,
     )
@@ -130,8 +129,7 @@ def _load_deterministic_root_records(
                 records.append(record)
     if selected_ids:
         found_ids = {
-            str(record.get("scenario", {}).get("scenarioSequenceId", ""))
-            for record in records
+            str(record.get("scenario", {}).get("scenarioSequenceId", "")) for record in records
         }
         missing_ids = sorted(selected_ids - found_ids)
         if missing_ids:
@@ -180,19 +178,12 @@ def load_ground_truth_scenarios(
 
 def _scenario_identity(record: Mapping[str, Any], index: int) -> str:
     metadata = record.get("scenario", {})
-    sequence_id = (
-        metadata.get("scenarioSequenceId")
-        if isinstance(metadata, Mapping)
-        else None
-    )
+    sequence_id = metadata.get("scenarioSequenceId") if isinstance(metadata, Mapping) else None
     return str(sequence_id or record.get("id") or f"record:{index}")
 
 
 def ground_truth_scenario_count(records: Sequence[Mapping[str, Any]]) -> int:
-    return len({
-        _scenario_identity(record, index)
-        for index, record in enumerate(records)
-    })
+    return len({_scenario_identity(record, index) for index, record in enumerate(records)})
 
 
 def ground_truth_decision_request(
@@ -297,7 +288,11 @@ def _prediction_matches_human_choice(
     predicted_index = _prediction_index(prediction)
     human_choice = record.get("humanChoice", {})
     human_index = human_choice.get("actionIndex") if isinstance(human_choice, Mapping) else None
-    return predicted_index is not None and isinstance(human_index, int) and predicted_index == human_index
+    return (
+        predicted_index is not None
+        and isinstance(human_index, int)
+        and predicted_index == human_index
+    )
 
 
 def _sequence_point_metrics(
@@ -327,21 +322,27 @@ def _sequence_point_metrics(
             signature = next(
                 (
                     value
-                    for value in (_line_final_state_signature(record) for record in reversed(records))
+                    for value in (
+                        _line_final_state_signature(record) for record in reversed(records)
+                    )
                     if value
                 ),
                 "",
             )
             if signature:
                 signature_points[signature] = max(signature_points.get(signature, 0.0), points)
-            line_summaries.append({
-                "records": records,
-                "points": points,
-                "signature": signature,
-            })
+            line_summaries.append(
+                {
+                    "records": records,
+                    "points": points,
+                    "signature": signature,
+                }
+            )
 
         maximum_points = max(
-            [summary["points"] for summary in line_summaries] + list(signature_points.values()) + [0.0]
+            [summary["points"] for summary in line_summaries]
+            + list(signature_points.values())
+            + [0.0]
         )
         if maximum_points <= 0:
             continue
@@ -351,8 +352,7 @@ def _sequence_point_metrics(
         for summary in line_summaries:
             records = summary["records"]
             predictions_for_line = [
-                predictions.get(str(record.get("id", "")))
-                for record in records
+                predictions.get(str(record.get("id", ""))) for record in records
             ]
             if any(prediction is None for prediction in predictions_for_line):
                 continue
@@ -404,7 +404,9 @@ def _sequence_point_metrics(
 
     return {
         "sequenceEvaluatedScenarios": evaluated_scenarios,
-        "sequencePointScore": point_score_total / evaluated_scenarios if evaluated_scenarios else 0.0,
+        "sequencePointScore": point_score_total / evaluated_scenarios
+        if evaluated_scenarios
+        else 0.0,
         "sequencePerfectScoreRate": (
             perfect_score_count / evaluated_scenarios if evaluated_scenarios else 0.0
         ),
@@ -488,9 +490,7 @@ def ground_truth_agreement(
         bucket["evaluated"] = int(bucket["evaluated"]) + 1
         bucket["matched"] = int(bucket["matched"]) + int(is_match)
         bucket["weight"] = float(bucket["weight"]) + weight
-        bucket["weightedMatched"] = float(bucket["weightedMatched"]) + (
-            weight if is_match else 0.0
-        )
+        bucket["weightedMatched"] = float(bucket["weightedMatched"]) + (weight if is_match else 0.0)
         if human_probability is not None:
             bucket["probabilityCount"] = int(bucket["probabilityCount"]) + 1
             bucket["humanProbability"] = float(bucket["humanProbability"]) + human_probability
@@ -554,20 +554,21 @@ def ground_truth_agreement(
 
     sequence_metrics = _sequence_point_metrics(scenarios, predictions)
     for decision_type, sequence_bucket in sequence_metrics["byDecisionType"].items():
-        decision_summary.setdefault(decision_type, {
-            "evaluated": 0,
-            "exactAgreement": 0.0,
-            "confidenceWeightedAgreement": 0.0,
-            "meanHumanActionProbability": 0.0,
-            "confidenceWeightedHumanActionProbability": 0.0,
-        }).update(sequence_bucket)
+        decision_summary.setdefault(
+            decision_type,
+            {
+                "evaluated": 0,
+                "exactAgreement": 0.0,
+                "confidenceWeightedAgreement": 0.0,
+                "meanHumanActionProbability": 0.0,
+                "confidenceWeightedHumanActionProbability": 0.0,
+            },
+        ).update(sequence_bucket)
 
     return {
         "evaluated": evaluated,
         "exactAgreement": matched / evaluated if evaluated else 0.0,
-        "confidenceWeightedAgreement": (
-            weighted_matched / total_weight if total_weight else 0.0
-        ),
+        "confidenceWeightedAgreement": (weighted_matched / total_weight if total_weight else 0.0),
         "meanHumanActionProbability": (
             human_probability_total / probability_count if probability_count else 0.0
         ),
@@ -587,9 +588,7 @@ def ground_truth_agreement(
             scenario_decision_agreement_total / completed_count if completed_count else 0.0
         ),
         "confidenceWeightedScenarioExactAgreement": (
-            weighted_scenario_exact_total / scenario_weight_total
-            if scenario_weight_total
-            else 0.0
+            weighted_scenario_exact_total / scenario_weight_total if scenario_weight_total else 0.0
         ),
         "confidenceWeightedMeanScenarioDecisionAgreement": (
             weighted_scenario_decision_agreement_total / scenario_weight_total
@@ -627,9 +626,7 @@ def evaluate_ground_truth_service(
             if isinstance(models_payload, Mapping):
                 raw_models = models_payload.get("models", [])
                 if isinstance(raw_models, list):
-                    model_catalog = [
-                        model for model in raw_models if isinstance(model, Mapping)
-                    ]
+                    model_catalog = [model for model in raw_models if isinstance(model, Mapping)]
         except Exception:
             model_catalog = []
 

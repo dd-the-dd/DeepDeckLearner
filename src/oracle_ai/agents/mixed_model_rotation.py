@@ -153,9 +153,7 @@ def run_rotation(args: argparse.Namespace) -> None:
                     f"{platform_url}/v1/matches/{match_id}",
                 )
                 status = str(
-                    match_response.get("data", {})
-                    .get("summary", {})
-                    .get("status", "unknown")
+                    match_response.get("data", {}).get("summary", {}).get("status", "unknown")
                 )
                 if status in {"complete", "failed", "cancelled"}:
                     terminal_matches += 1

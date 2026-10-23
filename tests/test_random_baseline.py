@@ -20,4 +20,3 @@ async def test_public_random_baseline_only_returns_a_legal_id() -> None:
     )
     response = await build_random_agent(seed=9).make_decision(decision)
     assert response.action_id in {"cast", "pass"}
-

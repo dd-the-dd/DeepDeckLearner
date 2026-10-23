@@ -77,9 +77,7 @@ def _mana_value(card: dict[str, Any]) -> float:
             continue
         elif "/" in normalized:
             components = normalized.split("/")
-            numeric = next(
-                (int(value) for value in components if value.isdigit()), None
-            )
+            numeric = next((int(value) for value in components if value.isdigit()), None)
             total += numeric if numeric is not None else 1.0
         else:
             total += 1.0
@@ -248,8 +246,7 @@ class FutureFeatureTracker:
                 if isinstance(player, dict)
             },
             cumulative_flow_by_player={
-                player_id: tuple(values)
-                for player_id, values in self.cumulative_flows.items()
+                player_id: tuple(values) for player_id, values in self.cumulative_flows.items()
             },
         )
 
@@ -263,12 +260,10 @@ def future_feature_targets_from_snapshots(
     horizons: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     player_ids = list(current.player_ids)
-    acting_index = (
-        player_ids.index(acting_player_id) if acting_player_id in player_ids else 0
-    )
-    relative_ids = (
-        player_ids[acting_index:] + player_ids[:acting_index] if player_ids else []
-    )[:player_slots]
+    acting_index = player_ids.index(acting_player_id) if acting_player_id in player_ids else 0
+    relative_ids = (player_ids[acting_index:] + player_ids[:acting_index] if player_ids else [])[
+        :player_slots
+    ]
     targets = torch.full(
         (horizons, player_slots, len(FUTURE_FEATURE_NAMES)),
         -1.0,

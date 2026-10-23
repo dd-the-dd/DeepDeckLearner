@@ -97,9 +97,9 @@ class MagicTransformerActorCriticV11(MagicTransformerActorCriticV9):
 
     @staticmethod
     def _difference_mask(state_tokens: StructuredTokens) -> torch.Tensor:
-        return state_tokens.token_types.eq(int(TokenTypeV11.STATE_DELTA)) | state_tokens.token_types.eq(
-            int(TokenTypeV11.DECISION_EVENT)
-        )
+        return state_tokens.token_types.eq(
+            int(TokenTypeV11.STATE_DELTA)
+        ) | state_tokens.token_types.eq(int(TokenTypeV11.DECISION_EVENT))
 
     def _difference_latent(self, state_tokens: StructuredTokens) -> torch.Tensor:
         mask = self._difference_mask(state_tokens)
@@ -107,9 +107,7 @@ class MagicTransformerActorCriticV11(MagicTransformerActorCriticV9):
             return self.no_difference_embedding
         difference_tokens = _select_tokens(state_tokens, mask)
         embedded = self._embed_tokens(difference_tokens).unsqueeze(0)
-        encoded = self.difference_encoder(
-            torch.cat((self.difference_marker, embedded), dim=1)
-        )
+        encoded = self.difference_encoder(torch.cat((self.difference_marker, embedded), dim=1))
         return self.difference_norm(encoded[:, 0])
 
     def evaluate_actions_with_memory(
@@ -140,8 +138,7 @@ class MagicTransformerActorCriticV11(MagicTransformerActorCriticV9):
         action_embeddings = result["normalized_actions"]
         scale = self.config.d_model**0.5
         difference_logits = (
-            self.difference_action_projection(difference).unsqueeze(1)
-            * action_embeddings
+            self.difference_action_projection(difference).unsqueeze(1) * action_embeddings
         ).sum(dim=-1) / scale
         memory_logits = (
             self.memory_action_projection(memory).unsqueeze(1) * action_embeddings

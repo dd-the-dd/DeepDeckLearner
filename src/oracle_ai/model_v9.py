@@ -64,9 +64,7 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
             bias=False,
         )
         future_values = (
-            config.future_horizons
-            * config.future_player_slots
-            * config.future_feature_dim
+            config.future_horizons * config.future_player_slots * config.future_feature_dim
         )
         self.consequence_head = nn.Sequential(
             nn.LayerNorm(config.d_model),
@@ -127,9 +125,9 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
         *,
         need_weights: bool,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        opponent_mask = state_tokens.relative_players.ne(
-            0
-        ) & state_tokens.relative_players.lt(self.config.player_angle_steps)
+        opponent_mask = state_tokens.relative_players.ne(0) & state_tokens.relative_players.lt(
+            self.config.player_angle_steps
+        )
         if not bool(opponent_mask.any()):
             return self.no_opponent_embedding.expand(encoded_state.shape[0], -1), None
         opponent_state = encoded_state[:, 1:][:, opponent_mask]
@@ -162,14 +160,10 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
                 f"previous plan has shape {tuple(previous_plan.shape)}, "
                 f"expected {tuple(base_plan.shape)}"
             )
-        candidate = self.plan_candidate(
-            torch.cat((base_plan, opponent, previous_plan), dim=-1)
-        )
+        candidate = self.plan_candidate(torch.cat((base_plan, opponent, previous_plan), dim=-1))
         for block in self.plan_refinement:
             candidate = block(candidate)
-        gate = self.plan_gate(
-            torch.cat((pooled, deck, opponent, previous_plan), dim=-1)
-        )
+        gate = self.plan_gate(torch.cat((pooled, deck, opponent, previous_plan), dim=-1))
         plan = gate * candidate + (1.0 - gate) * previous_plan
         return self.plan_norm(plan), gate
 
@@ -209,9 +203,7 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
         actions = self._embed_tokens(action_tokens).unsqueeze(0)
         action_keys = self.policy_key(actions)
         strategic_query = self.policy_query(pooled + plan + opponent).unsqueeze(1)
-        base_logits = (strategic_query * action_keys).sum(dim=-1) / (
-            self.config.d_model**0.5
-        )
+        base_logits = (strategic_query * action_keys).sum(dim=-1) / (self.config.d_model**0.5)
         conditioned_actions = (
             action_keys
             + self.policy_query(decision).unsqueeze(1)
@@ -231,9 +223,7 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
                 attentions.append(attention)
 
         normalized_actions = self.action_output_norm(conditioned_actions)
-        isolate_predictions = bool(
-            getattr(self.config, "isolate_prediction_gradients", False)
-        )
+        isolate_predictions = bool(getattr(self.config, "isolate_prediction_gradients", False))
         # V10 treats consequence prediction as an auxiliary model. Its supervised
         # loss trains the predictor, while PPO trains the policy that consumes the
         # detached prediction. Neither objective can distort the other branch.
@@ -261,9 +251,7 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
             self.config.minimum_log_variance,
             self.config.maximum_log_variance,
         ).reshape_as(future_mean)
-        decision_future_mean = (
-            future_mean.detach() if isolate_predictions else future_mean
-        )
+        decision_future_mean = future_mean.detach() if isolate_predictions else future_mean
         decision_future_log_variance = (
             future_log_variance.detach() if isolate_predictions else future_log_variance
         )
@@ -281,9 +269,7 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
         )
         contextual_logits = self.policy_score(enriched_actions).squeeze(-1)
         action_values = self.action_value_head(enriched_actions).squeeze(-1)
-        centered_action_values = action_values - action_values.mean(
-            dim=-1, keepdim=True
-        )
+        centered_action_values = action_values - action_values.mean(dim=-1, keepdim=True)
         logits = (
             base_logits
             + self.context_gate * contextual_logits
@@ -356,9 +342,7 @@ class MagicTransformerActorCriticV9(MagicTransformerActorCriticV7):
         )
         probabilities = torch.softmax(result["logits"], dim=-1)
         result["probabilities"] = probabilities
-        result["entropy"] = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(
-            dim=-1
-        )
+        result["entropy"] = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=-1)
         result["strategic_plan_norm"] = result["strategic_plan"].norm(dim=-1)
         result["future_uncertainty"] = result["future_log_variance"].exp().sqrt()
         return result

@@ -15,9 +15,10 @@ class OracleCheckpointAgent(Agent):
 
     def __init__(self, checkpoint: str | Path, device: str = "cpu") -> None:
         checkpoint_path = Path(checkpoint)
-        if not (checkpoint_path / "manifest.json").is_file() or not (
-            checkpoint_path / "checkpoint.pt"
-        ).is_file():
+        if (
+            not (checkpoint_path / "manifest.json").is_file()
+            or not (checkpoint_path / "checkpoint.pt").is_file()
+        ):
             raise ValueError("Oracle checkpoint requires manifest.json and checkpoint.pt")
         previous = {
             key: os.environ.get(key)
@@ -61,11 +62,13 @@ class OracleCheckpointAgent(Agent):
             state["_pregameDeck"] = copy.deepcopy(known_deck)
         context = state.get("_decisionContext")
         context = dict(context) if isinstance(context, dict) else {}
-        context.update({
-            "id": decision.request_id,
-            "playerId": decision.player_id,
-            "kind": decision.kind,
-        })
+        context.update(
+            {
+                "id": decision.request_id,
+                "playerId": decision.player_id,
+                "kind": decision.kind,
+            }
+        )
         state["_decisionContext"] = context
         selected, _, _ = self.runtime.choose_with_model(
             state,

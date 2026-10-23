@@ -112,9 +112,7 @@ class MagicTransformerActorCriticV6(MagicTransformerActorCriticV5):
         decision = encoded_state[:, 1] if encoded_state.shape[1] > 1 else pooled
         action_keys = self.policy_key(actions)
         base_query = self.policy_query(pooled).unsqueeze(1)
-        base_logits = (base_query * action_keys).sum(dim=-1) / (
-            self.config.d_model**0.5
-        )
+        base_logits = (base_query * action_keys).sum(dim=-1) / (self.config.d_model**0.5)
         conditioned_actions = action_keys + self.policy_query(decision).unsqueeze(1)
         attentions = []
         activation_norms = [conditioned_actions.norm(dim=-1)]
@@ -204,12 +202,10 @@ class MagicTransformerActorCriticV6(MagicTransformerActorCriticV5):
         state_tokens: StructuredTokens,
         action_tokens: StructuredTokens,
     ) -> dict[str, torch.Tensor]:
-        actions, pooled, base_logits, attentions, activation_norms = (
-            self._condition_actions_v6(
-                state_tokens,
-                action_tokens,
-                need_weights=True,
-            )
+        actions, pooled, base_logits, attentions, activation_norms = self._condition_actions_v6(
+            state_tokens,
+            action_tokens,
+            need_weights=True,
         )
         normalized_actions = self.action_output_norm(actions)
         contextual_logits = self.policy_score(normalized_actions).squeeze(-1)

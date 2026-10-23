@@ -9,7 +9,7 @@ from dotenv import find_dotenv, load_dotenv
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description="Open the DeepDeckLearner local workbench.")
+    result = argparse.ArgumentParser(description="Open the DeepDeckLearner player application.")
     result.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "localhost"))
     result.add_argument("--port", default=8765, type=int)
     result.add_argument("--no-browser", action="store_true")
@@ -17,6 +17,9 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from .runtime import configure_local_http_loop
+
+    configure_local_http_loop()
     arguments = parser().parse_args()
     if not 1024 <= arguments.port <= 65535:
         raise SystemExit("port must be between 1024 and 65535")
@@ -26,7 +29,9 @@ def main() -> None:
         load_dotenv(dotenv_path)
     if not arguments.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run("deepdeck_learner.app:app", host=arguments.host, port=arguments.port)
+    uvicorn.run(
+        "deepdeck_learner.app:app", host=arguments.host, port=arguments.port, access_log=False
+    )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 import pytest
 
@@ -181,10 +181,12 @@ def test_load_ground_truth_scenarios_adds_selected_deterministic_win_roots(tmp_p
                             },
                         },
                         "proof": {
-                            "winningLine": [{
-                                "choice": "win",
-                                "choiceKind": "action",
-                            }],
+                            "winningLine": [
+                                {
+                                    "choice": "win",
+                                    "choiceKind": "action",
+                                }
+                            ],
                         },
                     },
                 ]

@@ -136,7 +136,11 @@ class AlphaStarObservationEncoder(StrategicPlanningObservationEncoder):
                 words=" ".join(
                     (
                         self._card_words(card, "pregame commander"),
-                        *(fragment for rule in (card.get("rules") or []) for fragment in _semantic_fragments(rule)),
+                        *(
+                            fragment
+                            for rule in (card.get("rules") or [])
+                            for fragment in _semantic_fragments(rule)
+                        ),
                     )
                 ),
                 relative_player=positions.get(player_id, self.no_player_position),
@@ -186,7 +190,9 @@ class AlphaStarObservationEncoder(StrategicPlanningObservationEncoder):
                     elif field == "landPlaysRemaining":
                         numeric["land_plays_remaining"] = abs(delta)
             for zone in _ZONES:
-                current_count = len(current.get(zone, [])) if isinstance(current.get(zone), list) else 0
+                current_count = (
+                    len(current.get(zone, [])) if isinstance(current.get(zone), list) else 0
+                )
                 old_count = len(old.get(zone, [])) if isinstance(old.get(zone), list) else 0
                 delta = current_count - old_count
                 if delta:
@@ -236,14 +242,18 @@ class AlphaStarObservationEncoder(StrategicPlanningObservationEncoder):
                 )
 
         previous_events = previous.get("events")
-        previous_max = max(
-            (
-                self._event_sequence(event)
-                for event in previous_events
-                if isinstance(event, dict)
-            ),
-            default=-1,
-        ) if isinstance(previous_events, list) else -1
+        previous_max = (
+            max(
+                (
+                    self._event_sequence(event)
+                    for event in previous_events
+                    if isinstance(event, dict)
+                ),
+                default=-1,
+            )
+            if isinstance(previous_events, list)
+            else -1
+        )
         events = state.get("events")
         for event in events if isinstance(events, list) else []:
             if not isinstance(event, dict) or self._event_sequence(event) <= previous_max:
@@ -252,7 +262,9 @@ class AlphaStarObservationEncoder(StrategicPlanningObservationEncoder):
             tokens.append(
                 _Token(
                     numeric={},
-                    words=" ".join(("decision or effect since last decision", *_semantic_fragments(event))),
+                    words=" ".join(
+                        ("decision or effect since last decision", *_semantic_fragments(event))
+                    ),
                     relative_player=positions.get(player_id, self.no_player_position),
                     token_type=TokenTypeV11.DECISION_EVENT,
                     has_numeric=False,
@@ -277,7 +289,9 @@ class AlphaStarObservationEncoder(StrategicPlanningObservationEncoder):
         pregame_tokens = [
             _Token(
                 numeric=_card_numeric(card),
-                words=self._deck_card_words(card).replace("known deck card", "pregame deck card", 1),
+                words=self._deck_card_words(card).replace(
+                    "known deck card", "pregame deck card", 1
+                ),
                 relative_player=relative_player,
                 token_type=TokenTypeV11.PREGAME_DECK_CARD,
                 has_numeric=True,
@@ -304,7 +318,9 @@ class AlphaStarObservationEncoder(StrategicPlanningObservationEncoder):
             state_tokens=StructuredTokens(
                 numeric=torch.cat((encoded.state_tokens.numeric, packed.numeric)),
                 word_ids=torch.cat((encoded.state_tokens.word_ids, packed.word_ids)),
-                relative_players=torch.cat((encoded.state_tokens.relative_players, packed.relative_players)),
+                relative_players=torch.cat(
+                    (encoded.state_tokens.relative_players, packed.relative_players)
+                ),
                 token_types=torch.cat((encoded.state_tokens.token_types, packed.token_types)),
                 numeric_mask=torch.cat((encoded.state_tokens.numeric_mask, packed.numeric_mask)),
             ),

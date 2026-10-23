@@ -39,11 +39,9 @@ class MagicTransformerActorCriticV3(MagicTransformerActorCriticV2):
         if torch.any(tokens.relative_players > self.config.player_angle_steps):
             raise ValueError("cyclic relative-player position is out of range")
         has_player = tokens.relative_players.ne(self.config.player_angle_steps)
-        angles = (
-            tokens.relative_players.clamp_max(self.config.player_angle_steps - 1)
-            .to(torch.float32)
-            * (2.0 * math.pi / self.config.player_angle_steps)
-        )
+        angles = tokens.relative_players.clamp_max(self.config.player_angle_steps - 1).to(
+            torch.float32
+        ) * (2.0 * math.pi / self.config.player_angle_steps)
         coordinates = torch.stack((torch.sin(angles), torch.cos(angles)), dim=-1)
         relative_player = self.relative_player_projection(coordinates)
         relative_player = torch.where(
@@ -52,6 +50,4 @@ class MagicTransformerActorCriticV3(MagicTransformerActorCriticV2):
             self.no_player_embedding.expand_as(relative_player),
         )
         token_type = self.token_type_embedding(tokens.token_types)
-        return self.token_norm(
-            numeric_content + word_content + relative_player + token_type
-        )
+        return self.token_norm(numeric_content + word_content + relative_player + token_type)

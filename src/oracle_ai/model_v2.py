@@ -114,9 +114,7 @@ class MagicTransformerActorCriticV2(nn.Module):
         word_content = self.word_encoder(tokens.word_ids)
         relative_player = self.relative_player_embedding(tokens.relative_players)
         token_type = self.token_type_embedding(tokens.token_types)
-        return self.token_norm(
-            numeric_content + word_content + relative_player + token_type
-        )
+        return self.token_norm(numeric_content + word_content + relative_player + token_type)
 
     def forward(
         self,
@@ -143,11 +141,7 @@ class MagicTransformerActorCriticV2(nn.Module):
     ) -> tuple[int, float, float]:
         logits, value = self(state_tokens, action_tokens)
         distribution = Categorical(logits=logits.squeeze(0))
-        action = (
-            torch.argmax(logits, dim=-1).squeeze(0)
-            if deterministic
-            else distribution.sample()
-        )
+        action = torch.argmax(logits, dim=-1).squeeze(0) if deterministic else distribution.sample()
         log_probability = distribution.log_prob(action)
         return (
             int(action.item()),

@@ -115,9 +115,7 @@ class MagicTransformerActorCriticV7(MagicTransformerActorCriticV6):
         decision = encoded_state[:, 1] if encoded_state.shape[1] > 1 else pooled
         action_keys = self.policy_key(actions)
         strategic_query = self.policy_query(pooled + plan).unsqueeze(1)
-        base_logits = (strategic_query * action_keys).sum(dim=-1) / (
-            self.config.d_model**0.5
-        )
+        base_logits = (strategic_query * action_keys).sum(dim=-1) / (self.config.d_model**0.5)
         conditioned_actions = (
             action_keys
             + self.policy_query(decision).unsqueeze(1)
@@ -206,9 +204,7 @@ class MagicTransformerActorCriticV7(MagicTransformerActorCriticV6):
         result = {
             "logits": logits,
             "probabilities": probabilities,
-            "entropy": -(
-                probabilities * probabilities.clamp_min(1e-12).log()
-            ).sum(dim=-1),
+            "entropy": -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=-1),
             "value": self.plan_value_head(torch.cat((pooled, plan), dim=-1)).squeeze(-1),
             "action_values": action_values,
             "action_activation_norms": torch.stack(activation_norms),

@@ -1,0 +1,243 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import torch
+
+from oracle_ai.model_v15 import (
+    ModelConfigV15,
+    TransitionKind,
+    TypedLatentWorldModelV15,
+    v15_losses,
+    v15_multistep_loss,
+)
+from oracle_ai.training.self_play_v15 import _delta_parameters
+from oracle_ai.training.world_model_v15 import (
+    V15TrainingConfig,
+    load_replay_transitions,
+    synthetic_transition_batch,
+    train,
+)
+
+
+def test_v15_trains_from_engine_replay_transitions(tmp_path: Path) -> None:
+    replay = tmp_path / "episode.json"
+    replay.write_text(
+        json.dumps(
+            {
+                "frames": [
+                    {
+                        "decision": {"playerId": "player-1"},
+                        "selectedAction": {"id": "play", "kind": "playLand"},
+                        "state": {
+                            "turnNumber": 1,
+                            "step": "precombatMain",
+                            "stack": [],
+                            "players": [{"id": "player-1", "life": 20}],
+                        },
+                    },
+                    {
+                        "decision": {"playerId": "player-2"},
+                        "state": {
+                            "turnNumber": 1,
+                            "step": "precombatMain",
+                            "stack": [],
+                            "players": [{"id": "player-1", "life": 20}],
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transitions = load_replay_transitions([str(replay)], _config(), 10)
+
+    assert len(transitions) == 1
+    assert transitions[0].legal_label.tolist() == [1.0]
+
+    output = tmp_path / "engine-run"
+    config = tmp_path / "v15-engine.yaml"
+    config.write_text(
+        f"""outputDir: {output.as_posix()}
+model:
+  node_feature_dim: 12
+  latent_dim: 24
+  tactical_dim: 16
+  strategic_dim: 12
+  heads: 4
+  graph_layers: 1
+  action_dim: 32
+  effect_dim: 12
+  invariant_dim: 8
+  text_max_tokens: 16
+training:
+  steps: 1
+  batch_size: 1
+  checkpoint_every: 1
+  replay_paths:
+    - {json.dumps(replay.as_posix())}
+  synthetic_smoke: false
+""",
+        encoding="utf-8",
+    )
+
+    checkpoint = train(config)
+    metrics = json.loads((output / "v15-metrics.jsonl").read_text(encoding="utf-8"))
+
+    assert (checkpoint / "v15-model.pt").is_file()
+    assert metrics["dataSource"] == "engine-replay"
+    assert metrics["availableTransitions"] == 1
+
+
+def test_v15_self_play_refines_only_delta_modules() -> None:
+    model = TypedLatentWorldModelV15(_config())
+
+    trainable = _delta_parameters(model)
+
+    assert trainable
+    assert all(parameter.requires_grad for parameter in model.transition_operators.parameters())
+    assert not any(parameter.requires_grad for parameter in model.policy_head.parameters())
+    assert not any(parameter.requires_grad for parameter in model.value_head.parameters())
+    assert not any(parameter.requires_grad for parameter in model.strategic_projection.parameters())
+
+
+def test_v15_self_play_resumes_latest_completed_episode(tmp_path: Path) -> None:
+    from oracle_ai.training.self_play_v15 import _resume_checkpoint
+
+    configured = tmp_path / "initial"
+    configured.mkdir()
+    (configured / "v15-model.pt").touch()
+    episode_1 = tmp_path / "selfplay-checkpoints" / "episode-000001"
+    episode_2 = tmp_path / "selfplay-checkpoints" / "episode-000002"
+    episode_1.mkdir(parents=True)
+    episode_2.mkdir(parents=True)
+    (episode_1 / "v15-model.pt").touch()
+    (episode_2 / "v15-model.pt").touch()
+
+    assert _resume_checkpoint(tmp_path, configured) == episode_2 / "v15-model.pt"
+
+
+def _config() -> ModelConfigV15:
+    return ModelConfigV15(
+        node_feature_dim=12,
+        latent_dim=24,
+        tactical_dim=16,
+        strategic_dim=12,
+        heads=4,
+        graph_layers=1,
+        action_dim=32,
+        effect_dim=12,
+        invariant_dim=8,
+        text_max_tokens=16,
+    )
+
+
+def test_v15_trains_typed_transition_heads_with_sampled_reconstruction() -> None:
+    config = _config()
+    training = V15TrainingConfig(batch_size=3, nodes=7, steps=1)
+    batch = synthetic_transition_batch(config, training, torch.device("cpu"))
+    model = TypedLatentWorldModelV15(config)
+
+    output = model(batch)
+    losses = v15_losses(batch, output)
+
+    assert output["predicted_next"].shape == (3, config.latent_dim)
+    assert set(losses) == {
+        "latent_transition_loss",
+        "invariant_loss",
+        "effect_loss",
+        "legality_loss",
+        "timing_loss",
+        "uncertainty_loss",
+        "sampled_reconstruction_loss",
+    }
+    assert batch.reconstruction_mask is not None
+    assert int(batch.reconstruction_mask.sum()) < batch.node_mask.numel()
+    assert all(loss.ndim == 0 and torch.isfinite(loss) for loss in losses.values())
+
+
+def test_v15_composes_cost_announcement_response_and_resolution_deltas() -> None:
+    config = _config()
+    model = TypedLatentWorldModelV15(config)
+    initial = torch.randn(2, config.latent_dim)
+    actions = torch.randn(2, 4, config.latent_dim)
+    kinds = torch.tensor(
+        [
+            [
+                TransitionKind.COST,
+                TransitionKind.ANNOUNCEMENT,
+                TransitionKind.RESPONSE,
+                TransitionKind.RESOLUTION,
+            ],
+            [
+                TransitionKind.COST,
+                TransitionKind.ANNOUNCEMENT,
+                TransitionKind.RESOLUTION,
+                TransitionKind.RULES_CLOSURE,
+            ],
+        ]
+    )
+    with torch.no_grad():
+        target, uncertainty = model.compose_transitions(initial, actions, kinds)
+
+    loss = v15_multistep_loss(model, initial, actions, kinds, target)
+
+    assert target.shape == initial.shape
+    assert uncertainty.shape == (2,)
+    assert torch.isfinite(loss)
+    assert float(loss) > 0.0  # calibrated uncertainty remains a trained objective
+
+
+def test_v15_uses_different_operators_for_cost_and_resolution() -> None:
+    config = _config()
+    model = TypedLatentWorldModelV15(config).eval()
+    state = torch.randn(2, config.latent_dim)
+    action = torch.randn(2, config.latent_dim)
+
+    with torch.no_grad():
+        cost, _, _ = model.apply_transition(
+            state, action, torch.full((2,), int(TransitionKind.COST))
+        )
+        resolution, _, _ = model.apply_transition(
+            state, action, torch.full((2,), int(TransitionKind.RESOLUTION))
+        )
+
+    assert not torch.allclose(cost, resolution)
+
+
+def test_v15_trainer_writes_a_playable_checkpoint_and_metrics(tmp_path: Path) -> None:
+    config = tmp_path / "v15.yaml"
+    output = tmp_path / "run"
+    config.write_text(
+        f"""outputDir: {output.as_posix()}
+model:
+  node_feature_dim: 8
+  latent_dim: 16
+  tactical_dim: 12
+  strategic_dim: 8
+  heads: 4
+  graph_layers: 1
+  action_dim: 32
+  effect_dim: 8
+  invariant_dim: 4
+  text_max_tokens: 8
+training:
+  synthetic_smoke: true
+  steps: 1
+  batch_size: 2
+  nodes: 4
+  checkpoint_every: 1
+  seed: 15
+""",
+        encoding="utf-8",
+    )
+
+    checkpoint = train(config)
+
+    assert (checkpoint / "v15-model.pt").is_file()
+    assert (output / "v15-metrics.jsonl").is_file()
+    assert '"trainingPhase": "typed-latent-world-model"' in (
+        output / "v15-training-state.json"
+    ).read_text(encoding="utf-8")

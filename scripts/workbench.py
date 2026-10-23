@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv"
+TRACKED_SUBMODULES = ("external/deepdeck-engine", "external/deepdeck-pixi")
 
 
 def run(arguments: list[str]) -> None:
@@ -32,11 +33,48 @@ def venv_python() -> Path:
     return VENV / relative
 
 
-def setup(*, update_only: bool = False) -> None:
+def setup(*, update_only: bool = False, deep_learning: bool = False, dev: bool = False) -> None:
     git = require("git", "Install Git from https://git-scm.com/downloads.")
     npm = require("npm", "Install the current Node.js LTS release.")
     run([git, "submodule", "sync", "--recursive"])
-    run([git, "submodule", "update", "--init", "--recursive"])
+    for relative in TRACKED_SUBMODULES:
+        source = ROOT / relative
+        if source.is_dir() and (source / ".git").exists():
+            result = subprocess.run(
+                [git, "status", "--porcelain"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+                shell=False,
+            )
+            if result.stdout.strip():
+                raise SystemExit(
+                    f"{relative} contains local changes. Commit or move them before updating."
+                )
+    run(
+        [
+            git,
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            "--",
+            "external/deepdeck-agent",
+        ]
+    )
+    run(
+        [
+            git,
+            "submodule",
+            "update",
+            "--init",
+            "--remote",
+            "--checkout",
+            "--",
+            *TRACKED_SUBMODULES,
+        ]
+    )
 
     python = venv_python()
     if not python.is_file():
@@ -61,7 +99,9 @@ def setup(*, update_only: bool = False) -> None:
     frontend = ROOT / "apps" / "learner-web"
     run([npm, "--prefix", str(frontend), "ci"])
     run([npm, "--prefix", str(frontend), "run", "build"])
-    run([str(python), "-m", "pip", "install", "-e", f"{ROOT}[deep-learning,dev]"])
+    extras = [name for name, enabled in (("deep-learning", deep_learning), ("dev", dev)) if enabled]
+    package = f"{ROOT}[{','.join(extras)}]" if extras else str(ROOT)
+    run([str(python), "-m", "pip", "install", "-e", package])
     action = "updated" if update_only else "ready"
     print(f"DeepDeckLearner is {action}.", flush=True)
 
@@ -70,8 +110,7 @@ def start(*, host: str, port: int, no_browser: bool) -> None:
     python = venv_python()
     if not python.is_file():
         raise SystemExit(
-            "DeepDeckLearner is not set up. Run "
-            "'python scripts/workbench.py setup' first."
+            "DeepDeckLearner is not set up. Run 'python scripts/workbench.py setup' first."
         )
     arguments = [
         str(python),
@@ -92,8 +131,21 @@ def parser() -> argparse.ArgumentParser:
         description="Set up, update, or start the DeepDeckLearner workbench."
     )
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("setup", help="Install pinned dependencies and build the app.")
-    commands.add_parser("update", help="Apply the pinned Engine/Pixi/Agent revisions.")
+    install = commands.add_parser(
+        "setup", help="Install Engine/Pixi main, the pinned Agent, and build the app."
+    )
+    update = commands.add_parser(
+        "update", help="Update Engine/Pixi from main and apply the pinned Agent."
+    )
+    for command in (install, update):
+        command.add_argument(
+            "--deep-learning",
+            action="store_true",
+            help="Also install optional neural training dependencies, including PyTorch.",
+        )
+        command.add_argument(
+            "--dev", action="store_true", help="Also install Python test/lint tools."
+        )
     launch = commands.add_parser("start", help="Start the local workbench.")
     launch.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "localhost"))
     launch.add_argument("--port", type=int, default=8765)
@@ -104,9 +156,9 @@ def parser() -> argparse.ArgumentParser:
 def main() -> None:
     arguments = parser().parse_args()
     if arguments.command == "setup":
-        setup()
+        setup(deep_learning=arguments.deep_learning, dev=arguments.dev)
     elif arguments.command == "update":
-        setup(update_only=True)
+        setup(update_only=True, deep_learning=arguments.deep_learning, dev=arguments.dev)
     else:
         start(host=arguments.host, port=arguments.port, no_browser=arguments.no_browser)
 

@@ -81,9 +81,7 @@ class PolicyRuntime:
     def __init__(self) -> None:
         self.policy = os.getenv("ORACLE_AI_POLICY", "model")
         self.training_step = 0
-        self.registry_path = (
-            Path(path) if (path := os.getenv("ORACLE_AI_MODEL_REGISTRY")) else None
-        )
+        self.registry_path = Path(path) if (path := os.getenv("ORACLE_AI_MODEL_REGISTRY")) else None
         self.model_cache_size = max(1, int(os.getenv("ORACLE_AI_MODEL_CACHE_SIZE", "2")))
         self.model_cache: OrderedDict[
             str,
@@ -186,12 +184,14 @@ class PolicyRuntime:
                     validate_checkpoint(Path(checkpoint))
             except (KeyError, OSError, TypeError, ValueError) as exception:
                 error = str(exception)
-            statuses.append({
-                "id": descriptor["id"],
-                "trainingStep": descriptor["trainingStep"],
-                "available": error is None,
-                **({"error": error} if error is not None else {}),
-            })
+            statuses.append(
+                {
+                    "id": descriptor["id"],
+                    "trainingStep": descriptor["trainingStep"],
+                    "available": error is None,
+                    **({"error": error} if error is not None else {}),
+                }
+            )
         return statuses
 
     def _registry_policy(
@@ -245,15 +245,20 @@ class PolicyRuntime:
             digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
             action = int.from_bytes(digest, "little") % len(actions)
             probability = 1.0 / len(actions)
-            return action, None, self.name, {
-                "confidence": probability,
-                "policyEntropy": float(torch.log(torch.tensor(float(len(actions))))),
-                "actionProbabilities": [probability] * len(actions),
-                "attendedStateTokenIndices": None,
-                "attendedStateTokens": None,
-                "actionValue": None,
-                "actionActivationNorms": None,
-            }
+            return (
+                action,
+                None,
+                self.name,
+                {
+                    "confidence": probability,
+                    "policyEntropy": float(torch.log(torch.tensor(float(len(actions))))),
+                    "actionProbabilities": [probability] * len(actions),
+                    "attendedStateTokenIndices": None,
+                    "attendedStateTokens": None,
+                    "actionValue": None,
+                    "actionActivationNorms": None,
+                },
+            )
 
         def choose_loaded_model(
             model: PolicyModel,
@@ -329,11 +334,7 @@ class PolicyRuntime:
                 policy_state["_pregameDeck"] = pregame["deck"]
                 policy_state["_pregameCommanders"] = pregame["commanders"]
                 self.observation_cache[observation_key] = deepcopy(
-                    {
-                        key: value
-                        for key, value in state.items()
-                        if not str(key).startswith("_")
-                    }
+                    {key: value for key, value in state.items() if not str(key).startswith("_")}
                 )
                 while len(self.observation_cache) > self.plan_cache_size:
                     self.observation_cache.popitem(last=False)
@@ -404,9 +405,7 @@ class PolicyRuntime:
             if callable(improve_policy) and action_values is not None:
                 search_arguments: dict[str, Any] = {}
                 event_code_indices = (
-                    analysis.get("event_code_indices")
-                    if callable(analysis_method)
-                    else None
+                    analysis.get("event_code_indices") if callable(analysis_method) else None
                 )
                 if event_code_indices is not None:
                     search_arguments["event_code_indices"] = event_code_indices
@@ -428,9 +427,7 @@ class PolicyRuntime:
                 distribution = Categorical(probs=probabilities)
             entropy = distribution.entropy()
             selected = (
-                torch.argmax(probabilities, dim=-1)
-                if deterministic
-                else distribution.sample()
+                torch.argmax(probabilities, dim=-1) if deterministic else distribution.sample()
             )
             attended_indices = None
             attended_tokens = None
@@ -445,24 +442,26 @@ class PolicyRuntime:
                 ]
             selected_index = int(selected.item())
             selected_action_value = (
-                float(action_values[0, selected].item())
-                if action_values is not None
-                else None
+                float(action_values[0, selected].item()) if action_values is not None else None
             )
             selected_activation_norms = (
                 activation_norms[:, 0, selected].detach().cpu().tolist()
                 if activation_norms is not None
                 else None
             )
-            return selected_index, float(value.squeeze(0).item()), {
-                "confidence": float(probabilities[selected].item()),
-                "policyEntropy": float(entropy.item()),
-                "actionProbabilities": probabilities.detach().cpu().tolist(),
-                "attendedStateTokenIndices": attended_indices,
-                "attendedStateTokens": attended_tokens,
-                "actionValue": selected_action_value,
-                "actionActivationNorms": selected_activation_norms,
-            }
+            return (
+                selected_index,
+                float(value.squeeze(0).item()),
+                {
+                    "confidence": float(probabilities[selected].item()),
+                    "policyEntropy": float(entropy.item()),
+                    "actionProbabilities": probabilities.detach().cpu().tolist(),
+                    "attendedStateTokenIndices": attended_indices,
+                    "attendedStateTokens": attended_tokens,
+                    "actionValue": selected_action_value,
+                    "actionActivationNorms": selected_activation_norms,
+                },
+            )
 
         if self.registry_path is not None:
             selected_model = controller_id or self.name
@@ -527,9 +526,7 @@ app = FastAPI(title="Oracle AI", version="0.2.0")
 def health() -> dict[str, str | int | None]:
     return {
         "checkpointPath": (
-            str(runtime.checkpoint_path.resolve())
-            if runtime.checkpoint_path is not None
-            else None
+            str(runtime.checkpoint_path.resolve()) if runtime.checkpoint_path is not None else None
         ),
         "device": str(runtime.device),
         "modelFamily": (
@@ -542,9 +539,7 @@ def health() -> dict[str, str | int | None]:
         "model": runtime.name,
         "policy": runtime.policy,
         "registryPath": (
-            str(runtime.registry_path.resolve())
-            if runtime.registry_path is not None
-            else None
+            str(runtime.registry_path.resolve()) if runtime.registry_path is not None else None
         ),
         "trainingStep": runtime.training_step,
     }
@@ -584,14 +579,14 @@ def choose_action(payload: DecisionRequest) -> DecisionResponse:
         raise HTTPException(status_code=422, detail=str(error)) from error
     state = dict(payload.state)
     decision_context = state.get("_decisionContext")
-    decision_context = (
-        dict(decision_context) if isinstance(decision_context, dict) else {}
+    decision_context = dict(decision_context) if isinstance(decision_context, dict) else {}
+    decision_context.update(
+        {
+            "id": payload.decision.id,
+            "playerId": payload.decision.player_id,
+            "kind": getattr(payload.decision, "kind", None),
+        }
     )
-    decision_context.update({
-        "id": payload.decision.id,
-        "playerId": payload.decision.player_id,
-        "kind": getattr(payload.decision, "kind", None),
-    })
     state["_decisionContext"] = decision_context
     try:
         selected_index, value, model_name, diagnostics = runtime.choose_with_diagnostics(
