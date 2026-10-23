@@ -83,8 +83,6 @@ class HashingObservationEncoder:
         state_tokens = torch.stack(
             [self._encode_object(value, path) for path, value in self._state_objects(state)]
         )
-        action_tokens = torch.stack(
-            [self._encode_object(action, "action") for action in actions]
-        )
+        action_tokens = torch.stack([self._encode_object(action, "action") for action in actions])
         padding_mask = torch.zeros(state_tokens.shape[0], dtype=torch.bool)
         return EncodedDecision(state_tokens, action_tokens, padding_mask)

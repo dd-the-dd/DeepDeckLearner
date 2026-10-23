@@ -57,8 +57,7 @@ BYTE_ID_OFFSET = 4
 BYTE_VOCABULARY_SIZE = 256
 STRUCTURAL_ID_OFFSET = BYTE_ID_OFFSET + BYTE_VOCABULARY_SIZE
 STRUCTURAL_WORD_IDS = {
-    word: STRUCTURAL_ID_OFFSET + index
-    for index, word in enumerate(_STRUCTURAL_VOCABULARY)
+    word: STRUCTURAL_ID_OFFSET + index for index, word in enumerate(_STRUCTURAL_VOCABULARY)
 }
 SEMANTIC_VOCABULARY_SIZE = STRUCTURAL_ID_OFFSET + len(_STRUCTURAL_VOCABULARY)
 
@@ -172,9 +171,7 @@ class PlanningObservationEncoder(OracleStructuredObservationEncoder):
 
     @staticmethod
     def _labels(tokens: list[_Token]) -> tuple[str, ...]:
-        return tuple(
-            f"{token.token_type.name.lower()}: {token.words[:200]}" for token in tokens
-        )
+        return tuple(f"{token.token_type.name.lower()}: {token.words[:200]}" for token in tokens)
 
     def encode(
         self,
@@ -184,8 +181,7 @@ class PlanningObservationEncoder(OracleStructuredObservationEncoder):
         decision_context = state.get("_decisionContext")
         acting_player_id = (
             str(decision_context.get("playerId"))
-            if isinstance(decision_context, dict)
-            and decision_context.get("playerId") is not None
+            if isinstance(decision_context, dict) and decision_context.get("playerId") is not None
             else None
         )
         players = list(state.get("players", [])) if isinstance(state.get("players"), list) else []

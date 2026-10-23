@@ -19,9 +19,7 @@ def plackett_luce_matchmaking_weight(
     games = max(0, int(stat.get("games", 0) or 0))
     exposure = ((minimum_games + game_prior) / (games + game_prior)) ** underplayed_strength
     proximity = (
-        1.0
-        if target_ordinal is None
-        else math.exp(-abs(ordinal - target_ordinal) / rating_scale)
+        1.0 if target_ordinal is None else math.exp(-abs(ordinal - target_ordinal) / rating_scale)
     )
     quality = proximity * exposure
     return max(random_floor + (1.0 - random_floor) * quality, 1e-9)

@@ -84,9 +84,7 @@ class MagicTransformerActorCriticV5(MagicTransformerActorCriticV4):
         decision = encoded_state[:, 1] if encoded_state.shape[1] > 1 else pooled
         action_keys = self.policy_key(actions)
         base_query = self.policy_query(pooled).unsqueeze(1)
-        base_logits = (base_query * action_keys).sum(dim=-1) / (
-            self.config.d_model**0.5
-        )
+        base_logits = (base_query * action_keys).sum(dim=-1) / (self.config.d_model**0.5)
         conditioned_actions = action_keys
         conditioned_actions = conditioned_actions + self.policy_query(decision).unsqueeze(1)
         attention_weights: torch.Tensor | None = None
@@ -108,9 +106,7 @@ class MagicTransformerActorCriticV5(MagicTransformerActorCriticV4):
             action_tokens,
             need_weights=False,
         )
-        contextual_logits = self.policy_score(
-            self.action_output_norm(actions)
-        ).squeeze(-1)
+        contextual_logits = self.policy_score(self.action_output_norm(actions)).squeeze(-1)
         logits = base_logits + self.context_gate * contextual_logits
         value = self.value_head(pooled).squeeze(-1)
         return logits, value
@@ -126,9 +122,7 @@ class MagicTransformerActorCriticV5(MagicTransformerActorCriticV4):
             action_tokens,
             need_weights=True,
         )
-        contextual_logits = self.policy_score(
-            self.action_output_norm(actions)
-        ).squeeze(-1)
+        contextual_logits = self.policy_score(self.action_output_norm(actions)).squeeze(-1)
         logits = base_logits + self.context_gate * contextual_logits
         probabilities = torch.softmax(logits, dim=-1)
         entropy = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=-1)

@@ -119,16 +119,8 @@ def _state_items(observation: dict[str, Any], known_deck: list[dict[str, Any]]) 
     return [
         {"kind": "game", "value": header},
         *_player_tokens(observation),
-        *(
-            {"kind": "stack", "value": item}
-            for item in visible_stack
-            if isinstance(item, dict)
-        ),
-        *(
-            {"kind": "event", "value": event}
-            for event in recent_events
-            if isinstance(event, dict)
-        ),
+        *({"kind": "stack", "value": item} for item in visible_stack if isinstance(item, dict)),
+        *({"kind": "event", "value": event} for event in recent_events if isinstance(event, dict)),
         *({"kind": "known-deck-card", "value": card} for card in known_deck),
     ]
 

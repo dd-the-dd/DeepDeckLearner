@@ -1,9 +1,11 @@
 [submodule "external/deepdeck-engine"]
 	path = external/deepdeck-engine
 	url = https://github.com/dd-the-dd/DeepDeckEngine.git
+	branch = main
 [submodule "external/deepdeck-pixi"]
 	path = external/deepdeck-pixi
 	url = https://github.com/dd-the-dd/DeepDeckPixi.git
+	branch = main
 [submodule "external/deepdeck-agent"]
 	path = external/deepdeck-agent
 	url = https://github.com/dd-the-dd/DeepDeckAgent.git

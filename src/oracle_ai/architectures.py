@@ -11,6 +11,7 @@ from oracle_ai.encoding_v4 import OracleStructuredObservationEncoder
 from oracle_ai.encoding_v6 import PlanningObservationEncoder
 from oracle_ai.encoding_v7 import StrategicPlanningObservationEncoder
 from oracle_ai.encoding_v11 import AlphaStarObservationEncoder
+from oracle_ai.encoding_v13 import GraphObservationEncoderV13
 from oracle_ai.model import MagicTransformerActorCritic, ModelConfig
 from oracle_ai.model_v2 import MagicTransformerActorCriticV2, ModelConfigV2
 from oracle_ai.model_v3 import MagicTransformerActorCriticV3, ModelConfigV3
@@ -22,6 +23,7 @@ from oracle_ai.model_v9 import MagicTransformerActorCriticV9, ModelConfigV9
 from oracle_ai.model_v10 import MagicTransformerActorCriticV10, ModelConfigV10
 from oracle_ai.model_v11 import MagicTransformerActorCriticV11, ModelConfigV11
 from oracle_ai.model_v12 import MagicTransformerActorCriticV12, ModelConfigV12
+from oracle_ai.model_v13 import GraphBeliefWorldModelV13, ModelConfigV13
 from oracle_ai.training.future_features import FUTURE_FEATURE_NAMES
 
 _LEGACY_FUTURE_FEATURE_NAMES = (
@@ -60,6 +62,7 @@ PolicyModel = (
     | MagicTransformerActorCriticV10
     | MagicTransformerActorCriticV11
     | MagicTransformerActorCriticV12
+    | GraphBeliefWorldModelV13
 )
 PolicyEncoder = (
     HashingObservationEncoder
@@ -69,6 +72,7 @@ PolicyEncoder = (
     | PlanningObservationEncoder
     | StrategicPlanningObservationEncoder
     | AlphaStarObservationEncoder
+    | GraphObservationEncoderV13
 )
 
 _MODEL_TYPES = {
@@ -83,6 +87,8 @@ _MODEL_TYPES = {
     "structured-v10": (ModelConfigV10, MagicTransformerActorCriticV10),
     "structured-v11": (ModelConfigV11, MagicTransformerActorCriticV11),
     "structured-v12": (ModelConfigV12, MagicTransformerActorCriticV12),
+    "graph-belief-v13": (ModelConfigV13, GraphBeliefWorldModelV13),
+    "structured-world-v13": (ModelConfigV13, GraphBeliefWorldModelV13),
 }
 
 
@@ -112,6 +118,8 @@ def encoder_for_model(
     *,
     max_state_tokens: int = 512,
 ) -> PolicyEncoder:
+    if isinstance(model, GraphBeliefWorldModelV13):
+        return GraphObservationEncoderV13()
     if isinstance(model, MagicTransformerActorCriticV11):
         return AlphaStarObservationEncoder(
             word_vocab_size=model.config.word_vocab_size,
@@ -150,9 +158,7 @@ def encoder_for_model(
             player_angle_steps=model.config.player_angle_steps,
             max_events=model.config.max_events,
         )
-    if isinstance(
-        model, (MagicTransformerActorCriticV4, MagicTransformerActorCriticV5)
-    ):
+    if isinstance(model, (MagicTransformerActorCriticV4, MagicTransformerActorCriticV5)):
         return OracleStructuredObservationEncoder(
             word_vocab_size=model.config.word_vocab_size,
             max_words=model.config.max_words,
@@ -190,9 +196,7 @@ def _future_feature_index_pairs(
     pairs: list[tuple[int, int]] = []
     for outer_index in range(outer_count):
         for source_index, source_name in enumerate(source_names):
-            target_name = (
-                "total_hand_count" if source_name == "hand_count" else source_name
-            )
+            target_name = "total_hand_count" if source_name == "hand_count" else source_name
             pairs.append(
                 (
                     outer_index * len(source_names) + source_index,
@@ -356,10 +360,7 @@ def upgrade_model(
             "future_player_slots",
             "future_feature_dim",
         }
-        if any(
-            source_config.get(name) != target_config.get(name)
-            for name in structural_fields
-        ):
+        if any(source_config.get(name) != target_config.get(name) for name in structural_fields):
             raise ValueError("V9 to V10 upgrade requires identical shared dimensions")
         device = next(source.parameters()).device
         target = target.to(device)
@@ -388,13 +389,8 @@ def upgrade_model(
             "player_angle_steps",
             "action_layers",
         }
-        if any(
-            source_config.get(name) != target_config.get(name)
-            for name in structural_fields
-        ):
-            raise ValueError(
-                "V5 to V6 upgrade requires identical state-model dimensions"
-            )
+        if any(source_config.get(name) != target_config.get(name) for name in structural_fields):
+            raise ValueError("V5 to V6 upgrade requires identical state-model dimensions")
         device = next(source.parameters()).device
         target = target.to(device)
         target_state = target.state_dict()
@@ -409,9 +405,7 @@ def upgrade_model(
         target.load_state_dict(compatible, strict=False)
         with torch.no_grad():
             source_types = source.token_type_embedding.weight
-            target.token_type_embedding.weight[: source_types.shape[0]].copy_(
-                source_types
-            )
+            target.token_type_embedding.weight[: source_types.shape[0]].copy_(source_types)
         return target
 
     if (
@@ -432,13 +426,8 @@ def upgrade_model(
             "token_type_count",
             "player_angle_steps",
         }
-        if any(
-            source_config.get(name) != target_config.get(name)
-            for name in structural_fields
-        ):
-            raise ValueError(
-                "V4 to V5 upgrade requires identical state-model dimensions"
-            )
+        if any(source_config.get(name) != target_config.get(name) for name in structural_fields):
+            raise ValueError("V4 to V5 upgrade requires identical state-model dimensions")
         device = next(source.parameters()).device
         target = target.to(device)
         target_state = target.state_dict()
@@ -479,8 +468,7 @@ def upgrade_model(
         and type(target) is MagicTransformerActorCriticV3
     ):
         raise ValueError(
-            f"unsupported architecture upgrade: "
-            f"{source.model_family} -> {target.model_family}"
+            f"unsupported architecture upgrade: {source.model_family} -> {target.model_family}"
         )
     if source.config.max_relative_players != target.config.max_relative_players:
         raise ValueError("V2 to V3 upgrade requires the same maximum player count")

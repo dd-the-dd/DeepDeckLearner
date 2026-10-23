@@ -101,9 +101,7 @@ class PolicyV11(nn.Module):  # type: ignore[misc]
         decision: EncodedDecision,
         previous_memory: torch.Tensor | None = None,
     ) -> ModelOutput:
-        state = self._encode_stream(
-            decision.state_tokens, self.state_input, self.state_encoder
-        )
+        state = self._encode_stream(decision.state_tokens, self.state_input, self.state_encoder)
         difference = self._encode_stream(
             decision.difference_tokens,
             self.difference_input,

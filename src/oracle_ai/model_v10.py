@@ -59,9 +59,7 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
             1.0 / config.event_codebook_size,
         )
         future_values = (
-            config.future_horizons
-            * config.future_player_slots
-            * config.future_feature_dim
+            config.future_horizons * config.future_player_slots * config.future_feature_dim
         )
         self.event_decoder = nn.Sequential(
             nn.LayerNorm(config.event_latent_dim + config.d_model * 2),
@@ -139,16 +137,10 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
             # Event reconstruction may learn from action/context features without
             # sending its auxiliary loss back through the policy representation.
             event_input = event_input.detach()
-        prequantized, quantized, event_latents, code_indices = self._quantize_events(
-            event_input
-        )
+        prequantized, quantized, event_latents, code_indices = self._quantize_events(event_input)
 
-        decoder_pooled = (
-            pooled.detach() if self.config.isolate_prediction_gradients else pooled
-        )
-        decoder_plan = (
-            plan.detach() if self.config.isolate_prediction_gradients else plan
-        )
+        decoder_pooled = pooled.detach() if self.config.isolate_prediction_gradients else pooled
+        decoder_plan = plan.detach() if self.config.isolate_prediction_gradients else plan
         decoder_context = torch.cat(
             (
                 event_latents,
@@ -157,9 +149,7 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
             ),
             dim=-1,
         )
-        reconstructed_future = -torch.sigmoid(
-            self.event_decoder(decoder_context)
-        ).reshape(
+        reconstructed_future = -torch.sigmoid(self.event_decoder(decoder_context)).reshape(
             1,
             action_count,
             self.config.future_horizons,
@@ -167,14 +157,10 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
             self.config.future_feature_dim,
         )
         decision_event_latents = (
-            event_latents.detach()
-            if self.config.isolate_prediction_gradients
-            else event_latents
+            event_latents.detach() if self.config.isolate_prediction_gradients else event_latents
         )
         latent_policy = self.latent_policy_head(decision_event_latents).squeeze(-1)
-        latent_action_values = self.latent_action_value_head(
-            decision_event_latents
-        ).squeeze(-1)
+        latent_action_values = self.latent_action_value_head(decision_event_latents).squeeze(-1)
         concrete_action_values = result["action_values"]
         latent_weight = self.config.latent_action_value_weight
         shared_action_values = (
@@ -184,9 +170,7 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
             dim=-1,
             keepdim=True,
         )
-        result["logits"] = result["logits"] + (
-            self.latent_policy_gate * centered_latent_policy
-        )
+        result["logits"] = result["logits"] + (self.latent_policy_gate * centered_latent_policy)
         multiplayer_values = self.multiplayer_value_head(
             torch.cat(
                 (
@@ -249,9 +233,7 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
         )
         code_count = max(self.config.event_codebook_size, int(codes.max().item()) + 1)
         for _ in range(self.config.root_search_simulations):
-            code_visits = torch.zeros(
-                code_count, device=visits.device, dtype=visits.dtype
-            )
+            code_visits = torch.zeros(code_count, device=visits.device, dtype=visits.dtype)
             code_visits.scatter_add_(0, codes, visits)
             concrete_exploration = (
                 self.config.puct_coefficient
@@ -290,9 +272,7 @@ class MagicTransformerActorCriticV10(MagicTransformerActorCriticV9):
         )
         probabilities = torch.softmax(result["logits"], dim=-1)
         result["probabilities"] = probabilities
-        result["entropy"] = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(
-            dim=-1
-        )
+        result["entropy"] = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=-1)
         code_histogram = torch.bincount(
             result["event_code_indices"].flatten(),
             minlength=self.config.event_codebook_size,

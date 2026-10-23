@@ -35,6 +35,31 @@ import {
 } from "./LocalPixiRenderer";
 
 describe("Pixi local-seat projection", () => {
+  test('spectator seats remain fixed across turns and global shows only recorded identities', () => {
+    const players = [
+      {key:'a',role:'ai',zones:{hand:[{id:'mine',name:'Ponder',imageUrl:'ponder.jpg'}]}},
+      {key:'b',role:'ai',zones:{hand:[{id:'theirs',name:'Daze',imageUrl:'daze.jpg'},{id:'hidden:hand:b:1',name:'Hidden card'}]}},
+    ];
+    for (const playerKey of ['a','b']) {
+      const fixed = pixiScene({players,step:{playerKey}}, {}, 'b');
+      expect(fixed.players.map((p: {local:boolean}) => p.local)).toEqual([false,true]);
+      expect(fixed.players[0].hand[0].faceDown).toBe(true);
+      expect(fixed.players[1].hand[0].name).toBe('Daze');
+      const global = pixiScene({players,step:{playerKey}}, {}, 'global');
+      expect(global.players[0].hand[0].name).toBe('Ponder');
+      expect(global.players[1].hand[0].name).toBe('Daze');
+      expect(global.players[1].hand[1].faceDown).toBe(true);
+      expect(global.players[1].hand[1].imageUrl).toBe('');
+    }
+  });
+  test("preserves every typed counter through the local live/replay adapter", () => {
+    const counters = { "+1/+1": 1, "-1/-1": 1, charge: 3, loyalty: 5, custom: 2 };
+    const scene = pixiScene({ players: [{ key: "p1", name: "Pilot", role: "human", zones: {
+      battlefield: { nonCreaturePermanents: [{ id: "ee", name: "Engineered Explosives", state: { counters } }] },
+    } }] });
+    expect(scene.players[0].battlefield[0].counters).toEqual(counters);
+    expect(scene.players[0].battlefield[0].counters).not.toBe(counters);
+  });
   test("enriches observed cards with their catalog art and sortable characteristics", () => {
     expect(gameNoteCardPresentation({ count: 2, name: "Force of Will" }, {
       force: {

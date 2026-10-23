@@ -69,10 +69,7 @@ def anchor_participant_id(
     opening_hand_pool_size: int,
     player_count: int,
 ) -> str:
-    return (
-        f"anchor-m{deadline_round:02d}-n{opening_hand_pool_size:03d}-"
-        f"p{player_count}"
-    )
+    return f"anchor-m{deadline_round:02d}-n{opening_hand_pool_size:03d}-p{player_count}"
 
 
 def anchor_challenges(
@@ -136,15 +133,11 @@ def complete_tie_gradient_rewards(
 
     unique_ids = list(dict.fromkeys(participant_ids))
     previews = hypothetical_first_place_deltas(
-        [
-            ratings_by_id.get(participant_id, PlackettLuceRating())
-            for participant_id in unique_ids
-        ],
+        [ratings_by_id.get(participant_id, PlackettLuceRating()) for participant_id in unique_ids],
         beta=beta,
     )
     return {
-        participant_id: preview["draw"]
-        for participant_id, preview in zip(unique_ids, previews)
+        participant_id: preview["draw"] for participant_id, preview in zip(unique_ids, previews)
     }
 
 
@@ -178,10 +171,7 @@ def rank_gradient_rewards(
         remaining.pop(0)
         stages += 1
     scale = max(1, stages)
-    return {
-        player_id: max(-1.0, min(1.0, reward / scale))
-        for player_id, reward in rewards.items()
-    }
+    return {player_id: max(-1.0, min(1.0, reward / scale)) for player_id, reward in rewards.items()}
 
 
 def ordered_finishers(state: dict[str, Any], player_ids: list[str]) -> list[str]:
@@ -213,9 +203,7 @@ def ordered_finishers(state: dict[str, Any], player_ids: list[str]) -> list[str]
         if player_id != winner and not bool(players.get(player_id, {}).get("hasLost"))
     ]
     eliminated = [
-        player_id
-        for player_id in player_ids
-        if player_id != winner and player_id not in surviving
+        player_id for player_id in player_ids if player_id != winner and player_id not in surviving
     ]
     eliminated.sort(key=lambda player_id: loss_sequence.get(player_id, -1), reverse=True)
     return ([str(winner)] if winner in player_ids else []) + surviving + eliminated
@@ -236,10 +224,7 @@ class TrainingLeaderboard:
         self.labels = dict(labels)
         self.beta = beta
         self.learning_rate = learning_rate
-        self.ratings = {
-            participant_id: PlackettLuceRating()
-            for participant_id in self.labels
-        }
+        self.ratings = {participant_id: PlackettLuceRating() for participant_id in self.labels}
         self.deck_ratings: dict[str, PlackettLuceRating] = {}
         self.deck_entries: dict[str, tuple[str, str]] = {}
         self.anchor_calibration: dict[str, Any] | None = None
@@ -462,13 +447,16 @@ class TrainingLeaderboard:
                 if player_id in deck_entry_by_player
             )
         )
-        updated = self._update_rating_group(
-            unique_deck_entries,
-            ordered_deck_entries,
-            self.deck_ratings,
-            deck_entry_by_player.get(winner_player_id),
-            complete_tie=complete_tie,
-        ) or updated
+        updated = (
+            self._update_rating_group(
+                unique_deck_entries,
+                ordered_deck_entries,
+                self.deck_ratings,
+                deck_entry_by_player.get(winner_player_id),
+                complete_tie=complete_tie,
+            )
+            or updated
+        )
         if updated and save:
             self.save()
 
@@ -522,10 +510,7 @@ class TrainingLeaderboard:
 
         anchor_ids = {challenge.participant_id for challenge in ordered_challenges}
         self.labels.update(
-            {
-                challenge.participant_id: challenge.label
-                for challenge in ordered_challenges
-            }
+            {challenge.participant_id: challenge.label for challenge in ordered_challenges}
         )
         stale_deck_entries = [
             entry_id
@@ -601,9 +586,7 @@ class TrainingLeaderboard:
             "openingHandPoolSizes": sorted(
                 {challenge.opening_hand_pool_size for challenge in ordered_challenges}
             ),
-            "playerCounts": sorted(
-                {challenge.player_count for challenge in ordered_challenges}
-            ),
+            "playerCounts": sorted({challenge.player_count for challenge in ordered_challenges}),
             "anchorOpponentCounts": sorted(
                 {challenge.opponent_count for challenge in ordered_challenges}
             ),
@@ -615,12 +598,8 @@ class TrainingLeaderboard:
             "initialMuSpan": prior_span,
             "minimumGamesPerAnchor": min(rating.games for rating in anchor_ratings),
             "maximumGamesPerAnchor": max(rating.games for rating in anchor_ratings),
-            "minimumDeckGamesPerAnchor": min(
-                rating.games for rating in deck_anchor_ratings
-            ),
-            "maximumDeckGamesPerAnchor": max(
-                rating.games for rating in deck_anchor_ratings
-            ),
+            "minimumDeckGamesPerAnchor": min(rating.games for rating in deck_anchor_ratings),
+            "maximumDeckGamesPerAnchor": max(rating.games for rating in deck_anchor_ratings),
         }
         self.save()
         return dict(self.anchor_calibration)
@@ -669,19 +648,13 @@ class TrainingLeaderboard:
         deck_names: list[str] | tuple[str, ...],
     ) -> dict[str, dict[str, float | int | None]]:
         ranked_ids = sorted(
-            (
-                entry_id
-                for entry_id, rating in self.deck_ratings.items()
-                if rating.games > 0
-            ),
+            (entry_id for entry_id, rating in self.deck_ratings.items() if rating.games > 0),
             key=lambda entry_id: (
                 -self.deck_ratings[entry_id].ordinal,
                 self.deck_entries[entry_id],
             ),
         )
-        rank_by_id = {
-            entry_id: rank for rank, entry_id in enumerate(ranked_ids, start=1)
-        }
+        rank_by_id = {entry_id: rank for rank, entry_id in enumerate(ranked_ids, start=1)}
         stats: dict[str, dict[str, float | int | None]] = {}
         for deck_name in deck_names:
             entry_id = self._deck_entry_id(participant_id, deck_name)

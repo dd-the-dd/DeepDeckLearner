@@ -193,23 +193,29 @@ def test_registry_status_rejects_an_incompatible_checkpoint_without_loading_weig
     checkpoint.mkdir()
     (checkpoint / "checkpoint.pt").write_bytes(b"not loaded during validation")
     (checkpoint / "manifest.json").write_text(
-        json.dumps({
-            "schema_version": "oracle-ai-checkpoint/v1",
-            "model_family": "structured-v10",
-            "model_config": {"removed_option": True},
-        }),
+        json.dumps(
+            {
+                "schema_version": "oracle-ai-checkpoint/v1",
+                "model_family": "structured-v10",
+                "model_config": {"removed_option": True},
+            }
+        ),
         encoding="utf-8",
     )
     registry = tmp_path / "model-registry.json"
     registry.write_text(
-        json.dumps({
-            "schemaVersion": "oracle-ai-model-registry/v1",
-            "models": [{
-                "id": "ia-v10-old",
-                "checkpoint": str(checkpoint),
-                "trainingStep": 42,
-            }],
-        }),
+        json.dumps(
+            {
+                "schemaVersion": "oracle-ai-model-registry/v1",
+                "models": [
+                    {
+                        "id": "ia-v10-old",
+                        "checkpoint": str(checkpoint),
+                        "trainingStep": 42,
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("ORACLE_AI_MODEL_REGISTRY", str(registry))
@@ -293,9 +299,7 @@ def test_v9_policy_keeps_separate_plans_per_game_context(
         "decision:1",
         context_id="game:1:player-1",
     )
-    first_plan = runtime.plan_cache[
-        "ia-v9-in-training:game:1:player-1"
-    ].clone()
+    first_plan = runtime.plan_cache["ia-v9-in-training:game:1:player-1"].clone()
     runtime.choose_with_diagnostics(
         state,
         actions,

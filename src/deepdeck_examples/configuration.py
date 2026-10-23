@@ -4,24 +4,9 @@ import os
 
 from deepdeck_agent import AgentConfig, DeckPolicy, PlaySpeed
 
-from .commanders import commander_plan
-
 
 def _repository_commit() -> str:
     return os.getenv("DEEPDECK_AGENT_COMMIT", "local-worktree").strip() or "local-worktree"
-
-
-def _heuristic_formats() -> tuple[str, ...]:
-    values = tuple(
-        dict.fromkeys(
-            value.strip().casefold()
-            for value in os.getenv("DEEPDECK_AGENT_FORMATS", "legacy,commander").split(",")
-            if value.strip()
-        )
-    )
-    if not values or any(value not in {"legacy", "commander"} for value in values):
-        raise ValueError("DEEPDECK_AGENT_FORMATS supports only legacy and commander")
-    return values
 
 
 def random_config() -> AgentConfig:
@@ -39,77 +24,23 @@ def random_config() -> AgentConfig:
     )
 
 
-def commander_config(
-    key: str,
-    *,
-    deck_id: str | None = None,
-    agent_id: str | None = None,
-    version: str | None = None,
-) -> AgentConfig:
-    normalized = key.casefold().replace("'", "").replace("-", "").replace(" ", "")
-    aliases = {"sekkuar": "sektuar", "kellanthekid": "kellan"}
-    normalized = aliases.get(normalized, normalized)
-    existing = {
-        "alexios": (
-            "Alexios fast equipment",
-            "Transparent rule-based Alexios equipment and protection policy.",
-        ),
-        "omnath": (
-            "Omnath mana and X spells",
-            "Mana-first Omnath policy that protects its commander and times X spells.",
-        ),
-    }
-    if normalized in existing:
-        name, description = existing[normalized]
-    else:
-        plan = commander_plan(normalized)
-        name, description = plan.name, plan.description
-    env_prefix = normalized.upper()
-    resolved_deck_id = (
-        deck_id
-        or os.getenv(f"{env_prefix}_DECK_ID", normalized).strip()
-        or normalized
-    )
+def forge_reference_config(profile: str = "balanced") -> AgentConfig:
+    normalized = profile.strip().casefold()
+    if normalized not in {"cautious", "balanced", "aggressive"}:
+        raise ValueError("Forge reference profile must be cautious, balanced, or aggressive")
     return AgentConfig(
-        agent_id=(
-            agent_id
-            or os.getenv(
-                "DEEPDECK_AGENT_ID", f"com.deepdeckleague.example.{normalized}"
-            ).strip()
-        ),
-        name=name,
-        version=version or os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
-        author="Deep Deck League",
-        description=description,
-        formats=("commander",),
-        decks=DeckPolicy.only(resolved_deck_id),
-        speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
-        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
-        repository_commit=_repository_commit(),
-    )
-
-
-def alexios_config() -> AgentConfig:
-    return commander_config("alexios")
-
-
-def omnath_config() -> AgentConfig:
-    return commander_config("omnath")
-
-
-def heuristic_config() -> AgentConfig:
-    return AgentConfig(
-        agent_id=os.getenv("DEEPDECK_AGENT_ID", "com.deepdeckleague.example.heuristic").strip(),
-        name=os.getenv("DEEPDECK_AGENT_NAME", "Programmatic heuristic baseline").strip(),
+        agent_id=os.getenv(
+            "DEEPDECK_AGENT_ID", f"com.deepdeckleague.example.forge-reference-{normalized}"
+        ).strip(),
+        name=f"Forge-style reference ({normalized})",
         version=os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
-        author=os.getenv("DEEPDECK_AGENT_AUTHOR", "Deep Deck League").strip(),
+        author="Deep Deck League",
         description=(
-            os.getenv(
-                "DEEPDECK_AGENT_DESCRIPTION",
-                "Deterministic, explainable and configurable rule-based policy.",
-            ).strip()
+            "Independent MIT heuristic reference inspired by Forge's programmatic AI "
+            "architecture; contains no Forge GPL source code."
         ),
-        formats=_heuristic_formats(),
+        formats=("legacy", "commander"),
+        agent_type="rules_engine",
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
         repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
@@ -117,20 +48,62 @@ def heuristic_config() -> AgentConfig:
     )
 
 
+def programmatic_config(policy: dict[str, object]) -> AgentConfig:
+    game_format = str(policy.get("format", "legacy"))
+    raw_deck_ids = policy.get("deckVersionIds", [])
+    if not isinstance(raw_deck_ids, list):
+        raise ValueError("A programmatic agent must declare deckVersionIds as a list")
+    deck_ids = tuple(str(value) for value in raw_deck_ids if str(value))
+    if not deck_ids:
+        raise ValueError("A programmatic agent must declare at least one deck version id")
+    raw_revision = policy.get("revision", 1)
+    revision = raw_revision if isinstance(raw_revision, int) else 1
+    return AgentConfig(
+        agent_id=str(policy.get("id", "com.deepdeckleague.local.programmatic")),
+        name=str(policy.get("name", "Local programmatic agent")),
+        version=f"0.1.{revision}",
+        author="Local DeepDeckLearner user",
+        description=str(policy.get("description", "Deterministic deck-specific agent.")),
+        formats=(game_format,),
+        agent_type="rules_engine",
+        decks=DeckPolicy.one_of(*deck_ids),
+        speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
+        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
+        repository_commit=_repository_commit(),
+    )
+
+
+def alexios_config() -> AgentConfig:
+    deck_id = os.getenv("ALEXIOS_DECK_ID", "alexios").strip() or "alexios"
+    return AgentConfig(
+        agent_id=os.getenv("DEEPDECK_AGENT_ID", "com.deepdeckleague.example.alexios").strip(),
+        name="Alexios fast equipment",
+        version=os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
+        author="Deep Deck League",
+        description="Transparent rule-based Alexios equipment and protection policy.",
+        formats=("commander",),
+        decks=DeckPolicy.only(deck_id),
+        speeds=(PlaySpeed.MS_100, PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),
+        repository_url="https://github.com/dd-the-dd/DeepDeckLearner",
+        repository_commit=_repository_commit(),
+    )
+
+
 def deep_learning_config(version: str) -> AgentConfig:
-    if version not in {"v11", "v12"}:
-        raise ValueError("deep learning version must be v11 or v12")
+    if version not in {"v11", "v12", "v13", "v15"}:
+        raise ValueError("deep learning version must be v11, v12, v13 or v15")
     default_id = f"com.deepdeckleague.example.{version}"
     return AgentConfig(
         agent_id=os.getenv("DEEPDECK_AGENT_ID", default_id).strip(),
         name=f"Deep learning {version.upper()} example",
         version=os.getenv("DEEPDECK_AGENT_VERSION", "0.1.0").strip(),
         author="Deep Deck League",
-        description=(
-            "Trainable V11 recurrent multiplayer policy example."
-            if version == "v11"
-            else "Trainable V12 recurrent two-player zero-sum policy example."
-        ),
+        description={
+            "v11": "Trainable V11 recurrent multiplayer policy example.",
+            "v12": "Trainable V12 recurrent two-player zero-sum policy example.",
+            "v13": "Trainable V13 structured world-model two-player policy.",
+            "v15": "Trainable V15 typed-latent conditional planning policy.",
+        }[version],
         formats=("legacy", "commander") if version == "v11" else ("legacy",),
         decks=DeckPolicy.all(),
         speeds=(PlaySpeed.SECOND_1, PlaySpeed.SECONDS_10),

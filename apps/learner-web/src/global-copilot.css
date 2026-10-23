@@ -1,0 +1,9 @@
+.assistant-layer.assistant-layer.open { pointer-events: none; z-index: 150; }
+.assistant-layer > .assistant-scrim { display: none; }
+.assistant-layer > .assistant-drawer { pointer-events: auto; }
+.settings-layer.settings-layer.open { z-index: 160; }
+.assistant-page-nav { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--dd-line); }
+.assistant-page-nav button { border: 1px solid var(--dd-line); border-radius: 16px; background: #fffaf3; padding: 6px 9px; color: #344a56; cursor: pointer; font-size: 11px; }
+.assistant-drawer > .assistant-page-nav { margin: 0; flex: 0 0 auto; min-height: 0; align-content: flex-start; justify-content: flex-start; }
+.assistant-fab.global-assistant-fab { z-index: 145; }
+@media (max-width: 800px) { .assistant-fab.global-assistant-fab { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); right: 12px; } }

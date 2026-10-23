@@ -51,11 +51,7 @@ class StrategicPlanningObservationEncoder(PlanningObservationEncoder):
         return " ".join(
             (
                 self._card_words(card, "known deck card"),
-                *(
-                    fragment
-                    for rule in _rules(card)
-                    for fragment in _semantic_fragments(rule)
-                ),
+                *(fragment for rule in _rules(card) for fragment in _semantic_fragments(rule)),
             )
         )
 
@@ -69,17 +65,9 @@ class StrategicPlanningObservationEncoder(PlanningObservationEncoder):
             cards = supplied
         else:
             cards = []
-            players = (
-                state.get("players")
-                if isinstance(state.get("players"), list)
-                else []
-            )
+            players = state.get("players") if isinstance(state.get("players"), list) else []
             acting_player = next(
-                (
-                    player
-                    for player in players
-                    if str(player.get("id", "")) == acting_player_id
-                ),
+                (player for player in players if str(player.get("id", "")) == acting_player_id),
                 None,
             )
             if acting_player is not None:
@@ -113,15 +101,12 @@ class StrategicPlanningObservationEncoder(PlanningObservationEncoder):
         decision_context = state.get("_decisionContext")
         acting_player_id = (
             str(decision_context.get("playerId"))
-            if isinstance(decision_context, dict)
-            and decision_context.get("playerId") is not None
+            if isinstance(decision_context, dict) and decision_context.get("playerId") is not None
             else None
         )
         positions = self._decision_player_positions(
             state,
-            list(state.get("players", []))
-            if isinstance(state.get("players"), list)
-            else [],
+            list(state.get("players", [])) if isinstance(state.get("players"), list) else [],
             acting_player_id,
         )
         relative_player = positions.get(
@@ -157,12 +142,8 @@ class StrategicPlanningObservationEncoder(PlanningObservationEncoder):
             relative_players=torch.cat(
                 (encoded.state_tokens.relative_players, packed.relative_players)
             ),
-            token_types=torch.cat(
-                (encoded.state_tokens.token_types, packed.token_types)
-            ),
-            numeric_mask=torch.cat(
-                (encoded.state_tokens.numeric_mask, packed.numeric_mask)
-            ),
+            token_types=torch.cat((encoded.state_tokens.token_types, packed.token_types)),
+            numeric_mask=torch.cat((encoded.state_tokens.numeric_mask, packed.numeric_mask)),
         )
         return StructuredEncodedDecision(
             state_tokens=state_tokens,

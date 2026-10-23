@@ -28,15 +28,8 @@ def summarize_gameplay_metrics(
     state: dict[str, Any],
     setup: dict[str, Any],
 ) -> dict[str, Any]:
-    player_ids = [
-        str(player.get("id"))
-        for player in setup.get("players", [])
-        if player.get("id")
-    ]
-    by_player = {
-        player_id: {key: 0.0 for key in PLAYER_METRIC_KEYS}
-        for player_id in player_ids
-    }
+    player_ids = [str(player.get("id")) for player in setup.get("players", []) if player.get("id")]
+    by_player = {player_id: {key: 0.0 for key in PLAYER_METRIC_KEYS} for player_id in player_ids}
     opening_hand_players: set[str] = set()
     events = state.get("events", [])
     if not isinstance(events, list):
@@ -50,17 +43,17 @@ def summarize_gameplay_metrics(
         kind = event.get("kind")
         detail = event.get("detail") if isinstance(event.get("detail"), dict) else {}
         if kind == "openingHandFinalized":
-            by_player[player_id]["startingHandCards"] = max(
-                0.0, float(detail.get("handSize", 0))
-            )
-            by_player[player_id]["startingHandLands"] = max(
-                0.0, float(detail.get("landCount", 0))
-            )
+            by_player[player_id]["startingHandCards"] = max(0.0, float(detail.get("handSize", 0)))
+            by_player[player_id]["startingHandLands"] = max(0.0, float(detail.get("landCount", 0)))
             opening_hand_players.add(player_id)
-        elif kind == "spellCast" and round_number(
-            setup,
-            int(event.get("turnNumber", 0)),
-        ) <= 5:
+        elif (
+            kind == "spellCast"
+            and round_number(
+                setup,
+                int(event.get("turnNumber", 0)),
+            )
+            <= 5
+        ):
             by_player[player_id]["manaValueFirstFiveTurns"] += max(
                 0.0, float(detail.get("manaValue", 0))
             )
@@ -71,10 +64,7 @@ def summarize_gameplay_metrics(
         elif kind == "attackResolved" and detail.get("suicidal") is True:
             by_player[player_id]["suicidalAttacks"] += 1.0
 
-    sums = {
-        key: sum(player[key] for player in by_player.values())
-        for key in PLAYER_METRIC_KEYS
-    }
+    sums = {key: sum(player[key] for player in by_player.values()) for key in PLAYER_METRIC_KEYS}
     samples = {key: len(player_ids) for key in PLAYER_METRIC_KEYS}
     samples["startingHandCards"] = len(opening_hand_players)
     samples["startingHandLands"] = len(opening_hand_players)
@@ -99,11 +89,7 @@ def update_hourly_gameplay_metrics(
     episode: dict[str, Any],
     training_hour: int,
 ) -> dict[str, Any]:
-    result = (
-        dict(payload or {})
-        if (payload or {}).get("schemaVersion") == SCHEMA_VERSION
-        else {}
-    )
+    result = dict(payload or {}) if (payload or {}).get("schemaVersion") == SCHEMA_VERSION else {}
     result["schemaVersion"] = SCHEMA_VERSION
     hours = [dict(hour) for hour in result.get("hours", [])]
     hour = next(
@@ -120,9 +106,7 @@ def update_hourly_gameplay_metrics(
         }
         hours.append(hour)
     hour["games"] = int(hour.get("games", 0)) + 1
-    hour["playerSamples"] = int(hour.get("playerSamples", 0)) + int(
-        episode.get("playerSamples", 0)
-    )
+    hour["playerSamples"] = int(hour.get("playerSamples", 0)) + int(episode.get("playerSamples", 0))
     sums = hour.setdefault("sums", {})
     samples = hour.setdefault("samples", {})
     episode_sums = episode.get("sums", {})
@@ -131,18 +115,12 @@ def update_hourly_gameplay_metrics(
         sums[key] = float(sums.get(key, 0.0)) + float(episode_sums.get(key, 0.0))
         samples[key] = int(samples.get(key, 0)) + int(episode_samples.get(key, 0))
     hour["averages"] = {
-        key: (
-            float(sums[key]) / int(samples[key])
-            if int(samples[key]) > 0
-            else None
-        )
+        key: (float(sums[key]) / int(samples[key]) if int(samples[key]) > 0 else None)
         for key in METRIC_KEYS
     }
     attacks = float(sums.get("attacks", 0.0))
     hour["suicidalAttackRate"] = (
-        float(sums.get("suicidalAttacks", 0.0)) / attacks
-        if attacks > 0
-        else 0.0
+        float(sums.get("suicidalAttacks", 0.0)) / attacks if attacks > 0 else 0.0
     )
     result["hours"] = sorted(hours, key=lambda entry: int(entry["trainingHour"]))
     return result

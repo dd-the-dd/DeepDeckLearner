@@ -56,10 +56,7 @@ class CyclicStructuredObservationEncoder(StructuredObservationEncoder):
             MINIMUM_CYCLIC_MULTIPLAYER_SLOTS,
         )
         if player_count > supported_players:
-            raise ValueError(
-                f"cyclic player encoding supports at most "
-                f"{supported_players} players"
-            )
+            raise ValueError(f"cyclic player encoding supports at most {supported_players} players")
         if self.player_angle_steps % player_count != 0:
             raise ValueError(
                 f"player_angle_steps {self.player_angle_steps} must be divisible "
@@ -75,9 +72,6 @@ class CyclicStructuredObservationEncoder(StructuredObservationEncoder):
         )
         angle_step = self.player_angle_steps // player_count
         return {
-            str(player.get("id")): (
-                (index - acting_player_index) % player_count
-            )
-            * angle_step
+            str(player.get("id")): ((index - acting_player_index) % player_count) * angle_step
             for index, player in enumerate(players)
         }

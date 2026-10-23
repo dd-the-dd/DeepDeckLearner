@@ -20,7 +20,11 @@ DEFAULT_RESOURCE_PLAN = {
 
 
 def find_model_run(root: Path, model_id: str) -> tuple[Path, dict[str, Any]]:
-    for metadata_path in (root / ".deepdeck" / "runs").glob("*/local-model.json"):
+    metadata_paths = [
+        *(root / ".deepdeck" / "runs").glob("*/local-model.json"),
+        *(root / ".deepdeck" / "agents").glob("*/local-model.json"),
+    ]
+    for metadata_path in metadata_paths:
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -36,9 +40,14 @@ def load_resource_plan(run: Path) -> dict[str, int]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         value = {}
+    defaults = (
+        {**DEFAULT_RESOURCE_PLAN, "trainingMatches": 0, "leagueMatches": 8, "localMatches": 8}
+        if (run / "agent.json").is_file()
+        else DEFAULT_RESOURCE_PLAN
+    )
     return {
         key: int(value.get(key, default)) if isinstance(value, dict) else default
-        for key, default in DEFAULT_RESOURCE_PLAN.items()
+        for key, default in defaults.items()
     }
 
 
@@ -81,9 +90,12 @@ def delete_model_run(root: Path, model_id: str) -> dict[str, Any]:
     run, metadata = find_model_run(root, model_id)
     if metadata.get("source") == "local-frozen-checkpoint":
         raise ValueError("Reference implementations cannot be deleted as user agents.")
-    runs_root = (root / ".deepdeck" / "runs").resolve()
+    allowed_roots = {
+        (root / ".deepdeck" / "runs").resolve(),
+        (root / ".deepdeck" / "agents").resolve(),
+    }
     resolved = run.resolve()
-    if resolved.parent != runs_root or not (resolved / "local-model.json").is_file():
+    if resolved.parent not in allowed_roots or not (resolved / "local-model.json").is_file():
         raise ValueError("Refusing to delete a model outside this Learner workspace.")
     reclaimed = 0
     for candidate in resolved.rglob("*"):
@@ -120,6 +132,8 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
     for metadata_path in (root / ".deepdeck" / "runs").glob("*/local-model.json"):
         metadata = _json_object(metadata_path)
         state = _json_object(metadata_path.parent / "league-state.json")
+        if not state:
+            state = _json_object(metadata_path.parent / "v13-training-state.json")
         attached = any(
             _job_value(job, "kind") == "training.pool"
             and _job_value(job, "model_id") == metadata.get("id")
@@ -212,9 +226,14 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
                             "watchUrl": match.get("watchUrl"),
                         }
                     )
-        if _job_value(job, "kind") != "playtest.agent" or _job_value(job, "status") != "running":
+        if (
+            _job_value(job, "kind") not in {"playtest.agent", "playtest.table", "playtest.batch"}
+            or _job_value(job, "status") != "running"
+        ):
             continue
         details = _job_value(job, "details", {}) or {}
+        if details.get("sessionStatus") == "finished":
+            continue
         session_id = str(details.get("sessionId", "")).strip()
         if not session_id:
             continue
@@ -229,11 +248,13 @@ def active_games(root: Path, jobs: list[Any]) -> list[dict[str, Any]]:
                 "worker": 1,
                 "status": "playing",
                 "mode": "Local playtest",
-                "decks": [
+                "engineUrl": details.get("engineUrl"),
+                "decks": details.get("deckNames")
+                or [
                     details.get("playerDeck", {}).get("name"),
                     details.get("opponentDeck", {}).get("name"),
                 ],
-                "players": 2,
+                "players": len(details.get("deckVersionIds") or []) or 2,
                 "playersState": [],
                 "turnNumber": None,
                 "roundNumber": None,
@@ -394,14 +415,21 @@ def resource_snapshot(root: Path, jobs: list[Any]) -> dict[str, Any]:
         model_id = str(metadata.get("id", ""))
         model_name = str(metadata.get("name", model_id))
         run_text = str(metadata_path.parent.resolve()).casefold()
-        checkpoint_text = str(Path(str(metadata.get("checkpointPath", ""))).resolve()).casefold()
+        checkpoint_value = str(metadata.get("checkpointPath", "")).strip()
+        checkpoint_text = (
+            str(Path(checkpoint_value).resolve()).casefold() if checkpoint_value else ""
+        )
         for candidate, command in top_level_processes:
             if candidate.pid in claimed_pids:
                 continue
             if "oracle_ai.training.league" in command and run_text in command:
                 kind = "training.pool"
                 slots = load_resource_plan(metadata_path.parent)["trainingMatches"]
-            elif "deepdeck_examples.run" in command and checkpoint_text in command:
+            elif (
+                "deepdeck_examples.run" in command
+                and checkpoint_text
+                and checkpoint_text in command
+            ):
                 kind = "playtest.agent" if "--start-local-game" in command else "matchmaking.agent"
                 concurrency = re.search(r"--matchmaking-concurrency(?:=|\s+)(\d+)", command)
                 slots = int(concurrency.group(1)) if concurrency else 1

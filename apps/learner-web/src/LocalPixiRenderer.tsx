@@ -6,12 +6,17 @@ import {
   useRef,
   useState,
   type RefObject,
+  type ReactNode,
 } from "react";
 import { createApp, h, shallowRef, type App as VueApp, type ShallowRef } from "vue";
+import { createPortal } from 'react-dom';
 import * as DeepDeckPixi from "@deepdeck/pixi";
 
 import type { EngineView } from "./LocalPixiTable";
 import type { DeckPresentation } from "./api";
+import SpectatorPerspective, { recordedCardIsHidden } from './SpectatorPerspective';
+import MatchSoundControls, { matchCue, type MatchCue, type SoundSignal } from './MatchSoundControls';
+import { missingArtworkRequests, resolveMissingArtwork, type ArtworkRequest } from './missingCardArtwork';
 import {
   actionTargetKeys,
   cardOrderLegend,
@@ -120,10 +125,7 @@ function sceneCard(card: any, kind: string, zone: string, interaction: Interacti
     actionable: selected || (!interaction.targeting && Boolean(card?.actionState?.actionable)),
     attachedTo: card?.state?.attachedTo ?? null,
     commander: Boolean(card?.isCommander || zone === "commandZone"),
-    counters: Object.values(card?.state?.counters ?? {}).reduce<number>(
-      (sum, value) => sum + Number(value ?? 0),
-      0,
-    ),
+    counters: { ...(card?.state?.counters ?? {}) },
     faceDown: Boolean(card?.faceDown),
     id: card?.id,
     imageUrl: card?.imageUrl ?? "",
@@ -141,9 +143,10 @@ function sceneCard(card: any, kind: string, zone: string, interaction: Interacti
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- exported for interaction regression coverage.
-export function pixiScene(projection: Projection, interaction: Interaction = {}) {
+export function pixiScene(projection: Projection, interaction: Interaction = {}, spectator?: string) {
   const players = projection.players ?? [];
-  const local = players.find((player: any) => player.role === "human") ?? players[0];
+  const local = (spectator && spectator !== 'global' ? players.find((player: any) => player.key === spectator) : null)
+    ?? players.find((player: any) => player.role === "human") ?? players[0];
   const scenePlayers = players.map((player: any) => {
     const isLocal = player.key === local?.key;
     const battlefield = player.zones?.battlefield ?? {};
@@ -170,7 +173,7 @@ export function pixiScene(projection: Projection, interaction: Interaction = {})
       commanderDamage: player.commanderDamage ?? [],
       hand: (player.zones?.hand ?? []).map((card: any) => {
         const presented = sceneCard(card, "hand", "hand", interaction);
-        return isLocal || card?.knownToViewer
+        return !recordedCardIsHidden(card) && (isLocal || card?.knownToViewer || spectator === 'global')
           ? presented
           : {
               ...presented,
@@ -250,6 +253,8 @@ export function pixiScene(projection: Projection, interaction: Interaction = {})
 }
 
 type PixiEventRefs = {
+  controls: RefObject<(element: HTMLElement | null) => void>;
+  settled: RefObject<(scene: Record<string, any>) => void>;
   card: RefObject<(payload: any) => void>;
   exit: RefObject<() => void>;
   hover: RefObject<(payload: any) => void>;
@@ -263,14 +268,17 @@ function mountPixi(
   host: HTMLDivElement,
   initialScene: Record<string, unknown>,
   events: PixiEventRefs,
+  mode: "play" | "replay",
 ) {
   const currentScene = shallowRef(initialScene);
   const vue = createApp({
     render: () => h(pixi.PixiGame, {
       brandName: "Deep Deck Learner",
       cardBackUrl: "/api/scryfall-images/back.png",
-      mode: "play",
+      mode,
       scene: currentScene.value,
+      onControlsReady: (element: HTMLElement | null) => events.controls.current(element),
+      onVisualSettled: (scene: Record<string, any>) => events.settled.current(scene),
       onCardClick: (payload: any) => events.card.current(payload),
       onCardHover: (payload: any) => events.hover.current(payload),
       onCardLeave: () => events.leave.current(),
@@ -427,16 +435,35 @@ function abstractResolutionLabel(action: any, projection: Projection) {
   return label;
 }
 
-export default function LocalPixiRenderer({ deckSelections, matchup, view, onAction, onExit }: {
+export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayCardCatalog, matchup, mode = "play", view, onAction, onExit, spectatorPerspective, onSpectatorPerspectiveChange, soundEpoch = 0, controlledPlayerId, onHideHand, playbackControls }: {
   deckSelections: DeckPresentation[];
+  cardCatalog?: Record<string, unknown>;
   matchup: string;
+  mode?: "play" | "replay";
+  controlledPlayerId?: string;
+  onHideHand?: () => void;
+  spectatorPerspective?: string;
+  onSpectatorPerspectiveChange?: (value: string) => void;
+  soundEpoch?: number;
+  playbackControls?: ReactNode;
   view: EngineView;
   onAction: (actionId: string, extra?: Record<string, unknown>) => void;
   onExit: () => void;
 }) {
+  const isReplay = mode === "replay";
   const host = useRef<HTMLDivElement>(null);
   const vue = useRef<VueApp<Element> | null>(null);
   const sceneRef = useRef<ShallowRef<Record<string, unknown>> | null>(null);
+  const [controlsHost, setControlsHost] = useState<HTMLElement | null>(null);
+  const [resolvedArtwork, setResolvedArtwork] = useState<Record<string, unknown>>({});
+  const controlsRef = useRef(setControlsHost);
+  const [soundSignal, setSoundSignal] = useState<SoundSignal | null>(null);
+  const stackSoundEpoch = useRef(soundEpoch);
+  const lastAudibleView = useRef<EngineView | null>(null);
+  const audioEpoch = useRef(soundEpoch);
+  const settledStack = useRef('');
+  const soundSequence = useRef(0);
+  const settledRef = useRef<(scene: Record<string, any>) => void>(() => {});
   const [targetPlan, setTargetPlan] = useState<TargetPlan | null>(null);
   const [sourceChoices, setSourceChoices] = useState<any[]>([]);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
@@ -454,15 +481,23 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const playbackCursor = useRef({ sequence: 0, sessionId: "" });
 
   const cardCatalog = useMemo(
-    () => pixi.gameSessionCardCatalogFromDeckSelections(deckSelections),
-    [deckSelections],
+    () => {
+      const catalog: Record<string, any> = {...pixi.gameSessionCardCatalogFromDeckSelections(deckSelections), ...replayCardCatalog};
+      for (const [key, artwork] of Object.entries(resolvedArtwork)) {
+        if (!catalog[key]?.imageUrl && !catalog[key]?.urlFront) catalog[key] = {...catalog[key], ...(artwork as object)};
+      }
+      return catalog;
+    },
+    [deckSelections, replayCardCatalog, resolvedArtwork],
   );
   const projection = useMemo(
     () => pixi.projectGameSessionView(view, {
       cardCatalog,
-      playerRoleById: { "local-human": "human", "local-agent": "ai" },
+      playerRoleById: controlledPlayerId
+        ? Object.fromEntries((view.state?.players ?? []).map(player=>[player.id,player.id===controlledPlayerId?'human':'ai']))
+        : { "local-human": "human", "local-agent": "ai" },
     }),
-    [cardCatalog, view],
+    [cardCatalog, view, controlledPlayerId],
   );
   const directPresentations = useMemo(
     () => pixi.gameSessionActionPresentations(projection.directActions ?? []),
@@ -513,7 +548,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       (id) => !maximumReached || selectedIds.has(id),
     ));
   }, [activeTargetPlan, cardChoice?.maximum, cardNameChoice, selectedCardIds.length, selectedIds, tableChoiceIds, visibleNameCardIds]);
-  const interaction = useMemo<Interaction>(() => ({
+  const interaction = useMemo<Interaction>(() => isReplay ? { targeting: true } : ({
     orderedIds: selectedCardIds,
     prompt: activeTargetPlan
       ? `${activeTargetPlan.prompt} (${activeTargetPlan.index + 1}/${activeTargetPlan.keys.length})`
@@ -525,16 +560,50 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     selectedIds,
     targetableIds,
     targeting: Boolean(activeTargetPlan || cardChoice || cardNameChoice),
-  }), [activeTargetPlan, cardChoice, cardNameChoice, selectedCardIds, selectedIds, tableChoiceCards.length, targetableIds]);
+  }), [activeTargetPlan, cardChoice, cardNameChoice, isReplay, selectedCardIds, selectedIds, tableChoiceCards.length, targetableIds]);
   const activeStackPlayback = stackPlaybackQueue[0];
+  const [settledStackId, setSettledStackId] = useState('');
+  const visualMarker = useMemo(() => ({ view, epoch: soundEpoch, stack: activeStackPlayback }), [view, soundEpoch, activeStackPlayback]);
   const scene = useMemo(
     () => sceneWithStackPlayback(
-      pixiScene(projection, interaction),
+      { ...pixiScene(projection, interaction, isReplay ? spectatorPerspective : undefined), replay: isReplay, visualMarker },
       projection,
       activeStackPlayback,
     ),
-    [activeStackPlayback, interaction, projection],
+    [activeStackPlayback, interaction, isReplay, projection, spectatorPerspective, visualMarker],
   );
+  const missingArtKey = JSON.stringify(missingArtworkRequests(scene));
+  useEffect(() => {
+    let active = true;
+    for (const request of JSON.parse(missingArtKey) as ArtworkRequest[]) {
+      void resolveMissingArtwork(request).then(artwork => {
+        if (active && artwork) setResolvedArtwork(current => {
+          const next = {...current, [request.key]: artwork};
+          if (Object.keys(next).length > 512) delete next[Object.keys(next)[0]];
+          return next;
+        });
+      });
+    }
+    return () => { active = false; };
+  }, [missingArtKey]);
+  settledRef.current = (displayed) => {
+    const marker = displayed.visualMarker;
+    if (!marker || marker !== visualMarker) return;
+    const prior = lastAudibleView.current;
+    const discontinuity = audioEpoch.current !== marker.epoch;
+    audioEpoch.current = marker.epoch;
+    lastAudibleView.current = marker.view;
+    let cue: MatchCue | null = discontinuity ? null : matchCue(prior, marker.view);
+    const stackKey = marker.stack ? `${marker.view.sessionId}:${marker.stack.firstSequence}` : '';
+    if (stackKey) {
+      setSettledStackId(stackKey);
+      if (!discontinuity && prior?.sessionId === marker.view.sessionId && settledStack.current !== stackKey && (!cue || ['cast','ability','trigger','draw','mill','shuffle','phase','turn'].includes(cue))) {
+        cue = marker.stack.kind === 'triggeredAbility' ? 'trigger' : marker.stack.kind === 'spell' ? 'cast' : 'ability';
+      }
+      settledStack.current = stackKey;
+    }
+    if (cue) setSoundSignal({ id: ++soundSequence.current, cue });
+  };
   const initialScene = useRef(scene);
   const initialSelectionKey = JSON.stringify(
     projection.resolutionCardChoice?.initialSelectedCardIds ?? [],
@@ -698,6 +767,12 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       0,
     );
     const sessionId = String(view.sessionId ?? "");
+    if (stackSoundEpoch.current !== soundEpoch) {
+      stackSoundEpoch.current = soundEpoch;
+      playbackCursor.current = { sequence: latestSequence, sessionId };
+      setStackPlaybackQueue([]);
+      return;
+    }
     if (playbackCursor.current.sessionId !== sessionId) {
       playbackCursor.current = { sequence: latestSequence, sessionId };
       setStackPlaybackQueue([]);
@@ -711,18 +786,21 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
     const additions = stackEventPlaybackEntries(events, playbackCursor.current.sequence);
     playbackCursor.current.sequence = latestSequence;
     if (additions.length) setStackPlaybackQueue((current) => [...current, ...additions]);
-  }, [projection.state?.events, view.sessionId]);
+  }, [projection.state?.events, view.sessionId, soundEpoch]);
   useEffect(() => {
     if (!activeStackPlayback) return;
+    if (settledStackId !== `${view.sessionId}:${activeStackPlayback.firstSequence}`) return;
     const timer = window.setTimeout(() => {
       setStackPlaybackQueue((current) => current.slice(1));
     }, activeStackPlayback.durationMs);
     return () => window.clearTimeout(timer);
-  }, [activeStackPlayback]);
+  }, [activeStackPlayback, settledStackId, view.sessionId]);
   useEffect(() => {
     if (!host.current) return;
     try {
       const mounted = mountPixi(host.current, initialScene.current, {
+        controls: controlsRef,
+        settled: settledRef,
         card: cardRef,
         exit: exitRef,
         hover: hoverRef,
@@ -730,7 +808,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
         pass: passRef,
         player: playerRef,
         stack: stackRef,
-      });
+      }, mode);
       vue.current = mounted.vue;
       sceneRef.current = mounted.currentScene;
     } catch (reason) {
@@ -741,7 +819,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       vue.current = null;
       sceneRef.current = null;
     };
-  }, []);
+  }, [mode]);
   useEffect(() => {
     if (sceneRef.current) sceneRef.current.value = scene;
   }, [scene]);
@@ -781,8 +859,14 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
   const sourceXChoice = castingXNumberChoice(sourceChoices);
 
   return <>
-    <div className="local-pixi-vue-host" ref={host} />
-    <div className="pixi-matchup-badge">{matchup}</div>
+    {controlsHost && createPortal(<>
+      {playbackControls}
+      {isReplay && onSpectatorPerspectiveChange && <SpectatorPerspective view={view} value={spectatorPerspective ?? 'global'} onChange={onSpectatorPerspectiveChange} compact />}
+      <MatchSoundControls view={view} signal={soundSignal} synchronized resetKey={`${view.sessionId}:${soundEpoch}`} />
+      {onHideHand && <button type="button" className="local-hide-hand" onClick={onHideHand}>Hide hand / pass screen</button>}
+    </>, controlsHost)}
+    <div className={`local-pixi-vue-host${isReplay ? " replay-pixi-vue-host" : ""}`} ref={host} />
+    {!isReplay && <div className="pixi-matchup-badge">{matchup}</div>}
     {(projection.gameNotes?.length ?? 0) > 0 && <aside className={`pixi-game-notes${notesOpen ? " open" : ""}`}>
       <button type="button" aria-expanded={notesOpen} onClick={() => setNotesOpen((open) => {
         if (open) setNotePreview(null);
@@ -840,7 +924,7 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       <img src={hoveredCard.imageUrl} alt="" />
     </div>}
     {visualError && <div className="pixi-visual-error" role="alert">Pixi: {visualError}</div>}
-    {dungeonChoice && <div className="pixi-dungeon-choice" role="dialog" aria-label={dungeonChoice.prompt}>
+    {!isReplay && <>{dungeonChoice && <div className="pixi-dungeon-choice" role="dialog" aria-label={dungeonChoice.prompt}>
       <header>
         <strong>{dungeonChoice.prompt}</strong>
         {dungeonChoice.currentRoom && <span>Current room: {dungeonChoice.currentRoom}</span>}
@@ -980,6 +1064,6 @@ export default function LocalPixiRenderer({ deckSelections, matchup, view, onAct
       <strong>{projection.numberChoice.prompt}</strong>
       <input type="number" min={projection.numberChoice.minimum} max={projection.numberChoice.maximum} value={numberValue} onChange={(event) => setNumberValue(Number(event.target.value))} />
       <button type="button" onClick={() => submit(projection.actions[0].id, { numberValue })}>Confirm</button>
-    </div>}
+    </div>}</>}
   </>;
 }

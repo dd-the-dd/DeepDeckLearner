@@ -131,22 +131,15 @@ class PolicyService:
                 health = response.json()
                 if self.registry is not None:
                     if health.get("registryPath") != str(self.registry.resolve()):
-                        raise RuntimeError(
-                            f"port {self.port} hosts a different model registry"
-                        )
+                        raise RuntimeError(f"port {self.port} hosts a different model registry")
                     catalog = httpx.get(f"{self.url}/v1/models", timeout=2.0)
                     catalog.raise_for_status()
-                    model_ids = {
-                        str(model["id"])
-                        for model in catalog.json().get("models", [])
-                    }
+                    model_ids = {str(model["id"]) for model in catalog.json().get("models", [])}
                     if self.model_name in model_ids:
                         return health
                 elif self.checkpoint is not None:
                     if health.get("checkpointPath") != str(self.checkpoint.resolve()):
-                        raise RuntimeError(
-                            f"port {self.port} hosts a different model checkpoint"
-                        )
+                        raise RuntimeError(f"port {self.port} hosts a different model checkpoint")
                     if health.get("model") == self.model_name:
                         return health
                 elif health.get("model") == self.model_name:
@@ -372,15 +365,11 @@ class EvaluationRunner:
             "candidateDecisions": candidate_decisions,
             "championDecisions": champion_decisions,
             "candidateMeanDecisionMs": (
-                statistics.fmean(candidate_latencies) * 1000.0
-                if candidate_latencies
-                else None
+                statistics.fmean(candidate_latencies) * 1000.0 if candidate_latencies else None
             ),
             "candidateBehavior": summarize_decision_traces(candidate_traces),
             "championMeanDecisionMs": (
-                statistics.fmean(champion_latencies) * 1000.0
-                if champion_latencies
-                else None
+                statistics.fmean(champion_latencies) * 1000.0 if champion_latencies else None
             ),
             "gameSeconds": time.perf_counter() - started,
         }
@@ -393,11 +382,7 @@ def summarize_evaluation(
     candidate_wins = [game for game in games if game["result"] == "candidateWin"]
     champion_wins = [game for game in games if game["result"] == "championWin"]
     draws = [game for game in games if game["result"] == "draw"]
-    win_rounds = [
-        game["roundNumber"]
-        for game in candidate_wins
-        if game["roundNumber"] is not None
-    ]
+    win_rounds = [game["roundNumber"] for game in candidate_wins if game["roundNumber"] is not None]
     completed = len(games)
     expected = completed + len(errors)
     by_scenario: dict[str, dict[str, Any]] = {}
@@ -408,9 +393,7 @@ def summarize_evaluation(
             "games": len(scenario_games),
             "candidateWins": scenario_wins,
             "candidateWinRate": scenario_wins / len(scenario_games),
-            "meanRounds": statistics.fmean(
-                game["roundNumber"] for game in scenario_games
-            ),
+            "meanRounds": statistics.fmean(game["roundNumber"] for game in scenario_games),
             "meanRoundsToCandidateWin": (
                 statistics.fmean(
                     game["roundNumber"]
@@ -423,18 +406,14 @@ def summarize_evaluation(
         }
     by_format: dict[str, dict[str, Any]] = {}
     for game_mode in sorted({game.get("gameMode", "free") for game in games}):
-        format_games = [
-            game for game in games if game.get("gameMode", "free") == game_mode
-        ]
+        format_games = [game for game in games if game.get("gameMode", "free") == game_mode]
         format_wins = sum(game["result"] == "candidateWin" for game in format_games)
         by_format[game_mode] = {
             "games": len(format_games),
             "candidateWins": format_wins,
             "candidateWinRate": format_wins / len(format_games),
             "draws": sum(game["result"] == "draw" for game in format_games),
-            "meanRounds": statistics.fmean(
-                game["roundNumber"] for game in format_games
-            ),
+            "meanRounds": statistics.fmean(game["roundNumber"] for game in format_games),
         }
     return {
         "expectedGames": expected,
@@ -445,9 +424,7 @@ def summarize_evaluation(
         "draws": len(draws),
         "candidateWinRate": len(candidate_wins) / expected if expected else 0.0,
         "perfect": expected > 0 and len(candidate_wins) == expected and not errors,
-        "meanRounds": (
-            statistics.fmean(game["roundNumber"] for game in games) if games else None
-        ),
+        "meanRounds": (statistics.fmean(game["roundNumber"] for game in games) if games else None),
         "meanRoundsToCandidateWin": statistics.fmean(win_rounds) if win_rounds else None,
         "medianRoundsToCandidateWin": statistics.median(win_rounds) if win_rounds else None,
         "minRoundsToCandidateWin": min(win_rounds) if win_rounds else None,

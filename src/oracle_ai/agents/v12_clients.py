@@ -109,9 +109,7 @@ def build_manifest(
             f"IA {profile.generation.upper()} inference runtime."
         ),
         authors=[AgentAuthor(name="Deep Deck League")],
-        repository=AgentRepository(
-            url="https://github.com/deepdeckleague/mtg-oracle-engine"
-        ),
+        repository=AgentRepository(url="https://github.com/deepdeckleague/mtg-oracle-engine"),
         compatibility=AgentCompatibility(
             game_modes=list(profile.game_modes),
             decks=DeckSelection(selection="all"),
@@ -149,9 +147,7 @@ async def run_seat(
             api_key=api_key,
             account_token=account_token,
         )
-        task = asyncio.create_task(
-            client.run(), name=f"{profile.generation}-seat-{seat}"
-        )
+        task = asyncio.create_task(client.run(), name=f"{profile.generation}-seat-{seat}")
         try:
             while client.registration is None and not task.done():
                 await asyncio.sleep(0.1)
@@ -269,9 +265,7 @@ async def run_random_rotation(
                     f"{platform_url}/v1/matches/{match_id}",
                 )
                 status = str(
-                    match_response.get("data", {})
-                    .get("summary", {})
-                    .get("status", "unknown")
+                    match_response.get("data", {}).get("summary", {}).get("status", "unknown")
                 )
                 if status in {"complete", "failed", "cancelled"}:
                     LOGGER.info("match %s reached terminal status %s", match_id, status)
@@ -282,9 +276,7 @@ async def run_random_rotation(
                 LOGGER.warning("rotation could not read match %s (%s)", match_id, error)
             await asyncio.sleep(poll_seconds)
         if scheduled_format in rotation_formats:
-            format_index = (
-                rotation_formats.index(scheduled_format) + 1
-            ) % len(rotation_formats)
+            format_index = (rotation_formats.index(scheduled_format) + 1) % len(rotation_formats)
         else:
             format_index = (format_index + 1) % len(rotation_formats)
 
@@ -296,9 +288,7 @@ async def run_clients(args: argparse.Namespace) -> None:
     if public_agent_auth:
         credential = args.api_key or os.getenv("DEEPDECK_API_KEY")
         if not credential:
-            raise ValueError(
-                "DEEPDECK_API_KEY is required for public account-owned matchmaking"
-            )
+            raise ValueError("DEEPDECK_API_KEY is required for public account-owned matchmaking")
         url = args.url or "wss://staging.deepdeckleague.com/api/v1/agents/connect"
         engine_api_key = None
         account_token = credential
@@ -314,34 +304,24 @@ async def run_clients(args: argparse.Namespace) -> None:
     family = getattr(runtime.model, "model_family", None)
     profile = MODEL_PROFILES.get(family)
     if profile is None:
-        raise ValueError(
-            "the configured checkpoint is not V11 or V12 "
-            f"(model family: {family!r})"
-        )
+        raise ValueError(f"the configured checkpoint is not V11 or V12 (model family: {family!r})")
     requested_profile = args.model_profile.strip().lower()
     if requested_profile:
         profile = MODEL_PROFILE_OVERRIDES.get(requested_profile)
         if profile is None:
-            raise ValueError(
-                "--model-profile must be v11, v12 or v12.1"
-            )
+            raise ValueError("--model-profile must be v11, v12 or v12.1")
         if profile.family != family:
             raise ValueError(
-                f"{requested_profile} requires {profile.family}, "
-                f"but the checkpoint is {family}"
+                f"{requested_profile} requires {profile.family}, but the checkpoint is {family}"
             )
     rotation_formats = tuple(
-        value.strip().lower()
-        for value in args.rotation_formats.split(",")
-        if value.strip()
+        value.strip().lower() for value in args.rotation_formats.split(",") if value.strip()
     )
     if not rotation_formats:
         raise ValueError("--rotation-formats must include at least one format")
     unsupported = set(rotation_formats) - set(profile.game_modes)
     if unsupported:
-        raise ValueError(
-            f"{profile.generation} does not accept: {', '.join(sorted(unsupported))}"
-        )
+        raise ValueError(f"{profile.generation} does not accept: {', '.join(sorted(unsupported))}")
     version = args.version or f"{profile.generation}-step-{runtime.training_step}"
     platform_host_ip = os.getenv("DDL_PLATFORM_HOST_IP", "").strip()
     platform_host = urllib.parse.urlsplit(args.platform_url).hostname
@@ -366,9 +346,7 @@ async def run_clients(args: argparse.Namespace) -> None:
     seat_tasks = []
     for endpoint_index, agent_url in enumerate(agent_urls):
         endpoint_ready = (
-            ready_by_seat
-            if endpoint_index == 0
-            else {seat: asyncio.Event() for seat in SEATS}
+            ready_by_seat if endpoint_index == 0 else {seat: asyncio.Event() for seat in SEATS}
         )
         seat_tasks.extend(
             run_seat(
@@ -385,14 +363,13 @@ async def run_clients(args: argparse.Namespace) -> None:
             for seat in SEATS
         )
     if args.rotate_random_matches:
-        rotation_token = (
-            credential if public_agent_auth else os.getenv("DDL_MATCH_WORKER_TOKEN")
-        )
+        rotation_token = credential if public_agent_auth else os.getenv("DDL_MATCH_WORKER_TOKEN")
         if not rotation_token:
             raise ValueError("DDL_MATCH_WORKER_TOKEN is required for random match rotation")
         # Each format owns its own bounded scheduler.  A single alternating loop
         # left one format idle for the whole duration of the other match.
-        rotation_tasks = [run_random_rotation(
+        rotation_tasks = [
+            run_random_rotation(
                 platform_url=args.platform_url,
                 token=rotation_token,
                 version=version,
@@ -437,8 +414,7 @@ def main() -> None:
     parser.add_argument(
         "--public-agent-auth",
         action="store_true",
-        default=os.getenv("DEEPDECK_PUBLIC_AGENT_AUTH", "").lower()
-        in {"1", "true", "yes"},
+        default=os.getenv("DEEPDECK_PUBLIC_AGENT_AUTH", "").lower() in {"1", "true", "yes"},
         help="Connect through the public DDL agent gateway with DEEPDECK_API_KEY.",
     )
     parser.add_argument("--version")

@@ -67,9 +67,7 @@ def _inversion_count(
             challenge.ranking_key,
         ),
     )
-    actual_position = {
-        challenge.participant_id: index for index, challenge in enumerate(actual)
-    }
+    actual_position = {challenge.participant_id: index for index, challenge in enumerate(actual)}
     inversions = 0
     for left_index, left in enumerate(expected):
         for right in expected[left_index + 1 :]:

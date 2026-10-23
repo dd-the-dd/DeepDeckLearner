@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "deepdeck-strategy-release/v1",
+  "modelVersion": "strategy-graph/v1",
+  "releasedAt": "2026-10-17",
+  "decisionNodes": [
+    "card_value",
+    "mana_efficiency",
+    "board_development",
+    "interaction",
+    "combat_pressure",
+    "combat_survival",
+    "card_advantage",
+    "card_selection",
+    "clock_pressure",
+    "clock_disruption",
+    "combo_progress",
+    "combo_disruption",
+    "protect_advantage",
+    "timing_patience",
+    "resource_preservation",
+    "mulligan_plan"
+  ],
+  "archetypes": ["aggro", "tempo", "midrange", "control", "combo"],
+  "capabilities": [
+    "deck archetype blending",
+    "dynamic beatdown-control role assignment",
+    "functional-hand mulligan scoring",
+    "instant-speed timing",
+    "target and combo-piece prioritization",
+    "attack, block, and crackback evaluation",
+    "bounded card-and-tag patterns",
+    "seeded bounded decision noise",
+    "per-decision explanations"
+  ],
+  "benchmarkCommand": ".venv\\Scripts\\python.exe scripts\\benchmark_strategy_graph.py --strict"
+}

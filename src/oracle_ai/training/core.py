@@ -41,11 +41,9 @@ class DecisionStep:
 
 
 class EpisodeEnvironment(Protocol):
-    def reset(self, matchup_id: str, seed: int, seat_swap: bool) -> DecisionStep:
-        ...
+    def reset(self, matchup_id: str, seed: int, seat_swap: bool) -> DecisionStep: ...
 
-    def step(self, action_index: int) -> DecisionStep:
-        ...
+    def step(self, action_index: int) -> DecisionStep: ...
 
 
 @dataclass(frozen=True)
@@ -277,9 +275,7 @@ class PPOLearner:
                 "add_exploration_noise": add_exploration_noise,
             }
             if "event_code_indices" in evaluation:
-                search_arguments["event_code_indices"] = evaluation[
-                    "event_code_indices"
-                ]
+                search_arguments["event_code_indices"] = evaluation["event_code_indices"]
             probabilities = improve_policy(
                 logits,
                 action_values,
@@ -288,8 +284,7 @@ class PPOLearner:
             )
             behavior_distribution = Categorical(probs=probabilities)
             search_policy = tuple(
-                float(probability)
-                for probability in probabilities.detach().cpu().tolist()
+                float(probability) for probability in probabilities.detach().cpu().tolist()
             )
         else:
             probabilities = network_distribution.probs
@@ -356,9 +351,7 @@ class PPOLearner:
             plans: dict[str, torch.Tensor] = {}
             while not step.done:
                 if not step.actions:
-                    raise RuntimeError(
-                        "environment produced a decision without legal actions"
-                    )
+                    raise RuntimeError("environment produced a decision without legal actions")
                 encoded = self.encoder.encode(step.state, step.actions)
                 state_history.append(feature_tracker.snapshot(step.state))
                 state_tokens = self._apply_observation_dropout(
@@ -407,9 +400,7 @@ class PPOLearner:
                         dominated_action_indices(step.state, step.actions),
                         search_policy,
                         previous_plan=(
-                            PackedTensor.pack(previous_plan)
-                            if previous_plan is not None
-                            else None
+                            PackedTensor.pack(previous_plan) if previous_plan is not None else None
                         ),
                         plan_target=(
                             PackedTensor.pack(strategic_plan)
@@ -496,8 +487,7 @@ class PPOLearner:
                 thread_name_prefix="oracle-self-play",
             ) as executor:
                 future_indices = {
-                    executor.submit(collect, job): index
-                    for index, job in enumerate(jobs)
+                    executor.submit(collect, job): index for index, job in enumerate(jobs)
                 }
                 for future in as_completed(future_indices):
                     ordered[future_indices[future]] = future.result()
@@ -522,16 +512,12 @@ class PPOLearner:
         plans: dict[str, torch.Tensor] = {}
         while not step.done:
             if not step.actions:
-                raise RuntimeError(
-                    "environment produced a decision without legal actions"
-                )
+                raise RuntimeError("environment produced a decision without legal actions")
             if step.player_id is None:
                 raise RuntimeError("self-play decision is missing its acting player")
             if learner_player_ids is not None and step.player_id not in learner_player_ids:
                 if external_action_selector is None:
-                    raise RuntimeError(
-                        f"no external policy controls player {step.player_id}"
-                    )
+                    raise RuntimeError(f"no external policy controls player {step.player_id}")
                 step = environment.step(external_action_selector(environment, step))
                 continue
             encoded = self.encoder.encode(step.state, step.actions)
@@ -580,14 +566,10 @@ class PPOLearner:
                     search_policy,
                     apply_observation_dropout=training_mode,
                     previous_plan=(
-                        PackedTensor.pack(previous_plan)
-                        if previous_plan is not None
-                        else None
+                        PackedTensor.pack(previous_plan) if previous_plan is not None else None
                     ),
                     plan_target=(
-                        PackedTensor.pack(strategic_plan)
-                        if strategic_plan is not None
-                        else None
+                        PackedTensor.pack(strategic_plan) if strategic_plan is not None else None
                     ),
                     value_player_ids=self._relative_value_player_ids(
                         step.state,
@@ -638,9 +620,9 @@ class PPOLearner:
         numeric_mask = tokens.numeric_mask
 
         if self.config.observation_token_dropout:
-            protected = token_types.eq(
-                int(TokenType.GAME_CONFIGURATION)
-            ) | token_types.eq(int(TokenType.GAME_PHASE))
+            protected = token_types.eq(int(TokenType.GAME_CONFIGURATION)) | token_types.eq(
+                int(TokenType.GAME_PHASE)
+            )
             keep = protected | torch.rand(
                 token_types.shape,
                 device=token_types.device,
@@ -655,9 +637,7 @@ class PPOLearner:
             hidden_words = torch.rand(
                 word_ids.shape,
                 device=word_ids.device,
-            ).lt(
-                self.config.observation_word_dropout
-            ) & word_ids.ne(0)
+            ).lt(self.config.observation_word_dropout) & word_ids.ne(0)
             word_ids = word_ids.masked_fill(hidden_words, 0)
 
         if self.config.observation_numeric_dropout:
@@ -753,9 +733,7 @@ class PPOLearner:
         for index, transition in enumerate(trajectory):
             if transition.player_id is None:
                 player_id = (
-                    state_history[index].player_ids[0]
-                    if state_history[index].player_ids
-                    else ""
+                    state_history[index].player_ids[0] if state_history[index].player_ids else ""
                 )
             else:
                 player_id = transition.player_id
@@ -772,9 +750,7 @@ class PPOLearner:
             transition.future_targets = PackedTensor.pack(targets)
             transition.future_mask = PackedTensor.pack(mask.to(torch.float32))
 
-    def _advantages(
-        self, trajectory: list[Transition]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def _advantages(self, trajectory: list[Transition]) -> tuple[torch.Tensor, torch.Tensor]:
         grouped_indices: dict[str, list[int]] = {}
         for index, transition in enumerate(trajectory):
             group = transition.player_id or "__single_agent__"
@@ -791,15 +767,10 @@ class PPOLearner:
                     + self.config.gamma * next_value * nonterminal
                     - transition.value
                 )
-                gae = (
-                    delta
-                    + self.config.gamma * self.config.gae_lambda * nonterminal * gae
-                )
+                gae = delta + self.config.gamma * self.config.gae_lambda * nonterminal * gae
                 advantages[index] = gae
                 next_value = transition.value
-        advantage_tensor = torch.tensor(
-            advantages, dtype=torch.float32, device=self.device
-        )
+        advantage_tensor = torch.tensor(advantages, dtype=torch.float32, device=self.device)
         returns = advantage_tensor + torch.tensor(
             [transition.value for transition in trajectory],
             dtype=torch.float32,
@@ -876,9 +847,7 @@ class PPOLearner:
                     action_values = evaluation.get("action_values")
                     policy_logits = logits.squeeze(0).clone()
                     if transition.masked_action_indices:
-                        policy_logits[
-                            list(transition.masked_action_indices)
-                        ] = -torch.inf
+                        policy_logits[list(transition.masked_action_indices)] = -torch.inf
                     distribution = Categorical(logits=policy_logits)
                     action = torch.tensor(transition.action_index, device=self.device)
                     log_probability = distribution.log_prob(action)
@@ -923,9 +892,7 @@ class PPOLearner:
                         value_losses.append((predicted_value - returns[index]).pow(2))
                     if action_values is not None:
                         selected_action_value = action_values.squeeze(0)[action]
-                        action_value_losses.append(
-                            (selected_action_value - returns[index]).pow(2)
-                        )
+                        action_value_losses.append((selected_action_value - returns[index]).pow(2))
                     if (
                         transition.future_targets is not None
                         and transition.future_mask is not None
@@ -935,9 +902,7 @@ class PPOLearner:
                         target = transition.future_targets.unpack(self.device)
                         mask = transition.future_mask.unpack(self.device).gt(0.5)
                         predicted_mean = evaluation["future_mean"][0, action]
-                        predicted_log_variance = evaluation["future_log_variance"][
-                            0, action
-                        ]
+                        predicted_log_variance = evaluation["future_log_variance"][0, action]
                         if bool(mask.any()):
                             nll = 0.5 * (
                                 torch.exp(-predicted_log_variance)
@@ -947,20 +912,12 @@ class PPOLearner:
                             future_prediction_losses.append(nll[mask].mean())
                         belief_mask = mask[0].clone()
                         belief_mask[0] = False
-                        if (
-                            bool(belief_mask.any())
-                            and "belief_prediction" in evaluation
-                        ):
+                        if bool(belief_mask.any()) and "belief_prediction" in evaluation:
                             belief_prediction = evaluation["belief_prediction"][0]
                             belief_losses.append(
-                                (belief_prediction - target[0])
-                                .pow(2)[belief_mask]
-                                .mean()
+                                (belief_prediction - target[0]).pow(2)[belief_mask].mean()
                             )
-                    if (
-                        transition.plan_target is not None
-                        and "strategic_plan" in evaluation
-                    ):
+                    if transition.plan_target is not None and "strategic_plan" in evaluation:
                         target_plan = transition.plan_target.unpack(self.device)
                         plan_losses.append(
                             (evaluation["strategic_plan"] - target_plan).pow(2).mean()
@@ -969,19 +926,14 @@ class PPOLearner:
                         transition.player_value_targets is not None
                         and "player_values" in evaluation
                     ):
-                        target_values = transition.player_value_targets.unpack(
-                            self.device
-                        )
+                        target_values = transition.player_value_targets.unpack(self.device)
                         predicted_values = evaluation["player_values"].squeeze(0)
                         value_count = min(
                             target_values.numel(),
                             predicted_values.numel(),
                         )
                         multiplayer_value_losses.append(
-                            (
-                                predicted_values[:value_count]
-                                - target_values[:value_count]
-                            )
+                            (predicted_values[:value_count] - target_values[:value_count])
                             .pow(2)
                             .mean()
                         )
@@ -1004,9 +956,7 @@ class PPOLearner:
                         ):
                             target = transition.future_targets.unpack(self.device)
                             mask = transition.future_mask.unpack(self.device).gt(0.5)
-                            reconstruction = evaluation["event_reconstructed_future"][
-                                0, action
-                            ]
+                            reconstruction = evaluation["event_reconstructed_future"][0, action]
                             if bool(mask.any()):
                                 event_reconstruction_losses.append(
                                     (reconstruction - target).pow(2)[mask].mean()
@@ -1014,8 +964,7 @@ class PPOLearner:
                         if "latent_action_values" in evaluation:
                             latent_value_losses.append(
                                 (
-                                    evaluation["latent_action_values"][0, action]
-                                    - returns[index]
+                                    evaluation["latent_action_values"][0, action] - returns[index]
                                 ).pow(2)
                             )
                     entropies.append(distribution.entropy())
@@ -1074,16 +1023,11 @@ class PPOLearner:
                 )
                 if selected_event_codes:
                     codes = torch.stack(selected_event_codes)
-                    code_count = int(
-                        getattr(self.model.config, "event_codebook_size", 1)
-                    )
+                    code_count = int(getattr(self.model.config, "event_codebook_size", 1))
                     histogram = torch.bincount(codes, minlength=code_count).float()
                     code_probabilities = histogram / histogram.sum().clamp_min(1.0)
                     event_code_perplexity = torch.exp(
-                        -(
-                            code_probabilities
-                            * code_probabilities.clamp_min(1e-12).log()
-                        ).sum()
+                        -(code_probabilities * code_probabilities.clamp_min(1e-12).log()).sum()
                     )
                 else:
                     event_code_perplexity = torch.zeros((), device=self.device)
@@ -1098,8 +1042,7 @@ class PPOLearner:
                     + self.config.belief_coefficient * belief_loss
                     + self.config.plan_coefficient * plan_loss
                     + self.config.multiplayer_value_coefficient * multiplayer_value_loss
-                    + self.config.event_reconstruction_coefficient
-                    * event_reconstruction_loss
+                    + self.config.event_reconstruction_coefficient * event_reconstruction_loss
                     + self.config.event_codebook_coefficient * event_codebook_loss
                     + self.config.event_commitment_coefficient * event_commitment_loss
                     + self.config.latent_value_coefficient * latent_value_loss
@@ -1107,16 +1050,12 @@ class PPOLearner:
                 )
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.config.max_grad_norm
-                )
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
                 weight = len(batch_indices)
                 metric_weight += weight
                 metric_totals["loss"] += float(loss.detach().cpu()) * weight
-                metric_totals["policy_loss"] += (
-                    float(policy_loss.detach().cpu()) * weight
-                )
+                metric_totals["policy_loss"] += float(policy_loss.detach().cpu()) * weight
                 metric_totals["search_policy_loss"] += (
                     float(search_policy_loss.detach().cpu()) * weight
                 )
@@ -1127,9 +1066,7 @@ class PPOLearner:
                 metric_totals["future_prediction_loss"] += (
                     float(future_prediction_loss.detach().cpu()) * weight
                 )
-                metric_totals["belief_loss"] += (
-                    float(belief_loss.detach().cpu()) * weight
-                )
+                metric_totals["belief_loss"] += float(belief_loss.detach().cpu()) * weight
                 metric_totals["plan_loss"] += float(plan_loss.detach().cpu()) * weight
                 metric_totals["multiplayer_value_loss"] += (
                     float(multiplayer_value_loss.detach().cpu()) * weight
@@ -1150,22 +1087,17 @@ class PPOLearner:
                     float(event_code_perplexity.detach().cpu()) * weight
                 )
                 metric_totals["entropy"] += float(entropy.detach().cpu()) * weight
-                metric_totals["approx_kl"] += (
-                    float(approximate_kl.detach().cpu()) * weight
-                )
+                metric_totals["approx_kl"] += float(approximate_kl.detach().cpu()) * weight
                 if (
                     self.config.target_kl > 0.0
-                    and float(approximate_kl.detach().cpu())
-                    > 1.5 * self.config.target_kl
+                    and float(approximate_kl.detach().cpu()) > 1.5 * self.config.target_kl
                 ):
                     stop_early = True
                     break
             if stop_early:
                 break
         self.training_step += len(trajectory)
-        return {
-            metric: total / metric_weight for metric, total in metric_totals.items()
-        }
+        return {metric: total / metric_weight for metric, total in metric_totals.items()}
 
     @staticmethod
     def _pack_tokens(

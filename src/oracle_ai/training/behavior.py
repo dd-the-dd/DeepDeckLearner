@@ -88,11 +88,7 @@ def build_decision_trace(
         decision_kind=decision_kind,
         selected_action_kind=selected_kind,
         legal_action_kinds=legal_kinds,
-        turn_number=(
-            int(state["turnNumber"])
-            if state.get("turnNumber") is not None
-            else None
-        ),
+        turn_number=(int(state["turnNumber"]) if state.get("turnNumber") is not None else None),
         hand_count=hand_count,
         mulligan_count=mulligan_count,
         projected_hand_size=projected_hand_size,
@@ -123,8 +119,7 @@ def dominated_action_indices(
     if isinstance(active_player, int) and isinstance(players, list):
         active_player = (
             players[active_player].get("id")
-            if 0 <= active_player < len(players)
-            and isinstance(players[active_player], dict)
+            if 0 <= active_player < len(players) and isinstance(players[active_player], dict)
             else None
         )
     if (
@@ -134,9 +129,7 @@ def dominated_action_indices(
         and any(action.get("kind") == "playLand" for action in actions)
     ):
         dominated.update(
-            index
-            for index, action in enumerate(actions)
-            if action.get("kind") == "passPriority"
+            index for index, action in enumerate(actions) if action.get("kind") == "passPriority"
         )
     return tuple(sorted(dominated))
 
@@ -149,9 +142,7 @@ def summarize_decision_traces(
     rows = list(traces)
     decision_counts = Counter(row.decision_kind for row in rows)
     action_counts = Counter(row.selected_action_kind for row in rows)
-    anomaly_counts = Counter(
-        anomaly for row in rows for anomaly in row.anomalies
-    )
+    anomaly_counts = Counter(anomaly for row in rows for anomaly in row.anomalies)
     by_decision_kind: dict[str, dict[str, Any]] = {}
     for kind in sorted(decision_counts):
         matching = [row for row in rows if row.decision_kind == kind]
@@ -167,9 +158,7 @@ def summarize_decision_traces(
     land_opportunities = [row for row in priority if "playLand" in row.legal_action_kinds]
     cast_opportunities = [row for row in priority if "castSpell" in row.legal_action_kinds]
     attacks = [row for row in rows if row.decision_kind.casefold() == "attackers"]
-    attack_opportunities = [
-        row for row in attacks if "declareAttacker" in row.legal_action_kinds
-    ]
+    attack_opportunities = [row for row in attacks if "declareAttacker" in row.legal_action_kinds]
     confidences = [row.confidence for row in rows if row.confidence is not None]
     entropies = [row.entropy for row in rows if row.entropy is not None]
     land_turns: dict[tuple[str | None, int | None], list[DecisionTrace]] = {}
@@ -226,15 +215,12 @@ def summarize_decision_traces(
         "combat": {
             "attackOpportunities": len(attack_opportunities),
             "attackersDeclared": sum(
-                row.selected_action_kind == "declareAttacker"
-                for row in attack_opportunities
+                row.selected_action_kind == "declareAttacker" for row in attack_opportunities
             ),
         },
         "anomalies": {
             "total": sum(anomaly_counts.values()),
-            "rate": (
-                sum(anomaly_counts.values()) / len(rows) if rows else 0.0
-            ),
+            "rate": (sum(anomaly_counts.values()) / len(rows) if rows else 0.0),
             "counts": dict(sorted(anomaly_counts.items())),
             "samples": anomaly_samples,
         },

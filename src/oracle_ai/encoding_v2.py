@@ -81,9 +81,7 @@ NUMERIC_FEATURE_NAMES = (
     "has_attacker",
     "has_blocker",
 )
-NUMERIC_FEATURE_INDEX = {
-    name: index for index, name in enumerate(NUMERIC_FEATURE_NAMES)
-}
+NUMERIC_FEATURE_INDEX = {name: index for index, name in enumerate(NUMERIC_FEATURE_NAMES)}
 NUMERIC_FEATURE_DIM = len(NUMERIC_FEATURE_NAMES)
 
 _WORD_PATTERN = re.compile(r"[\w]+(?:['’][\w]+)?", re.UNICODE)
@@ -285,9 +283,7 @@ def _type_counts(permanents: list[dict[str, Any]]) -> dict[str, float]:
             if type_name in type_line:
                 values[feature] += 1
         values["tapped_count"] += float(bool(permanent.get("tapped")))
-        values["summoning_sick_count"] += float(
-            bool(permanent.get("summoningSick"))
-        )
+        values["summoning_sick_count"] += float(bool(permanent.get("summoningSick")))
         values["token_count"] += float(bool(definition.get("isToken")))
     return values
 
@@ -413,9 +409,7 @@ class StructuredObservationEncoder:
         identifiers = []
         for word in _WORD_PATTERN.findall(text.casefold())[: self.max_words]:
             digest = hashlib.blake2b(word.encode("utf-8"), digest_size=8).digest()
-            identifiers.append(
-                1 + int.from_bytes(digest, "little") % (self.word_vocab_size - 1)
-            )
+            identifiers.append(1 + int.from_bytes(digest, "little") % (self.word_vocab_size - 1))
         identifiers.extend([0] * (self.max_words - len(identifiers)))
         return torch.tensor(identifiers, dtype=torch.long)
 
@@ -520,9 +514,7 @@ class StructuredObservationEncoder:
                         has_numeric=True,
                     )
                 )
-                oracle_tokens.extend(
-                    self._oracle_tokens(permanent, relative_player)
-                )
+                oracle_tokens.extend(self._oracle_tokens(permanent, relative_player))
                 instance_id = permanent.get("instanceId")
                 if instance_id:
                     entities[str(instance_id)] = (permanent, relative_player)
@@ -547,22 +539,14 @@ class StructuredObservationEncoder:
                     if instance_id:
                         entities[str(instance_id)] = (card, relative_player)
 
-            hand = (
-                list(player.get("hand", []))
-                if isinstance(player.get("hand"), list)
-                else []
-            )
+            hand = list(player.get("hand", [])) if isinstance(player.get("hand"), list) else []
             for card in hand:
                 flags = card.get("flags")
-                known_to_viewer = (
-                    isinstance(flags, dict) and bool(flags.get("knownToViewer"))
-                )
+                known_to_viewer = isinstance(flags, dict) and bool(flags.get("knownToViewer"))
                 if player_id != acting_player_id and not known_to_viewer:
                     continue
                 zone_label = (
-                    "hand card"
-                    if player_id == acting_player_id
-                    else "known opponent hand card"
+                    "hand card" if player_id == acting_player_id else "known opponent hand card"
                 )
                 stat_tokens.append(
                     _Token(
@@ -624,9 +608,7 @@ class StructuredObservationEncoder:
                 "graveyard_count": len(player.get("graveyard", [])),
                 "exile_count": len(player.get("exile", [])),
                 "sideboard_count": len(player.get("sideboard", [])),
-                "land_plays_remaining": _parse_number(
-                    player.get("landPlaysRemaining")
-                ),
+                "land_plays_remaining": _parse_number(player.get("landPlaysRemaining")),
                 "max_hand_size": _parse_number(player.get("maxHandSize")),
                 "stack_spell_count": sum(
                     1
@@ -658,16 +640,12 @@ class StructuredObservationEncoder:
         combat = state.get("combat")
         combat = combat if isinstance(combat, dict) else {}
         decision_context = state.get("_decisionContext")
-        decision_context = (
-            decision_context if isinstance(decision_context, dict) else {}
-        )
+        decision_context = decision_context if isinstance(decision_context, dict) else {}
         outcome = state.get("outcome")
         outcome = outcome if isinstance(outcome, dict) else {}
         values = {
             "player_count": player_count,
-            "turn_number": _parse_number(
-                state.get("turnNumber", state.get("turn", 0))
-            ),
+            "turn_number": _parse_number(state.get("turnNumber", state.get("turn", 0))),
             "stack_count": len(state.get("stack", [])),
             "attacker_count": len(combat.get("attackers", [])),
             "blocker_count": len(combat.get("blockers", [])),
@@ -792,19 +770,13 @@ class StructuredObservationEncoder:
             if source is not None:
                 source_card, source_position = source
                 numeric.update(_card_numeric(source_card))
-                words.extend(
-                    self._action_entity_words(source_card, "action source")
-                )
+                words.extend(self._action_entity_words(source_card, "action source"))
                 relative_player = source_position
             for role, instance_id in (
                 ("attacker", action.get("attackerId")),
                 ("blocker", action.get("blockerId")),
             ):
-                participant = (
-                    entities.get(str(instance_id))
-                    if instance_id is not None
-                    else None
-                )
+                participant = entities.get(str(instance_id)) if instance_id is not None else None
                 if participant is not None:
                     words.extend(self._action_entity_words(participant[0], role))
             words.extend(self._action_decision_entity_words(action, entities))
@@ -822,9 +794,7 @@ class StructuredObservationEncoder:
                             )
                         )
                 else:
-                    words.extend(
-                        _semantic_fragments(target)
-                    )
+                    words.extend(_semantic_fragments(target))
             result.append(
                 _Token(
                     numeric=numeric,
@@ -844,15 +814,10 @@ class StructuredObservationEncoder:
         decision_context = state.get("_decisionContext")
         acting_player_id = (
             str(decision_context.get("playerId"))
-            if isinstance(decision_context, dict)
-            and decision_context.get("playerId") is not None
+            if isinstance(decision_context, dict) and decision_context.get("playerId") is not None
             else None
         )
-        players = (
-            list(state.get("players", []))
-            if isinstance(state.get("players"), list)
-            else []
-        )
+        players = list(state.get("players", [])) if isinstance(state.get("players"), list) else []
         positions = self._decision_player_positions(
             state,
             players,
@@ -881,11 +846,9 @@ class StructuredObservationEncoder:
             state_tokens=self._pack(state_tokens),
             action_tokens=self._pack(action_tokens),
             state_token_labels=tuple(
-                f"{token.token_type.name.lower()}: {token.words[:160]}"
-                for token in state_tokens
+                f"{token.token_type.name.lower()}: {token.words[:160]}" for token in state_tokens
             ),
             action_token_labels=tuple(
-                f"{token.token_type.name.lower()}: {token.words[:160]}"
-                for token in action_tokens
+                f"{token.token_type.name.lower()}: {token.words[:160]}" for token in action_tokens
             ),
         )
