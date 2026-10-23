@@ -105,3 +105,4 @@ packages = ["deepdeck_examples", "deepdeck_learner"]
 # outside this Python 3.10 application check (NumPy now uses Python 3.12 syntax).
 module = ["torch", "torch.*", "numpy", "numpy.*"]
 follow_imports = "skip"
+follow_imports_for_stubs = true
