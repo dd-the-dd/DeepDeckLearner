@@ -132,6 +132,32 @@ async def verify(browser_url: str) -> None:
                 "Ecosystem HTML: six roles, internal links, offline assets, desktop/mobile bounds and expandable explanations verified. No application action performed."
             )
             return
+        if os.environ.get("DEEPDECK_QA_LEAGUE_DISMISS") == "1":
+            await command(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {
+                    "source": """(() => {
+                const original=window.fetch.bind(window);window.__leagueDismissWrites=0;
+                const job={kind:'matchmaking.agent',logs:[],argv:[],created_at:'2026-10-23T01:00:00Z',
+                    started_at:null,finished_at:'2026-10-23T02:00:00Z',exit_code:null,artifact_path:null};
+                const jobs=[{...job,id:'browser-dismiss-failed',label:'Connection test pilot',status:'failed',
+                    details:{leagueRun:{completedEntries:0,activeEntries:0,maxMatches:null,durationSeconds:null,
+                        lastError:'This test runner could not connect. No match was started.'}}},
+                    {...job,id:'browser-dismiss-completed',label:'Completed test pilot',status:'completed',
+                    details:{leagueRun:{completedEntries:2,activeEntries:0,maxMatches:2,durationSeconds:null}}}];
+                window.fetch=async(input,init)=>{
+                    const method=(init?.method||input.method||'GET').toUpperCase();
+                    const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;
+                    if(!['GET','HEAD'].includes(method)){
+                        window.__leagueDismissWrites++;
+                        throw new Error('Read-only notification review blocked a mutation');
+                    }
+                    if(path==='/api/v1/jobs')return new Response(JSON.stringify(jobs),{headers:{'Content-Type':'application/json'}});
+                    return original(input,init);
+                };
+            })()"""
+                },
+            )
         await command("Page.navigate", {"url": APP_URL})
         deadline = time.monotonic() + 30
         while not await evaluate("Boolean(document.querySelector('.player-nav nav button'))"):
@@ -140,6 +166,78 @@ async def verify(browser_url: str) -> None:
             await asyncio.sleep(0.2)
         output = ROOT / ".deepdeck" / "ui-preview"
         output.mkdir(parents=True, exist_ok=True)
+        if os.environ.get("DEEPDECK_QA_LEAGUE_DISMISS") == "1":
+
+            async def wait_for(expression: str) -> None:
+                deadline = time.monotonic() + 30
+                while not await evaluate("Boolean(" + expression + ")"):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("Notification fixture did not reach its expected state.")
+                    await asyncio.sleep(0.1)
+
+            async def open_league() -> None:
+                await wait_for("document.querySelector('.player-nav nav button')")
+                await evaluate(
+                    "[...document.querySelectorAll('.player-nav nav button')].find(b=>b.textContent.includes('League')).click()"
+                )
+                await wait_for("document.querySelector('.recent-league-runs')")
+
+            await open_league()
+            for width, height, label in ((1440, 1000, "desktop"), (390, 844, "mobile")):
+                await command(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": width,
+                        "height": height,
+                        "deviceScaleFactor": 1,
+                        "mobile": width < 500,
+                    },
+                )
+                await wait_for(
+                    "document.querySelectorAll('.recent-league-runs .league-dismiss-button').length===2"
+                )
+                await evaluate(
+                    "document.querySelector('.recent-league-runs').scrollIntoView({block:'center'})"
+                )
+                await asyncio.sleep(0.2)
+                assert await evaluate("document.documentElement.scrollWidth<=innerWidth+1")
+                assert await evaluate(
+                    "[...document.querySelectorAll('.league-dismiss-button')].every(b=>b.getBoundingClientRect().height>=44&&b.getBoundingClientRect().width>=44)"
+                )
+                shot = await command(
+                    "Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False}
+                )
+                (output / f"league-dismissible-{label}.png").write_bytes(
+                    base64.b64decode(shot["data"])
+                )
+                await evaluate(
+                    "document.querySelector('[aria-label=\"Dismiss League run for Connection test pilot\"]').click()"
+                )
+                assert not await evaluate(
+                    "document.querySelector('.recent-league-runs').textContent.includes('Connection test pilot')"
+                )
+                assert await evaluate(
+                    "document.querySelector('.recent-league-runs').textContent.includes('Completed test pilot')"
+                )
+                assert await evaluate("window.__leagueDismissWrites===0")
+                await command("Page.reload", {"ignoreCache": True})
+                await open_league()
+                assert not await evaluate(
+                    "document.querySelector('.recent-league-runs').textContent.includes('Connection test pilot')"
+                )
+                await evaluate(
+                    "[...document.querySelectorAll('.recent-league-runs button')].find(b=>b.textContent.includes('Show dismissed')).click()"
+                )
+                assert await evaluate(
+                    "document.querySelector('.recent-league-runs').textContent.includes('Connection test pilot')"
+                )
+                assert await evaluate("window.__leagueDismissWrites===0")
+            assert not errors, errors
+            print(
+                "League notifications: desktop/mobile close buttons, persistent dismissal after reload, explicit restoration and zero mutations verified with browser-only worker fixtures.",
+                flush=True,
+            )
+            return
         if os.environ.get("DEEPDECK_QA_CAPACITY_HELP") == "1":
             await evaluate("""(() => {
                 const original=window.fetch.bind(window);window.__capacityHelpWrites=0;

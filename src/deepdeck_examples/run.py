@@ -169,7 +169,7 @@ def parser() -> argparse.ArgumentParser:
         "--matchmaking-concurrency",
         type=int,
         default=1,
-        help="Compatibility option; event enrollment uses one owner entry, not duplicate tickets.",
+        help="Compatibility option; each worker registers one agent, within the account's server-owned allowance.",
     )
     result.add_argument(
         "--replay-root", type=Path, help="Learner workspace for local League replays."
@@ -622,7 +622,7 @@ async def run(arguments: argparse.Namespace) -> None:
     try:
         await asyncio.sleep(0)
         await runner.wait_until_connected(timeout=30)
-        # One owner entry per event, regardless of the retired concurrency knob.
+        # One entry for this agent; other owned agents have independent workers.
         # Server-side capacity is authoritative; never multiply enrollment POSTs.
         await serve_event_cycles(
             runner,
