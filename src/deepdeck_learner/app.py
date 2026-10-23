@@ -127,6 +127,9 @@ from .training_platform import (
 )
 
 
+_ASSISTANT_STREAM_KEEPALIVE_SECONDS = 15.0
+
+
 def create_app(root: Path | None = None) -> FastAPI:
     resolved_root = (root or project_root()).resolve()
     load_api_key(resolved_root)
@@ -668,8 +671,8 @@ def create_app(root: Path | None = None) -> FastAPI:
                 yield 'data: {"type":"status","message":"Connecting to your assistant…"}\n\n'
                 while True:
                     try:
-                        event = await asyncio.wait_for(queue.get(), timeout=15)
-                    except TimeoutError:
+                        event = await asyncio.wait_for(queue.get(), timeout=_ASSISTANT_STREAM_KEEPALIVE_SECONDS)
+                    except asyncio.TimeoutError:
                         yield ": keepalive\n\n"
                         continue
                     yield "data: " + json.dumps(event, ensure_ascii=False, default=str) + "\n\n"

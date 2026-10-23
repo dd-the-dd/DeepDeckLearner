@@ -383,6 +383,7 @@ export function AssistantDrawer({
   const [error, setError] = useState("");
   const [configuring, setConfiguring] = useState(false);
   const [streamStatus, setStreamStatus] = useState('');
+  const [streaming, setStreaming] = useState(false);
   const [searchFormat,setSearchFormat]=useState<'legacy'|'commander'|null>(null);
   function prepareSearch(result:unknown) {
     if(!publishCardSearch(result,window.localStorage.getItem('deepdeck.activeDeckId')??''))return;
@@ -452,7 +453,7 @@ export function AssistantDrawer({
     setError("");
     const requestTarget = previousTarget.current;
     let partialText='';const partialEvents:AssistantToolEvent[]=[];
-    setStreamStatus('Connecting to your assistant…');followStream.current=true;
+    setStreamStatus('Connecting to your assistant…');setStreaming(true);followStream.current=true;
     try {
       const result = await chatWithAgentStudio(
         conversation,
@@ -506,6 +507,7 @@ export function AssistantDrawer({
     } finally {
       inFlight.current = false;
       setBusy(false);
+      setStreaming(false);
     }
   }
   return <div className={`assistant-layer${open ? " open" : ""}`} aria-hidden={!open}>
@@ -518,9 +520,9 @@ export function AssistantDrawer({
         <div className="assistant-messages" ref={messageViewport} onScroll={()=>{const view=messageViewport.current;if(view)followStream.current=view.scrollHeight-view.scrollTop-view.clientHeight<80;}}>
           {busy && <p className="assistant-stream-status" role="status">{streamStatus || 'Working…'}</p>}
           {messages.length === 0 && <div className="assistant-welcome"><Icon name="spark" /><h3>{context === "deck" ? "Tell me what you want to build." : "Describe how this agent should play."}</h3><p>{context === "deck" ? "I can search the League, compare similar decks, and help organize cards, tags, combos, and opening hands." : "I can inspect mastered decks, tune graph weights, add card and tag patterns, and preserve every revision."}</p><div>{(context === "deck" ? ["Find similar decks", "Improve the mana curve", "Tag my combo pieces"] : ["Make it play more like tempo", "Protect this combo", "Improve the mulligan plan"]).map((suggestion) => <button type="button" key={suggestion} onClick={() => setPrompt(suggestion)}>{suggestion}</button>)}</div></div>}
-          {messages.map((message, index) => <article className={message.role} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : "DeepDeck"}</strong>{message.role==='assistant' ? <AssistantMessage content={message.content} events={message.toolEvents}/> : <p>{message.content.replace(/^\[Deck workshop\]\s*/, "")}</p>}{message.toolEvents?.length ? <AssistantToolEvents events={message.toolEvents} disabled={busy} onNavigate={onNavigate} onOpenDeck={onOpenDeck} onAddCard={context === "deck" ? addSuggestedCard : undefined} onOpenPlaytest={(job) => { if (onStarted(job) !== false) onClose(); }} /> : null}</article>)}
+          {messages.map((message, index) => <article className={message.role} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : "DeepDeck"}</strong>{message.role==='assistant' ? <AssistantMessage content={message.content} events={message.toolEvents} streaming={streaming && index===messages.length-1}/> : <p>{message.content.replace(/^\[Deck workshop\]\s*/, "")}</p>}{message.toolEvents?.length ? <AssistantToolEvents events={message.toolEvents} disabled={busy} onNavigate={onNavigate} onOpenDeck={onOpenDeck} onAddCard={context === "deck" ? addSuggestedCard : undefined} onOpenPlaytest={(job) => { if (onStarted(job) !== false) onClose(); }} /> : null}</article>)}
           {searchFormat && <details className="assistant-refine-search"><summary>Refine the assistant’s card search</summary><CardResearch format={searchFormat} deckId={window.localStorage.getItem('deepdeck.activeDeckId')??''} zone="Main deck" disabled={busy} onAdd={context==='deck' && window.localStorage.getItem('deepdeck.activeDeckId') ? addSuggestedCard : undefined}/></details>}
-          {busy && <article className="assistant-thinking"><i /><i /><i /><span>{streamStatus || 'Using DeepDeck tools…'}</span></article>}
+          {busy && !(streaming && messages.at(-1)?.role==='assistant' && messages.at(-1)?.content) && <article className="assistant-thinking"><i /><i /><i /><span>{streamStatus || 'Using DeepDeck tools…'}</span></article>}
         </div>
         {settings.authMode === 'chatgpt' && <div className="assistant-plan-status"><span>Using ChatGPT plan</span><a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">Manage usage ↗</a></div>}
         <form className="assistant-composer" onSubmit={send}><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => submitChatOnEnter(event, !busy && Boolean(prompt.trim()))} title="Enter to send · Shift+Enter for a new line" placeholder={context === "deck" ? "Ask for cards, a deck plan, tags…" : "Describe a strategy change…"} /><button type="submit" disabled={busy || !prompt.trim()}><span>Send</span><Icon name="play" /></button></form>

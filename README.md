@@ -324,6 +324,24 @@ can still be opened without repeating the chat request. Closing the copilot
 while it works does not unexpectedly open a game, and opening one warns before
 discarding an unsaved agent draft.
 
+Chat displays real provider text fragments as they arrive, with an in-progress
+cursor and tool results before the final reply. Mana icons and completed card
+blocks render during generation. A quiet model keeps the connection alive;
+an interrupted stream preserves received text and completed actions, never
+automatically resends the request, and is not labelled as a completed answer.
+Providers that buffer their output may still deliver larger fragments: the UI
+does not simulate token streaming. The client accepts split UTF-8 and standard
+SSE line endings and rejects malformed/oversized events without exposing their
+raw diagnostics. See the [OpenAI streaming protocol](https://developers.openai.com/api/docs/guides/streaming-responses).
+
+Verification without paid calls: `pytest tests/test_assistant_live_stream.py
+tests/test_assistant_streaming.py tests/test_chatgpt_model.py` exercises actual
+loopback HTTP, idle keepalives, disconnect cancellation and both SDK model paths
+using fixture-only provider transports. With the local app running,
+`DEEPDECK_QA_ASSISTANT_STREAM=1 python scripts/verify_player_app.py` checks the
+real browser UI on desktop/mobile with intercepted chat responses and blocks all
+real mutations. In PowerShell, set `$env:DEEPDECK_QA_ASSISTANT_STREAM='1'` first.
+
 The global copilot has the same deck tools from every tab, even when focused on
 agent strategy. `import_league_deck` downloads a published League version and
 forks an editable local copy without changing the public source. `import_decklist`

@@ -132,6 +132,37 @@ async def verify(browser_url: str) -> None:
                 "Ecosystem HTML: six roles, internal links, offline assets, desktop/mobile bounds and expandable explanations verified. No application action performed."
             )
             return
+        if os.environ.get("DEEPDECK_QA_ASSISTANT_STREAM") == "1":
+            await command(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {
+                    "source": """(() => {
+                const original=window.fetch.bind(window),encoder=new TextEncoder();
+                const state=window.__assistantStreamQA={requests:0,writes:0,channel:null};
+                state.emit=event=>state.channel.enqueue(encoder.encode('data: '+JSON.stringify(event)+'\\r\\n\\r\\n'));
+                window.fetch=async(input,init)=>{
+                    const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;
+                    const method=(init?.method||input.method||'GET').toUpperCase();
+                    const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
+                    if(path==='/api/v1/agent-studio/llm-settings' && method==='GET')return json({
+                        providerName:'Browser-only stream fixture',configured:true,hasApiKey:false,
+                        baseUrl:'http://127.0.0.1:11434/v1',model:'fixture',leagueMcpEnabled:false});
+                    if(path==='/api/v1/agent-studio/chat/stream' && method==='POST'){
+                        state.requests++;
+                        const stream=new ReadableStream({start(channel){state.channel=channel;}});
+                        state.emit({type:'status',message:'Comparing options…'});
+                        state.emit({type:'delta',text:state.requests===1?'I am comparing options with {R}.':'This partial reply will remain visible.'});
+                        state.emit({type:'tool',event:{tool:'list_agents',ok:true,result:{items:[]}}});
+                        return new Response(stream,{headers:{'Content-Type':'text/event-stream'}});
+                    }
+                    if(!['GET','HEAD'].includes(method)){
+                        state.writes++;throw new Error('Streaming review blocked a real mutation');
+                    }
+                    return original(input,init);
+                };
+            })()"""
+                },
+            )
         if os.environ.get("DEEPDECK_QA_LEAGUE_DISMISS") == "1":
             await command(
                 "Page.addScriptToEvaluateOnNewDocument",
@@ -166,6 +197,96 @@ async def verify(browser_url: str) -> None:
             await asyncio.sleep(0.2)
         output = ROOT / ".deepdeck" / "ui-preview"
         output.mkdir(parents=True, exist_ok=True)
+        if os.environ.get("DEEPDECK_QA_ASSISTANT_STREAM") == "1":
+
+            async def wait_for_stream(expression: str) -> None:
+                deadline = time.monotonic() + 20
+                while not await evaluate("Boolean(" + expression + ")"):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            "The streaming fixture did not reach its expected state."
+                        )
+                    await asyncio.sleep(0.1)
+
+            await evaluate("document.querySelector('.global-assistant-fab').click()")
+            await wait_for_stream("document.querySelector('.assistant-composer textarea')")
+            set_prompt = """(() => {
+                const input=document.querySelector('.assistant-composer textarea');
+                Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Help me compare my cards');
+                input.dispatchEvent(new Event('input',{bubbles:true}));
+            })()"""
+            await evaluate(set_prompt)
+            await wait_for_stream("!document.querySelector('.assistant-composer button').disabled")
+            await evaluate("document.querySelector('.assistant-composer button').click()")
+            await wait_for_stream(
+                "document.querySelector('.assistant-rich-message.is-streaming')?.textContent.includes('comparing options')"
+            )
+            assert await evaluate(
+                "window.__assistantStreamQA.requests===1 && window.__assistantStreamQA.writes===0"
+            )
+            assert await evaluate(
+                "document.querySelector('.assistant-rich-message [aria-label=\"Mana cost {R}\"]')!==null"
+            )
+            assert await evaluate(
+                "document.querySelector('.assistant-tool-events').textContent.includes('Agents inspected')"
+            )
+            assert not await evaluate("document.querySelector('.assistant-thinking')!==null")
+            for width, height, label in ((1440, 1000, "desktop"), (390, 844, "mobile")):
+                await command(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": width,
+                        "height": height,
+                        "deviceScaleFactor": 1,
+                        "mobile": width < 500,
+                    },
+                )
+                await asyncio.sleep(0.3)
+                assert await evaluate("document.documentElement.scrollWidth<=innerWidth+1")
+                assert await evaluate(
+                    "document.querySelector('.assistant-rich-message.is-streaming').getAttribute('aria-busy')==='true'"
+                )
+                shot = await command(
+                    "Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False}
+                )
+                (output / f"assistant-stream-{label}.png").write_bytes(
+                    base64.b64decode(shot["data"])
+                )
+            await evaluate("""(() => {
+                const state=window.__assistantStreamQA;
+                state.emit({type:'done',result:{message:'Your comparison is complete. {R}',toolEvents:[{tool:'list_agents',ok:true,result:{items:[]}}],agents:[]}});
+                state.channel.close();
+            })()""")
+            await wait_for_stream(
+                "!document.querySelector('.assistant-rich-message.is-streaming') && document.querySelector('.assistant-messages').textContent.includes('comparison is complete')"
+            )
+            assert await evaluate(
+                "window.__assistantStreamQA.requests===1 && document.querySelectorAll('.assistant-tool-event').length===1"
+            )
+            await evaluate(set_prompt)
+            await wait_for_stream("!document.querySelector('.assistant-composer button').disabled")
+            await evaluate("document.querySelector('.assistant-composer button').click()")
+            await wait_for_stream(
+                "window.__assistantStreamQA.requests===2 && document.querySelector('.assistant-rich-message.is-streaming')"
+            )
+            await evaluate(
+                "window.__assistantStreamQA.channel.error(new Error('Browser-only connection interrupted'))"
+            )
+            await wait_for_stream(
+                "document.querySelector('.assistant-drawer [role=alert]') && !document.querySelector('.assistant-rich-message.is-streaming')"
+            )
+            assert await evaluate(
+                "document.querySelector('.assistant-messages').textContent.includes('This partial reply will remain visible')"
+            )
+            assert await evaluate(
+                "window.__assistantStreamQA.requests===2 && window.__assistantStreamQA.writes===0"
+            )
+            assert not errors, errors
+            print(
+                "Streaming: early text, mana, completed tools, cursor, desktop/mobile bounds, terminal completion and retained partial text after disconnect verified. No real LLM request or mutation.",
+                flush=True,
+            )
+            return
         if os.environ.get("DEEPDECK_QA_LEAGUE_DISMISS") == "1":
 
             async def wait_for(expression: str) -> None:

@@ -1,3 +1,5 @@
+import { readAssistantStream } from './assistant-stream';
+
 export type CapabilityStatus = {
   controller: { ready: boolean; version: string };
   paths: { project: string; trajectory: string; checkpoints: string };
@@ -972,30 +974,12 @@ export async function chatWithAgentStudio(
 }> {
   const response=await authorizedFetch('/api/v1/agent-studio/chat'+(onEvent?'/stream':''), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(onEvent ? { Accept: 'text/event-stream' } : {}) },
     body: JSON.stringify({ messages: messages.map(({ role, content }) => ({ role, content })), context, activeDeckId: activeDeckId || undefined, activeAgentId: activeAgentId || undefined }),
   });
   if(!onEvent) return json(response);
   if(!response.ok) return json(response);
-  if(!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Streaming is unavailable. No request was retried; check completed actions before sending again.');
-  const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';
-  try {
-    while(true) {
-      const {done,value}=await reader.read();buffer+=decoder.decode(value,{stream:!done});
-      if(buffer.length>2_000_000) throw new Error('Assistant stream exceeded its display limit. Review completed actions.');
-      let boundary;
-      while((boundary=buffer.indexOf('\n\n'))>=0) {
-        const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);
-        const data=block.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
-        if(!data) continue;
-        const event=JSON.parse(data) as AssistantStreamEvent;
-        onEvent(event);
-        if(event.type==='done') return event.result;
-        if(event.type==='error') throw new Error(event.message);
-      }
-      if(done) throw new Error('The assistant connection ended early. Completed actions were kept; do not repeat the request blindly.');
-    }
-  } finally {await reader.cancel().catch(()=>undefined);reader.releaseLock();}
+  return readAssistantStream(response, onEvent);
 }
 
 export type AssistantStreamEvent =
