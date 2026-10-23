@@ -12,6 +12,8 @@ import {
 import AgentStudio, {type AgentCreationDeck} from "./AgentWorkspace";
 import LeagueRunSettings, {DEFAULT_LEAGUE_RUN,leagueRunError,leagueRunPayload,leagueRunSummary} from './LeagueRunSettings';
 import LeagueRunReport from './LeagueRunReport';
+import RecentLeagueRuns from './RecentLeagueRuns';
+import LeagueNotice from './LeagueNotice';
 import LeagueRotation from './LeagueRotation';
 import LeagueCapacityHelp from './LeagueCapacityHelp';
 import {loadLeagueQueue,appendLeagueQueueEntry} from './api';
@@ -381,6 +383,7 @@ export function AssistantDrawer({
   const [error, setError] = useState("");
   const [configuring, setConfiguring] = useState(false);
   const [streamStatus, setStreamStatus] = useState('');
+  const [streaming, setStreaming] = useState(false);
   const [searchFormat,setSearchFormat]=useState<'legacy'|'commander'|null>(null);
   function prepareSearch(result:unknown) {
     if(!publishCardSearch(result,window.localStorage.getItem('deepdeck.activeDeckId')??''))return;
@@ -450,7 +453,7 @@ export function AssistantDrawer({
     setError("");
     const requestTarget = previousTarget.current;
     let partialText='';const partialEvents:AssistantToolEvent[]=[];
-    setStreamStatus('Connecting to your assistant…');followStream.current=true;
+    setStreamStatus('Connecting to your assistant…');setStreaming(true);followStream.current=true;
     try {
       const result = await chatWithAgentStudio(
         conversation,
@@ -504,6 +507,7 @@ export function AssistantDrawer({
     } finally {
       inFlight.current = false;
       setBusy(false);
+      setStreaming(false);
     }
   }
   return <div className={`assistant-layer${open ? " open" : ""}`} aria-hidden={!open}>
@@ -516,9 +520,9 @@ export function AssistantDrawer({
         <div className="assistant-messages" ref={messageViewport} onScroll={()=>{const view=messageViewport.current;if(view)followStream.current=view.scrollHeight-view.scrollTop-view.clientHeight<80;}}>
           {busy && <p className="assistant-stream-status" role="status">{streamStatus || 'Working…'}</p>}
           {messages.length === 0 && <div className="assistant-welcome"><Icon name="spark" /><h3>{context === "deck" ? "Tell me what you want to build." : "Describe how this agent should play."}</h3><p>{context === "deck" ? "I can search the League, compare similar decks, and help organize cards, tags, combos, and opening hands." : "I can inspect mastered decks, tune graph weights, add card and tag patterns, and preserve every revision."}</p><div>{(context === "deck" ? ["Find similar decks", "Improve the mana curve", "Tag my combo pieces"] : ["Make it play more like tempo", "Protect this combo", "Improve the mulligan plan"]).map((suggestion) => <button type="button" key={suggestion} onClick={() => setPrompt(suggestion)}>{suggestion}</button>)}</div></div>}
-          {messages.map((message, index) => <article className={message.role} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : "DeepDeck"}</strong>{message.role==='assistant' ? <AssistantMessage content={message.content} events={message.toolEvents}/> : <p>{message.content.replace(/^\[Deck workshop\]\s*/, "")}</p>}{message.toolEvents?.length ? <AssistantToolEvents events={message.toolEvents} disabled={busy} onNavigate={onNavigate} onOpenDeck={onOpenDeck} onAddCard={context === "deck" ? addSuggestedCard : undefined} onOpenPlaytest={(job) => { if (onStarted(job) !== false) onClose(); }} /> : null}</article>)}
+          {messages.map((message, index) => <article className={message.role} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : "DeepDeck"}</strong>{message.role==='assistant' ? <AssistantMessage content={message.content} events={message.toolEvents} streaming={streaming && index===messages.length-1}/> : <p>{message.content.replace(/^\[Deck workshop\]\s*/, "")}</p>}{message.toolEvents?.length ? <AssistantToolEvents events={message.toolEvents} disabled={busy} onNavigate={onNavigate} onOpenDeck={onOpenDeck} onAddCard={context === "deck" ? addSuggestedCard : undefined} onOpenPlaytest={(job) => { if (onStarted(job) !== false) onClose(); }} /> : null}</article>)}
           {searchFormat && <details className="assistant-refine-search"><summary>Refine the assistant’s card search</summary><CardResearch format={searchFormat} deckId={window.localStorage.getItem('deepdeck.activeDeckId')??''} zone="Main deck" disabled={busy} onAdd={context==='deck' && window.localStorage.getItem('deepdeck.activeDeckId') ? addSuggestedCard : undefined}/></details>}
-          {busy && <article className="assistant-thinking"><i /><i /><i /><span>{streamStatus || 'Using DeepDeck tools…'}</span></article>}
+          {busy && !(streaming && messages.at(-1)?.role==='assistant' && messages.at(-1)?.content) && <article className="assistant-thinking"><i /><i /><i /><span>{streamStatus || 'Using DeepDeck tools…'}</span></article>}
         </div>
         {settings.authMode === 'chatgpt' && <div className="assistant-plan-status"><span>Using ChatGPT plan</span><a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer">Manage usage ↗</a></div>}
         <form className="assistant-composer" onSubmit={send}><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => submitChatOnEnter(event, !busy && Boolean(prompt.trim()))} title="Enter to send · Shift+Enter for a new line" placeholder={context === "deck" ? "Ask for cards, a deck plan, tags…" : "Describe a strategy change…"} /><button type="submit" disabled={busy || !prompt.trim()}><span>Send</span><Icon name="play" /></button></form>
@@ -658,7 +662,6 @@ export function LeagueHub({
   const decksToPublish = agent?.decks.filter((deck) => deck.id.startsWith('localdeck-') && deck.syncStatus?.needsPublishing !== false) ?? [];
   const missingDeck = agent?.decks.some(deck => deck.unavailable) ?? false;
   const leagueJobs = jobs.filter((job) => job.kind === "matchmaking.agent" && ["queued", "running"].includes(job.status) && !stoppedIds.includes(job.id));
-  const recentLeagueRuns = jobs.filter(job=>job.kind==='matchmaking.agent' && ['completed','failed','stopped'].includes(job.status) && (job.status==='failed' || job.details?.leagueRun?.maxMatches!=null || job.details?.leagueRun?.durationSeconds!=null)).sort((a,b)=>(b.finished_at??b.created_at).localeCompare(a.finished_at??a.created_at)).slice(0,4);
 
   useEffect(() => { if (!agentId && agents[0]) setAgentId(agents[0].id); }, [agentId, agents]);
   const agentDeckKey = JSON.stringify(agent?.deckVersionIds ?? []);
@@ -751,16 +754,16 @@ export function LeagueHub({
         <p className="league-deck-help" role="status">{!agent.decks.length ? 'No decks linked yet. Add the decks this agent knows in Agents before sending it to the League.' : !selectedDeckIds.length ? 'Select at least one deck before sending your agent.' : selectedDeckIds.length === 1 ? 'Your agent will play this deck for this League run.' : `Your agent may play any of these ${selectedDeckIds.length} decks for this League run.`}</p>
       </div>}
       {decksToPublish.length > 0 && <div className="league-publish-notice"><strong>{decksToPublish.length} local deck{decksToPublish.length > 1 ? 's' : ''} will be published</strong><p>All decks attached to this agent need a published site version. {connection?.reachable && !connection.capabilities.includes('ai-decks') ? 'This server validates eligible decks through its competition pool.' : 'Selected decks use your account’s AI slots; no existing deck is removed automatically.'}</p>{!siteAccount?.valid && <button className="secondary-action" type="button" onClick={openSettings}>Sign in to publish decks</button>}</div>}
-      {error && <p className="inline-error" role="alert">{error}</p>}
-      {confirmation && <p className="inline-success" role="status" aria-label="League submission accepted">{confirmation}</p>}
-      {refreshWarning && <p className="inline-error" role="alert">{refreshWarning}</p>}
+      {error && <LeagueNotice error label="League submission error" onDismiss={() => setError('')}>{error}</LeagueNotice>}
+      {confirmation && <LeagueNotice label="League submission accepted" onDismiss={() => setConfirmation('')}>{confirmation}</LeagueNotice>}
+      {refreshWarning && <LeagueNotice error label="League refresh warning" onDismiss={() => setRefreshWarning('')}>{refreshWarning}</LeagueNotice>}
       {missingDeck && <p className="inline-error" role="status">A mastered deck is unavailable. Re-import it in Decks or update this agent's mastered decks in Agents before joining the League.</p>}
       {capacity?.status === 'ready' && capacity.available === 0 && <p className="inline-error">All account places are in use. Bring an agent home to free a place; other computers count too.</p>}
       <div className="deploy-action"><div><strong>{!replaySettings?'Checking replay settings…':replaySettings.autoCollectLeagueReplays?'Automatic replay collection enabled':'Replay collection paused'}</strong><small>Configure collection and its disk budget in Settings.</small></div><AsyncActionButton className="launch-button" loading={busy} loadingLabel={progress || 'Joining League…'} disabled={!!leagueRunError(runSettings) || !account?.valid || !agent || !competitionId || !selectedDeckIds.length || missingDeck || (capacity?.status === 'ready' && capacity.available === 0) || (decksToPublish.length > 0 && !siteAccount?.valid)} onClick={() => void deploy()}><Icon name="trophy" />{decksToPublish.length ? 'Publish & send to League' : 'Send to League'}</AsyncActionButton></div>
     </section>
     <div className="rotation-entry-actions"><button type="button" disabled={busy || !!leagueRunError(runSettings) || !account?.valid || !agent || !competitionId || !selectedDeckIds.length || missingDeck || (decksToPublish.length>0 && !siteAccount?.valid)} onClick={()=>void deploy('queue')}>{decksToPublish.length?'Publish & add to rotation':'Add to rotation'}</button><button type="button" aria-expanded={showRotation} onClick={()=>setShowRotation(value=>!value)}>{showRotation?'Hide rotation':'Manage rotation'}</button><small>Add to your waiting bench instead of deploying immediately. A full account can still have waiting agents.</small></div>
-    <section className="feature-card active-deployments"><header className="feature-heading"><div><span className="section-kicker">Live roster</span><h2>Agents in the League</h2></div><span>{leagueJobs.length} active</span></header>{stopNotice && <p className="inline-success" role="status">{stopNotice}</p>}{stopError && <p className="inline-error" role="alert">{stopError}</p>}{leagueJobs.length ? <div>{leagueJobs.map((job) => <article key={job.id}><span className="live-dot" /><div><strong>{job.label}</strong><small>{[...job.logs].reverse().find(line=>!line.startsWith('DEEPDECK_')) ?? "Waiting for a matchup…"}</small><LeagueRunReport job={job}/></div><AsyncActionButton loading={stoppingIds.includes(job.id)} loadingLabel="Bringing home…" onClick={() => void bringHome(job)}>Bring home</AsyncActionButton></article>)}</div> : <EmptyState icon="trophy" title="Your bench is ready" copy="Deploy an agent above and choose when it should return." />}</section>
-    {!!recentLeagueRuns.length && <section className="feature-card recent-league-runs"><h2>Recent League runs</h2>{recentLeagueRuns.map(job=><article key={job.id}><strong>{job.label}</strong><small>{job.status==='failed'?'Worker ended with an error':job.status==='stopped'?'Brought home':'Worker finished'}</small><LeagueRunReport job={job}/></article>)}<p>Worker status is local. Available League places are still reported by the server.</p></section>}
+    <section className="feature-card active-deployments"><header className="feature-heading"><div><span className="section-kicker">Live roster</span><h2>Agents in the League</h2></div><span>{leagueJobs.length} active</span></header>{stopNotice && <LeagueNotice label="League worker stopped" onDismiss={() => setStopNotice('')}>{stopNotice}</LeagueNotice>}{stopError && <LeagueNotice error label="League stop error" onDismiss={() => setStopError('')}>{stopError}</LeagueNotice>}{leagueJobs.length ? <div>{leagueJobs.map((job) => <article key={job.id}><span className="live-dot" /><div><strong>{job.label}</strong><small>{[...job.logs].reverse().find(line=>!line.startsWith('DEEPDECK_')) ?? "Waiting for a matchup…"}</small><LeagueRunReport job={job}/></div><AsyncActionButton loading={stoppingIds.includes(job.id)} loadingLabel="Bringing home…" onClick={() => void bringHome(job)}>Bring home</AsyncActionButton></article>)}</div> : <EmptyState icon="trophy" title="Your bench is ready" copy="Deploy an agent above and choose when it should return." />}</section>
+    <RecentLeagueRuns jobs={jobs}/>
   </div>;
 }
 

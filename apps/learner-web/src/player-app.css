@@ -46,6 +46,14 @@
 .recent-league-runs article { padding:12px 0;border-top:1px solid var(--dd-line); }
 .recent-league-runs small { display:block;margin-top:5px; }
 .recent-league-runs p { color:var(--dd-muted);font-size:12px; }
+.recent-league-runs-heading,.recent-league-run-heading { display:flex;justify-content:space-between;align-items:flex-start;gap:12px; }
+.recent-league-runs-heading { flex-wrap:wrap; }
+.recent-league-runs-heading h2 { margin-bottom:12px; }
+.recent-league-run-heading > div,.league-notice > span { min-width:0;overflow-wrap:anywhere; }
+.league-notice { display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:12px 0; }
+.league-dismiss-button { display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;min-height:44px;padding:0;border:1px solid var(--dd-line);border-radius:6px;background:transparent;color:var(--dd-muted);font-size:24px;cursor:pointer; }
+.league-dismiss-button:hover { color:var(--dd-burgundy);background:var(--dd-paper-deep); }
+.league-dismiss-button:focus-visible { outline:3px solid var(--dd-burgundy);outline-offset:2px; }
 
 .competition-builder,.competition-history { display:grid; gap:22px; min-width:0; }
 .advanced-insights { padding:24px; min-width:0; }

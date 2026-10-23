@@ -35,11 +35,34 @@ test('streamed text is visible before completion and tools do not need a second 
   fireEvent.click(screen.getByRole('button',{name:'Send'}));
   expect(await screen.findByText('A first fragment')).toBeInTheDocument();
   expect(screen.getByRole('img',{name:'Mana cost {R}'})).toBeInTheDocument();
+  expect(document.querySelector('.assistant-rich-message.is-streaming')).toHaveAttribute('aria-busy','true');
+  expect(document.querySelector('.assistant-thinking')).toBeNull();
   expect(screen.getByRole('button',{name:'Send'})).toBeDisabled();
   finish({message:'Completed.',toolEvents:[],agents:[]});
   await screen.findByText('Completed.');
+  expect(document.querySelector('.assistant-rich-message.is-streaming')).toBeNull();
   expect(api.chatWithAgentStudio).toHaveBeenCalledOnce();
   vi.mocked(api.chatWithAgentStudio).mockReset();
+});
+
+test('an interrupted reply retains streamed text and completed actions without resubmission',async()=>{
+  vi.mocked(api.chatWithAgentStudio).mockImplementationOnce(async (_messages,_context,_deck,_agent,onEvent)=>{
+    onEvent!({type:'delta',text:'Your deck was saved. Next I would…'});
+    onEvent!({type:'tool',event:{tool:'create_deck',ok:true,result:{id:deck.id,name:deck.name}}});
+    throw new Error('The assistant connection ended early. Review completed actions.');
+  });
+  const refresh=vi.fn();
+  render(<AssistantDrawer context="deck" open onClose={vi.fn()} onChanged={refresh} onStarted={vi.fn()}/>);
+  fireEvent.change(await screen.findByPlaceholderText('Ask for cards, a deck plan, tags…'),{target:{value:'Create a deck'}});
+  fireEvent.click(screen.getByRole('button',{name:'Send'}));
+  expect(await screen.findByText('Your deck was saved. Next I would…')).toBeInTheDocument();
+  expect(await screen.findByText(/connection ended early/)).toBeVisible();
+  fireEvent.change(screen.getByPlaceholderText('Ask for cards, a deck plan, tags…'),{target:{value:'My next question'}});
+  expect(screen.getByRole('button',{name:'Send'})).not.toBeDisabled();
+  expect(document.querySelector('.assistant-rich-message.is-streaming')).toBeNull();
+  expect(screen.getByText('Local deck created')).toBeInTheDocument();
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(api.chatWithAgentStudio).toHaveBeenCalledOnce();
 });
 
 test.each(['deck', 'agent'] as const)('Enter sends the %s chat, while Shift+Enter and IME input stay multiline', async context => {

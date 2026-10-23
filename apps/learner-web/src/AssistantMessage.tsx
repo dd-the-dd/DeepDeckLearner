@@ -50,7 +50,7 @@ export function ChatMagicCard({name, card}: {name:string; card?:ResearchCard}) {
   </figure>;
 }
 
-export default function AssistantMessage({content, events=[]}: {content:string; events?:AssistantToolEvent[]}) {
+export default function AssistantMessage({content, events=[], streaming=false}: {content:string; events?:AssistantToolEvent[]; streaming?:boolean}) {
   const cards = new Map<string,ResearchCard>();
   for (const event of events) {
     const result = event.ok && event.result && typeof event.result==='object' ? event.result as {items?:ResearchCard[]} : null;
@@ -67,5 +67,5 @@ export default function AssistantMessage({content, events=[]}: {content:string; 
     start=match.index!+match[0].length;
   }
   blocks.push(<Fragment key="tail">{manaText(content.slice(start))}</Fragment>);
-  return <div className="assistant-rich-message">{blocks}</div>;
+  return <div className={`assistant-rich-message${streaming ? ' is-streaming' : ''}`} aria-busy={streaming}>{blocks}</div>;
 }

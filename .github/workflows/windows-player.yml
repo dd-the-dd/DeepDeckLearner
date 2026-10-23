@@ -6,12 +6,11 @@ on:
       source_commit:
         description: Full public Player source commit to build
         required: true
-        default: b11056ac101223d456eeb2cf6a30825097501a85
       release_tag:
         description: Existing owned release receiving the verified assets
         required: true
         type: choice
-        options: [v0.3.0]
+        options: [v0.3.1]
 
 permissions:
   contents: read
@@ -32,7 +31,7 @@ jobs:
       - name: Validate explicit release inputs
         shell: pwsh
         run: |
-          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -ne 'v0.3.0') {
+          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -ne 'v0.3.1') {
             throw 'Use an explicit public source SHA and the reviewed release tag.'
           }
       - uses: actions/checkout@v4
@@ -82,7 +81,7 @@ jobs:
           $python = "$env:RUNNER_TEMP/player-builder/Scripts/python.exe"
           & $python scripts/build_desktop.py --skip-web-build --output-root "$env:RUNNER_TEMP/player-dist" --work-root "$env:RUNNER_TEMP/player-work"
           if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed.' }
-          $archives = @(Get-ChildItem "$env:RUNNER_TEMP/player-dist" -Filter 'DeepDeck-0.3.0-windows-x64.zip' -Recurse)
+          $archives = @(Get-ChildItem "$env:RUNNER_TEMP/player-dist" -Filter 'DeepDeck-0.3.1-windows-x64.zip' -Recurse)
           if ($archives.Count -ne 1) { throw 'Expected exactly one native Player archive.' }
           & $python scripts/verify_desktop.py $archives[0].FullName --native --browser --work-dir "$env:RUNNER_TEMP/player-verification"
           if ($LASTEXITCODE -ne 0) { throw 'Extracted native Player verification failed; nothing uploaded.' }

@@ -41,7 +41,7 @@ An already-running shared Engine is never stopped by the launcher.
 
 ### From source
 
-These instructions target the **0.3.0 Player application**, with Play, Decks and
+These instructions target the **0.3.1 Player application**, with Play, Decks and
 Agents as its starting point. The earlier `v0.2.0` release opens the historical
 training interface and is not the app described here. The source check below
 stops before installation if an older revision was cloned.
@@ -324,6 +324,24 @@ can still be opened without repeating the chat request. Closing the copilot
 while it works does not unexpectedly open a game, and opening one warns before
 discarding an unsaved agent draft.
 
+Chat displays real provider text fragments as they arrive, with an in-progress
+cursor and tool results before the final reply. Mana icons and completed card
+blocks render during generation. A quiet model keeps the connection alive;
+an interrupted stream preserves received text and completed actions, never
+automatically resends the request, and is not labelled as a completed answer.
+Providers that buffer their output may still deliver larger fragments: the UI
+does not simulate token streaming. The client accepts split UTF-8 and standard
+SSE line endings and rejects malformed/oversized events without exposing their
+raw diagnostics. See the [OpenAI streaming protocol](https://developers.openai.com/api/docs/guides/streaming-responses).
+
+Verification without paid calls: `pytest tests/test_assistant_live_stream.py
+tests/test_assistant_streaming.py tests/test_chatgpt_model.py` exercises actual
+loopback HTTP, idle keepalives, disconnect cancellation and both SDK model paths
+using fixture-only provider transports. With the local app running,
+`DEEPDECK_QA_ASSISTANT_STREAM=1 python scripts/verify_player_app.py` checks the
+real browser UI on desktop/mobile with intercepted chat responses and blocks all
+real mutations. In PowerShell, set `$env:DEEPDECK_QA_ASSISTANT_STREAM='1'` first.
+
 The global copilot has the same deck tools from every tab, even when focused on
 agent strategy. `import_league_deck` downloads a published League version and
 forks an editable local copy without changing the public source. `import_decklist`
@@ -567,7 +585,7 @@ py -m venv .deepdeck/desktop-build/venv
 .deepdeck/desktop-build/venv/Scripts/python.exe -m pip install ./external/deepdeck-agent ".[desktop,desktop-build]"
 .deepdeck/desktop-build/venv/Scripts/python.exe scripts/build_desktop.py --check
 .deepdeck/desktop-build/venv/Scripts/python.exe scripts/build_desktop.py
-python scripts/verify_desktop.py "dist/desktop/<timestamp>/DeepDeck-0.3.0-windows-x64.zip" --native --browser --work-dir .deepdeck/desktop-build/qa
+python scripts/verify_desktop.py "dist/desktop/<timestamp>/DeepDeck-0.3.1-windows-x64.zip" --native --browser --work-dir .deepdeck/desktop-build/qa
 ```
 
 The build script imports its freshness checks from this checkout's `src/`, not

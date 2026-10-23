@@ -24,6 +24,7 @@ const production: LeagueConnection = { environment: 'production', reachable: tru
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   vi.mocked(api.startJob).mockResolvedValue({ id: 'deployment-1' } as Job);
   vi.mocked(api.prepareLeagueDecks).mockResolvedValue({ deckVersionIds: ['published-v1'] });
   vi.mocked(api.loadLeagueQueue).mockResolvedValue({id:'queue',revision:0,status:'paused',strategy:'round_robin',entries:[],history:[],capacity:null,message:null});
@@ -104,6 +105,21 @@ test('a failed continuous run remains visible with its server reason and connect
     expect(connect).toHaveBeenCalledOnce();
     expect(api.startJob).not.toHaveBeenCalled();
   } finally {window.removeEventListener('deepdeck:open-league-settings',connect);}
+});
+
+test('dismissing a recent run never stops an active agent or mutates the League', () => {
+  const failed = { id:'dismissed-run',kind:'matchmaking.agent',status:'failed',label:'Old failure',logs:[],created_at:'2026-10-23T00:00:00Z' } as unknown as Job;
+  const active: Job = { ...failed, id:'active-run',status:'running',label:'Active pilot' };
+  const refresh = vi.fn();
+  render(<LeagueHub account={account} siteAccount={null} agents={[agent]} competitions={[competition]} jobs={[failed,active]} refresh={refresh} openSettings={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button', { name:'Dismiss League run for Old failure' }));
+  expect(screen.queryByText('Old failure')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name:'Bring home' }).closest('article')).toHaveTextContent('Active pilot');
+  expect(screen.getByRole('button', { name:'Bring home' })).toBeVisible();
+  expect(api.stopJob).not.toHaveBeenCalled();
+  expect(api.startJob).not.toHaveBeenCalled();
+  expect(api.appendLeagueQueueEntry).not.toHaveBeenCalled();
+  expect(refresh).not.toHaveBeenCalled();
 });
 
 describe('No-code League deployment', () => {
