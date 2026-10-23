@@ -23,11 +23,13 @@ outside matches; normal play does not need PyTorch, CUDA or model weights.
 
 ### Windows portable preview
 
-When a built Windows ZIP is provided, extract the **entire** archive and open
+Use the Windows ZIP attached to the selected [Player release](https://github.com/dd-the-dd/DeepDeckLearner/releases).
+When provided, extract the **entire** archive and open
 `DeepDeck.exe`. It includes the Python runtime, frontend, Agent SDK worker and
 compiled Engine; players do not need Git, Node.js, Rust or Python. The native
 window requires Microsoft Edge WebView2 Runtime. This preview is unsigned;
-there is no signed installer, automatic updater, or hosted download release yet.
+there is no signed installer or automatic updater. GitHub's generated source
+ZIP is not the portable player application.
 
 Private decks, agents, replay storage and settings live separately under
 `%LOCALAPPDATA%/DeepDeck/PlayerLab/.deepdeck/`, not beside the executables.

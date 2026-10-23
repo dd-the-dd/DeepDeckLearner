@@ -1,0 +1,98 @@
+name: Build verified Windows Player
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Full public Player source commit to build
+        required: true
+        default: b11056ac101223d456eeb2cf6a30825097501a85
+      release_tag:
+        description: Existing owned release receiving the verified assets
+        required: true
+        type: choice
+        options: [v0.3.0]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-player:
+    if: github.repository == 'dd-the-dd/DeepDeckLearner'
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - name: Validate explicit release inputs
+        shell: pwsh
+        run: |
+          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -ne 'v0.3.0') {
+            throw 'Use an explicit public source SHA and the reviewed release tag.'
+          }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13'
+      - name: Verify public component main references
+        shell: pwsh
+        run: |
+          foreach ($name in @('engine','pixi','agent')) {
+            git -C "external/deepdeck-$name" fetch origin main --depth=1 --no-tags
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot verify public component references.' }
+          }
+      - name: Build the pinned Engine in release mode
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed.' }
+          cargo +1.97.1 build --release --locked --manifest-path external/deepdeck-engine/Cargo.toml --bin mtg-engine-server --jobs 2
+          if ($LASTEXITCODE -ne 0) { throw 'Engine release build failed.' }
+      - name: Build the Player frontend
+        shell: pwsh
+        run: |
+          npm ci --prefix apps/learner-web
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
+          npm run build --prefix apps/learner-web
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
+      - name: Install an isolated no-Torch desktop builder
+        shell: pwsh
+        run: |
+          python -m venv "$env:RUNNER_TEMP/player-builder"
+          $python = "$env:RUNNER_TEMP/player-builder/Scripts/python.exe"
+          & $python -m pip install ./external/deepdeck-agent '.[desktop,desktop-build]'
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop builder installation failed.' }
+          & $python -c "import importlib.util; assert importlib.util.find_spec('torch') is None; assert importlib.util.find_spec('numpy') is None"
+          if ($LASTEXITCODE -ne 0) { throw 'Training dependencies appeared in the Player builder.' }
+      - name: Build and exercise the extracted Windows app
+        shell: pwsh
+        run: |
+          $python = "$env:RUNNER_TEMP/player-builder/Scripts/python.exe"
+          & $python scripts/build_desktop.py --skip-web-build --output-root "$env:RUNNER_TEMP/player-dist" --work-root "$env:RUNNER_TEMP/player-work"
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed.' }
+          $archives = @(Get-ChildItem "$env:RUNNER_TEMP/player-dist" -Filter 'DeepDeck-0.3.0-windows-x64.zip' -Recurse)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one native Player archive.' }
+          & $python scripts/verify_desktop.py $archives[0].FullName --native --browser --work-dir "$env:RUNNER_TEMP/player-verification"
+          if ($LASTEXITCODE -ne 0) { throw 'Extracted native Player verification failed; nothing uploaded.' }
+          "PLAYER_ARCHIVE=$($archives[0].FullName)" >> $env:GITHUB_ENV
+      - name: Attach only successfully verified native assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release upload $env:RELEASE_TAG $env:PLAYER_ARCHIVE ($env:PLAYER_ARCHIVE + '.sha256') --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Native asset upload failed.' }
+          # Publication is a separate reviewed operation. Never promote a draft
+          # before its complete release inventory has been checked.
