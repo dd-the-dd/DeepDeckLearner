@@ -101,5 +101,7 @@ strict = true
 packages = ["deepdeck_examples", "deepdeck_learner"]
 
 [[tool.mypy.overrides]]
-module = ["torch", "torch.*"]
+# Optional training libraries ship version-specific stubs. Keep their internals
+# outside this Python 3.10 application check (NumPy now uses Python 3.12 syntax).
+module = ["torch", "torch.*", "numpy", "numpy.*"]
 follow_imports = "skip"
