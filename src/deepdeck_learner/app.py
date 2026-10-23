@@ -126,7 +126,6 @@ from .training_platform import (
     training_evidence,
 )
 
-
 _ASSISTANT_STREAM_KEEPALIVE_SECONDS = 15.0
 
 
