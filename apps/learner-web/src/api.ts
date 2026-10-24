@@ -87,7 +87,10 @@ export type Job = {
     completed?: number;
     total?: number;
     replaySync?: { enabled: boolean; collected: number; pending: number; lastError: string | null; checkedAtUnixMs: number };
-    leagueRun?: {completedEntries:number;activeEntries:number;maxMatches:number|null;durationSeconds:number|null;serverRegistered?:boolean;registrationGeneration?:number;lastError?:string|null};
+    leagueRun?: {completedEntries:number;activeEntries:number;maxMatches:number|null;durationSeconds:number|null;serverRegistered?:boolean;registrationGeneration?:number;lastError?:string|null;
+      eventRegistered?:boolean;eventId?:string|null;phase?:'registration'|'season'|'playoffs'|'complete'|'cancelled'|null;
+      waitingForRegistration?:boolean;registrationClosesAt?:string|null;serverNow?:string|null;statusReason?:string|null;
+      matchStatus?:'scheduled'|'running'|null;matchId?:string|null;interventionRequired?:boolean};
   } | null;
 };
 

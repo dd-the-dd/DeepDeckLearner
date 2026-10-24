@@ -12,18 +12,47 @@ import './league-agent-grid.css';
 export type AgentLeaguePoolProps={account:AccountStatus|null;siteAccount:LeagueAccount|null;connection?:LeagueConnection|null;agents:ProgrammaticAgent[];competitions:CompetitionSummary[];jobs:Job[];refresh:()=>void|Promise<void>;openSettings:()=>void;preferredAgentId?:string;capacity?:LeagueCapacity|null};
 const activeJob=(job:Job)=>job.kind==='matchmaking.agent'&&['queued','running'].includes(job.status);
 const sameFormat=(a:string,b:string)=>a.trim().toLowerCase()===b.trim().toLowerCase();
-export function poolAgentStatus(entry:LeagueQueueEntry,jobs:Job[]):string {
+export function poolAgentStatus(entry:LeagueQueueEntry,jobs:Job[],queue?:LeagueQueue|null):string {
   if(entry.state==='blocked'||entry.error)return 'Needs attention';
   if(entry.state==='done')return 'Finished';
-  if(!entry.turn)return 'Waiting for a place';
+  if(!entry.turn){
+    if(queue?.status==='paused')return 'Paused';
+    if(queue?.capacity?.status==='ready'&&queue.capacity.available===0)return 'Waiting for an account place';
+    return 'Waiting for a local worker';
+  }
   const job=jobs.find(job=>job.id===entry.turn?.jobId);
-  if(!job)return 'Checking connection';
+  if(!job)return 'Checking local worker';
+  if(job.status==='queued')return 'Waiting for a local worker';
   if(!activeJob(job))return 'Checking result';
   const run=job.details?.leagueRun;
   if(run?.lastError)return 'Needs attention';
-  if(run&&run.activeEntries>0)return 'In competition';
-  if(run?.serverRegistered===true)return 'Connected to server';
-  return 'Connecting';
+  if(run?.serverRegistered===false)return run.eventRegistered?'Reconnecting to League':'Connecting to League';
+  if(run?.interventionRequired)return 'Tournament needs intervention';
+  if(run?.eventRegistered&&run.phase==='registration')return 'Queued for tournament';
+  if(run?.eventRegistered&&(run.phase==='season'||run.phase==='playoffs')){
+    if(run.matchStatus==='running')return run.phase==='season'?'Playing — season':'Playing — playoffs';
+    if(run.matchStatus==='scheduled')return 'Waiting for a match worker';
+    if(run.matchStatus===undefined)return 'Checking match status';
+    return 'Waiting for the next match';
+  }
+  if(run?.phase==='complete'||run?.phase==='cancelled')return 'Tournament finished';
+  if(run?.serverRegistered&&run.waitingForRegistration)return `Waiting for the next ${entry.format} tournament`;
+  if(run?.serverRegistered)return 'Connected — checking tournament';
+  if(run&&run.activeEntries>0)return 'Competition status unavailable';
+  return 'Connecting to League';
+}
+
+function AgentStatus({entry,jobs,queue}:{entry:LeagueQueueEntry;jobs:Job[];queue:LeagueQueue|null}){
+  const run=jobs.find(job=>job.id===entry.turn?.jobId)?.details?.leagueRun;
+  const [clock,setClock]=useState<{remaining:number;observed:number}|null>(null);
+  const [now,setNow]=useState(()=>Date.now());
+  useEffect(()=>{
+    const remaining=Date.parse(run?.registrationClosesAt??'')-Date.parse(run?.serverNow??'');
+    setClock(Number.isFinite(remaining)?{remaining,observed:Date.now()}:null);
+  },[run?.registrationClosesAt,run?.serverNow]);
+  useEffect(()=>{if(run?.phase!=='registration'||!clock)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[run?.phase,clock]);
+  const seconds=clock?Math.max(0,Math.ceil((clock.remaining-Math.max(0,now-clock.observed))/1000)):null;
+  return <><span className={`agent-pool-status ${entry.state}`} role="status">{poolAgentStatus(entry,jobs,queue)}</span>{run?.eventRegistered&&run.phase==='registration'&&seconds!==null&&<small role="timer" aria-label={`Tournament registration closes in ${Math.floor(seconds/60)} minutes ${seconds%60} seconds`}>{seconds>0?`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')} until registration closes`:'Registration closed — checking tournament start'}</small>}{entry.error&&<small className="inline-error">{entry.error}</small>}{run?.lastError&&<small className="inline-error">{run.lastError}</small>}{run?.statusReason&&run.interventionRequired&&<small>{run.statusReason}</small>}</>;
 }
 
 export default function AgentLeaguePool({account,siteAccount,connection,agents,competitions,jobs,refresh,openSettings,preferredAgentId='',capacity=null}:AgentLeaguePoolProps){
@@ -128,7 +157,7 @@ export default function AgentLeaguePool({account,siteAccount,connection,agents,c
         <label role="cell"><span className="sr-only">League</span><select aria-label="League" disabled={locked||!account?.valid||!agent} value={leagueId} onChange={event=>chooseLeague(event.target.value)}><option value="">Choose a League</option>{eligible.map(item=><option key={item.versionId} value={item.versionId}>{item.name} · {item.timeControl}</option>)}</select></label>
         <span role="cell" className="agent-pool-add-status">{busy?progress||'Saving…':reconcile?'Refresh to reconcile':agent&&leagueId&&localDrafts.length?'Deck publication needed':'Adds automatically'}</span><span role="cell"/>
       </div>
-      {queue?.entries.map(entry=><div className="agent-pool-row" role="row" key={entry.id}><span role="cell"><strong>{entry.name}</strong><small>{entry.format}</small></span><span role="cell">{competitions.find(item=>item.versionId===entry.competitionVersionId)?.name??'Saved League'}</span><span role="cell"><span className={`agent-pool-status ${entry.state}`} role="status">{poolAgentStatus(entry,jobs)}</span>{entry.error&&<small className="inline-error">{entry.error}</small>}{jobs.find(job=>job.id===entry.turn?.jobId)?.details?.leagueRun?.lastError&&<small className="inline-error">{jobs.find(job=>job.id===entry.turn?.jobId)?.details?.leagueRun?.lastError}</small>}</span><span role="cell" className="agent-pool-row-actions">{entry.state==='blocked'&&editable&&<button type="button" disabled={locked} onClick={()=>void act(async()=>{setQueue(await controlLeagueQueue('retry',queue!.revision,entry.id));})}>Review & retry</button>}<button type="button" aria-label={`Remove ${entry.name}`} title={entry.turn?'Pause and let this competition finish before removal.':'Remove from the pool'} disabled={locked||!!entry.turn} onClick={()=>void act(async()=>{setQueue(await removeLeagueQueueEntry(entry.id,queue!.revision));})}>×</button></span></div>)}
+      {queue?.entries.map(entry=><div className="agent-pool-row" role="row" key={entry.id}><span role="cell"><strong>{entry.name}</strong><small>{entry.format}</small></span><span role="cell">{competitions.find(item=>item.versionId===entry.competitionVersionId)?.name??'Saved League'}</span><span role="cell"><AgentStatus entry={entry} jobs={jobs} queue={queue}/></span><span role="cell" className="agent-pool-row-actions">{entry.state==='blocked'&&editable&&<button type="button" disabled={locked} onClick={()=>void act(async()=>{setQueue(await controlLeagueQueue('retry',queue!.revision,entry.id));})}>Review & retry</button>}<button type="button" aria-label={`Remove ${entry.name}`} title={entry.turn?'Pause and let this competition finish before removal.':'Remove from the pool'} disabled={locked||!!entry.turn} onClick={()=>void act(async()=>{setQueue(await removeLeagueQueueEntry(entry.id,queue!.revision));})}>Remove</button></span></div>)}
       {independent.map(job=><div className="agent-pool-row" role="row" key={job.id}><span role="cell"><strong>{agents.find(agent=>agent.id===job.model_id)?.name??job.label}</strong></span><span role="cell">Independent League connection</span><span role="cell"><span className="agent-pool-status">{job.details?.leagueRun?.activeEntries?'In competition':job.details?.leagueRun?.serverRegistered?'Connected to server':'Connecting'}</span></span><span role="cell"/></div>)}
     </div>
     {!queue&&!readError&&<p role="status">Loading your agents…</p>}

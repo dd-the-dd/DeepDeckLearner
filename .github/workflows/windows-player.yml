@@ -10,7 +10,7 @@ on:
         description: Existing owned release receiving the verified assets
         required: true
         type: choice
-        options: [v0.3.1]
+        options: [v0.3.2]
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
       - name: Validate explicit release inputs
         shell: pwsh
         run: |
-          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -ne 'v0.3.1') {
+          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -ne 'v0.3.2') {
             throw 'Use an explicit public source SHA and the reviewed release tag.'
           }
       - uses: actions/checkout@v4
@@ -39,6 +39,19 @@ jobs:
           ref: ${{ inputs.source_commit }}
           submodules: recursive
           persist-credentials: false
+      - name: Verify immutable release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          git fetch origin "refs/tags/${env:RELEASE_TAG}:refs/tags/${env:RELEASE_TAG}" --no-tags
+          if ($LASTEXITCODE -ne 0) { throw 'The exact release tag must already exist.' }
+          $tagCommit = git rev-parse "${env:RELEASE_TAG}^{commit}"
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -ne $env:SOURCE_COMMIT) { throw 'Release tag and source SHA differ.' }
+          $version = (Select-String -Path pyproject.toml -Pattern '^version = "([^"]+)"$').Matches.Groups[1].Value
+          if ("v$version" -ne $env:RELEASE_TAG) { throw 'Package version differs from the release tag.' }
+          $release = gh release view $env:RELEASE_TAG --json isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $release.isDraft) { throw 'Only an existing draft can receive newly verified assets.' }
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -81,7 +94,7 @@ jobs:
           $python = "$env:RUNNER_TEMP/player-builder/Scripts/python.exe"
           & $python scripts/build_desktop.py --skip-web-build --output-root "$env:RUNNER_TEMP/player-dist" --work-root "$env:RUNNER_TEMP/player-work"
           if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed.' }
-          $archives = @(Get-ChildItem "$env:RUNNER_TEMP/player-dist" -Filter 'DeepDeck-0.3.1-windows-x64.zip' -Recurse)
+          $archives = @(Get-ChildItem "$env:RUNNER_TEMP/player-dist" -Filter 'DeepDeck-0.3.2-windows-x64.zip' -Recurse)
           if ($archives.Count -ne 1) { throw 'Expected exactly one native Player archive.' }
           & $python scripts/verify_desktop.py $archives[0].FullName --native --browser --work-dir "$env:RUNNER_TEMP/player-verification"
           if ($LASTEXITCODE -ne 0) { throw 'Extracted native Player verification failed; nothing uploaded.' }
@@ -91,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release upload $env:RELEASE_TAG $env:PLAYER_ARCHIVE ($env:PLAYER_ARCHIVE + '.sha256') --clobber
+          gh release upload $env:RELEASE_TAG $env:PLAYER_ARCHIVE ($env:PLAYER_ARCHIVE + '.sha256')
           if ($LASTEXITCODE -ne 0) { throw 'Native asset upload failed.' }
           # Publication is a separate reviewed operation. Never promote a draft
           # before its complete release inventory has been checked.
