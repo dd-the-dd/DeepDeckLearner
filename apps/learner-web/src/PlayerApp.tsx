@@ -10,17 +10,10 @@ import {
 } from "react";
 
 import AgentStudio, {type AgentCreationDeck} from "./AgentWorkspace";
-import LeagueRunSettings, {DEFAULT_LEAGUE_RUN,leagueRunError,leagueRunPayload,leagueRunSummary} from './LeagueRunSettings';
-import LeagueRunReport from './LeagueRunReport';
-import RecentLeagueRuns from './RecentLeagueRuns';
-import LeagueNotice from './LeagueNotice';
-import LeagueRotation from './LeagueRotation';
-import LeagueCapacityHelp from './LeagueCapacityHelp';
-import {loadLeagueQueue,appendLeagueQueueEntry} from './api';
+import AgentLeaguePool, {type AgentLeaguePoolProps} from './AgentLeaguePool';
 import PlaySettings, { DEFAULT_PLAY_SETTINGS, playSettingsPayload, type PlaySettingsDraft } from './PlaySettings';
 import ReplayHub from './ReplayLibrary';
 import AccountConnection from "./AccountConnection";
-import { DeckArtwork, ManaColors } from "./DeckVisuals";
 import AsyncActionButton from "./AsyncActionButton";
 import DeckWorkshop from "./DeckWorkshop";
 import DeckPicker from "./DeckPicker";
@@ -47,8 +40,6 @@ import TableLaunch, { mergeObservedJob } from './TableLaunch';
 import { agentPlayDraft, initialPreparations, type PlaySeat as Seat, type PlayPreparation, type PlayPreparations, type PlayHubDraft } from './play-preparation';
 import {playPool} from './play-pool';
 import PlayPoolPreview from './PlayPoolPreview';
-import ReplayStorageSettings from './ReplayStorageSettings';
-import ReplayCollectionStatus from './ReplayCollectionStatus';
 import {
   ApiError,
   chatWithAgentStudio,
@@ -69,8 +60,6 @@ import {
   saveDeckWorkspace,
   testLeagueMcp,
   startJob,
-  syncDeckWorkspace,
-  prepareLeagueDecks,
   stopJob,
   type AccountStatus,
   type AssistantToolEvent,
@@ -124,7 +113,7 @@ const TITLES: Record<Page, { eyebrow: string; title: string; copy: string }> = {
   league: {
     eyebrow: "Deep Deck League",
     title: "Send your agent into competition.",
-    copy: "Choose your agent, its decks and when it should return. Follow its League run from this computer.",
+    copy: "Choose an agent and a League. Your pool connects agents as account places become available.",
   },
   replays: {
     eyebrow: "Game library",
@@ -158,18 +147,6 @@ function Icon({ name }: { name: string }) {
 
 function Pill({ state, children }: { state?: "ready" | "busy" | "quiet" | "warn"; children: ReactNode }) {
   return <span className={`dd-pill ${state ?? "quiet"}`}><i />{children}</span>;
-}
-
-function EmptyState({ icon, title, copy, action }: { icon: string; title: string; copy: string; action?: ReactNode }) {
-  return <div className="dd-empty"><span><Icon name={icon} /></span><h3>{title}</h3><p>{copy}</p>{action}</div>;
-}
-
-function DeckBadge({ deck, compact = false }: { deck: DeckSummary; compact?: boolean }) {
-  return <div className={`deck-badge${compact ? " compact" : ""}`}>
-    <DeckArtwork deck={deck} />
-    <span><strong>{deck.name}</strong><small>{deck.format ?? "Magic"} · v{deck.version} · {deck.playableCardCount} cards</small></span>
-    <ManaColors colors={deck.colors} />
-  </div>;
 }
 
 
@@ -611,160 +588,8 @@ export function AssistantSetup({ initial, onSaved, onCancel, onConnectLeague }: 
   </form>;
 }
 
-export function LeagueHub({
-  account,
-  siteAccount,
-  connection,
-  agents,
-  competitions,
-  jobs,
-  refresh,
-  openSettings,
-  preferredAgentId = "",
-  capacity = null,
-  replaySettings = null,
-  onReplays,
-}: {
-  account: AccountStatus | null;
-  siteAccount: LeagueAccount | null;
-  connection?: LeagueConnection | null;
-  agents: ProgrammaticAgent[];
-  competitions: CompetitionSummary[];
-  jobs: Job[];
-  refresh: () => void | Promise<void>;
-  openSettings: () => void;
-  preferredAgentId?: string;
-  capacity?: LeagueCapacity | null;
-  replaySettings?: ExperienceSettings | null;
-  onReplays?:()=>void;
-}) {
-  const [agentId, setAgentId] = useState(preferredAgentId || agents[0]?.id || "");
-  const agent = agents.find((item) => item.id === agentId) ?? agents[0];
-  // The public catalog uses display labels ("Legacy", "Commander"), while
-  // local agents use canonical lowercase formats. Never compare their casing.
-  const activeCompetitions = competitions.filter((item) => item.status.trim().toLowerCase() === "active" && (!agent || item.format.trim().toLowerCase() === agent.format.trim().toLowerCase()));
-  const [competitionId, setCompetitionId] = useState("");
-  const [selectedDeckIds, setSelectedDeckIds] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [progress, setProgress] = useState("");
-  const [confirmation, setConfirmation] = useState('');
-  const [runSettings,setRunSettings] = useState({...DEFAULT_LEAGUE_RUN});
-  const [showRotation,setShowRotation] = useState(false);
-  const [rotationRefresh,setRotationRefresh] = useState(0);
-  const [refreshWarning, setRefreshWarning] = useState('');
-  const [stoppingIds, setStoppingIds] = useState<string[]>([]);
-  const [stoppedIds, setStoppedIds] = useState<string[]>([]);
-  const [stopNotice, setStopNotice] = useState('');
-  const [stopError, setStopError] = useState('');
-  const deploymentPending = useRef(false);
-  const stopsPending = useRef(new Set<string>());
-  const decksToPublish = agent?.decks.filter((deck) => deck.id.startsWith('localdeck-') && deck.syncStatus?.needsPublishing !== false) ?? [];
-  const missingDeck = agent?.decks.some(deck => deck.unavailable) ?? false;
-  const leagueJobs = jobs.filter((job) => job.kind === "matchmaking.agent" && ["queued", "running"].includes(job.status) && !stoppedIds.includes(job.id));
-
-  useEffect(() => { if (!agentId && agents[0]) setAgentId(agents[0].id); }, [agentId, agents]);
-  const agentDeckKey = JSON.stringify(agent?.deckVersionIds ?? []);
-  useEffect(() => { setSelectedDeckIds(JSON.parse(agentDeckKey) as string[]); setCompetitionId(""); }, [agent?.id, agentDeckKey]);
-
-  async function deploy(destination:'now'|'queue'='now') {
-    if (deploymentPending.current || leagueRunError(runSettings) || !agent || !competitionId || !selectedDeckIds.length || missingDeck || (destination==='now' && capacity?.status === 'ready' && capacity.available === 0)) return;
-    deploymentPending.current = true;
-    setBusy(true); setError(""); setConfirmation(''); setRefreshWarning('');
-    let published = 0;
-    let submitting = false;
-    let accepted = false;
-    let queuedStatus = 'paused';
-    try {
-      const queue=destination==='queue'?await loadLeagueQueue():null;
-      if(queue?.entries.some(e=>e.agentId===agent.id))throw new Error('This agent is already on your rotation bench. Remove its waiting entry to choose a new setup; an active turn must finish before removal.');
-      for (const deck of decksToPublish) {
-        setProgress(`Publishing ${deck.name}…`);
-        await syncDeckWorkspace(deck.id, 'publish', false, deck.version);
-        published += 1;
-      }
-      if (siteAccount?.valid) {
-        setProgress('Preparing your League deck slots…');
-        await prepareLeagueDecks(selectedDeckIds);
-      }
-      setProgress(destination==='queue'?'Saving your rotation…':'Joining League…');
-      submitting = true;
-      if(queue){
-        const updated=await appendLeagueQueueEntry(queue.revision,{agentId:agent.id,competitionVersionId:competitionId,deckVersionIds:[...selectedDeckIds],lease:leagueRunPayload(runSettings) as import('./api').LeagueLease});
-        queuedStatus=updated.status;
-        setShowRotation(true);setRotationRefresh(value=>value+1);
-      } else await startJob({ kind: "matchmaking.agent", model_id: agent.id, agent: "programmatic", format: agent.format, competition_version_id: competitionId, deck_version_ids: selectedDeckIds, connections: 1, speed: "1s", continuous: true, league_run:leagueRunPayload(runSettings) });
-      accepted = true;
-      setConfirmation(destination==='queue'?`${agent.name} added to your rotation bench. ${queuedStatus==='running'?'Your rotation is running; this agent can take its next available turn. Existing matches keep playing.':queuedStatus==='pausing'?'Your rotation is pausing; this agent will wait until you resume it.':'The rotation remains paused. No worker was started. Start it below when ready.'}`:`${agent.name}: launch request accepted on this computer. ${leagueRunSummary(runSettings)} Follow its League connection in the roster below; do not send it again just to refresh.`);
-    } catch (reason) {
-      const uncertain = submitting && (!(reason instanceof ApiError) || reason.status >= 500);
-      const message = uncertain ? destination==='queue'?'Could not confirm the bench update. Reload the rotation before adding this agent again.':"Could not confirm your agent's League launch. Refresh the live roster before sending again."
-        : reason instanceof Error ? reason.message : 'The agent could not join the League.';
-      setError(message + (published ? ` ${published} ${published === 1 ? 'deck was already published and remains' : 'decks were already published and remain'} on the site.` : ''));
-    } finally {
-      setProgress('Refreshing roster…');
-      try {await refresh();}
-      catch {setRefreshWarning(accepted ? destination==='queue'?'The bench update was accepted, but the library could not refresh. Do not add it again; reload the rotation.':'Your agent launch was accepted, but the roster could not refresh. Do not resend it; reopen League to check its status.' : 'The roster could not refresh. Reopen League to check the latest decks and agents before trying again.');}
-      deploymentPending.current = false;
-      setProgress('');
-      setBusy(false);
-    }
-  }
-
-  async function bringHome(job: Job) {
-    if (stopsPending.current.has(job.id)) return;
-    stopsPending.current.add(job.id);
-    setStoppingIds(current => [...current, job.id]); setStopError(''); setStopNotice('');
-    try {
-      const stopped = await stopJob(job.id);
-      if (!['stopped','completed','failed'].includes(stopped.status)) throw new Error('The controller has not confirmed that the worker stopped.');
-      setStoppedIds(current => [...current, job.id]);
-      setStopNotice(`${job.label} stopped locally. Available League places are still read from the server, not freed by this screen.`);
-      try {await refresh();}
-      catch {setStopError('The worker stopped, but the roster could not refresh. Do not stop it again; reopen League to refresh the view.');}
-    } catch (reason) {
-      setStopError(`Could not confirm that ${job.label} stopped. Refresh the roster before retrying. ${reason instanceof Error ? reason.message : ''}`);
-    } finally {stopsPending.current.delete(job.id); setStoppingIds(current => current.filter(id => id !== job.id));}
-  }
-
-  return <div className="league-hub">
-    <ReplayCollectionStatus settings={replaySettings} jobs={jobs} onSettings={openSettings}/>
-    <LeagueRotation refreshKey={rotationRefresh} expanded={showRotation} onExpandedChange={setShowRotation} onReplays={onReplays} siteUrl={connection?.siteUrl}/>
-    {!account?.valid && <section className="connection-banner"><div className="league-crest"><Icon name="trophy" /></div><div><span className="section-kicker">{connection?.environment === 'production' ? 'Production League' : 'Connection needed'}</span><h2>Connect your League account once.</h2><p>{account?.configured ? account.reason : 'Sign in to create an agent key for this server. Keys from another environment cannot be reused.'}</p></div><button className="primary-action" type="button" onClick={openSettings}>Connect League</button></section>}
-    <section className="feature-card deploy-card">
-      <header className="feature-heading"><div><span className="section-kicker">Matchmaking deployment</span><h2>Choose your competitor</h2><p>Choose an agent, a League and the decks you want it to play.</p></div><Pill state={account?.valid ? "ready" : "warn"}>{account?.valid ? "League connected" : connection?.reachable ? account?.configured && account.valid === false ? "Agent key rejected" : "League sign-in needed" : connection ? "Server unavailable" : "Checking League…"}</Pill></header>
-      <div className="deploy-grid">
-        <label>Agent<select disabled={busy} value={agent?.id ?? ""} onChange={(event) => setAgentId(event.target.value)}><option value="">Choose an agent</option>{agents.map((item) => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select></label>
-        <label>League<select disabled={busy} value={competitionId} onChange={(event) => setCompetitionId(event.target.value)}><option value="">Choose an active League</option>{activeCompetitions.map((item) => <option key={item.versionId} value={item.versionId}>{item.name} · {item.timeControl}</option>)}</select></label>
-        <div className="league-capacity" role="status" aria-label="League places" title={capacity?.reason ?? 'Capacity is read from your League server, never from a local membership setting.'}>
-          <span>League places</span>
-          <strong>{capacity?.status === 'ready' ? `${capacity.used} / ${capacity.limit} used` : 'Not reported yet'}</strong>
-          <small>{capacity?.status === 'ready' ? `${capacity.available} available across your account. This agent uses one place.` : capacity?.reason ?? 'Account capacity comes from the server. Each agent requests one place.'}</small>
-          {capacity?.status === 'ready' && <LeagueCapacityHelp siteUrl={connection?.siteUrl}/>}
-        </div>
-      </div>
-      <LeagueRunSettings value={runSettings} onChange={setRunSettings} disabled={busy}/>
-      {agent && <div className="league-deck-pool" role="group" aria-labelledby="league-decks-heading" aria-describedby="league-decks-help">
-        <header><div><h3 id="league-decks-heading">Decks for League matches</h3><p id="league-decks-help">Your agent will use only the decks checked below. These are the decks it already knows.</p></div><strong>{selectedDeckIds.length} / {agent.decks.length} selected</strong></header>
-        {agent.decks.map((deck) => <label key={deck.id} className={selectedDeckIds.includes(deck.id) ? 'league-deck-choice selected' : 'league-deck-choice'}>
-          <DeckBadge deck={deck} />
-          <span className="league-deck-selection">{selectedDeckIds.includes(deck.id) ? 'Selected' : 'Not used'}</span>
-          <input type="checkbox" disabled={busy || Boolean(deck.unavailable)} aria-label={`Allow ${deck.name} in League matches`} checked={selectedDeckIds.includes(deck.id)} onChange={() => setSelectedDeckIds((current) => current.includes(deck.id) ? current.filter((id) => id !== deck.id) : [...current, deck.id])} />
-        </label>)}
-        <p className="league-deck-help" role="status">{!agent.decks.length ? 'No decks linked yet. Add the decks this agent knows in Agents before sending it to the League.' : !selectedDeckIds.length ? 'Select at least one deck before sending your agent.' : selectedDeckIds.length === 1 ? 'Your agent will play this deck for this League run.' : `Your agent may play any of these ${selectedDeckIds.length} decks for this League run.`}</p>
-      </div>}
-      {decksToPublish.length > 0 && <div className="league-publish-notice"><strong>{decksToPublish.length} local deck{decksToPublish.length > 1 ? 's' : ''} will be published</strong><p>All decks attached to this agent need a published site version. {connection?.reachable && !connection.capabilities.includes('ai-decks') ? 'This server validates eligible decks through its competition pool.' : 'Selected decks use your account’s AI slots; no existing deck is removed automatically.'}</p>{!siteAccount?.valid && <button className="secondary-action" type="button" onClick={openSettings}>Sign in to publish decks</button>}</div>}
-      {error && <LeagueNotice error label="League submission error" onDismiss={() => setError('')}>{error}</LeagueNotice>}
-      {confirmation && <LeagueNotice label="League submission accepted" onDismiss={() => setConfirmation('')}>{confirmation}</LeagueNotice>}
-      {refreshWarning && <LeagueNotice error label="League refresh warning" onDismiss={() => setRefreshWarning('')}>{refreshWarning}</LeagueNotice>}
-      {missingDeck && <p className="inline-error" role="status">A mastered deck is unavailable. Re-import it in Decks or update this agent's mastered decks in Agents before joining the League.</p>}
-      {capacity?.status === 'ready' && capacity.available === 0 && <p className="inline-error">All account places are in use. Bring an agent home to free a place; other computers count too.</p>}
-      <div className="deploy-action"><div><strong>{!replaySettings?'Checking replay settings…':replaySettings.autoCollectLeagueReplays?'Automatic replay collection enabled':'Replay collection paused'}</strong><small>Configure collection and its disk budget in Settings.</small></div><AsyncActionButton className="launch-button" loading={busy} loadingLabel={progress || 'Joining League…'} disabled={!!leagueRunError(runSettings) || !account?.valid || !agent || !competitionId || !selectedDeckIds.length || missingDeck || (capacity?.status === 'ready' && capacity.available === 0) || (decksToPublish.length > 0 && !siteAccount?.valid)} onClick={() => void deploy()}><Icon name="trophy" />{decksToPublish.length ? 'Publish & send to League' : 'Send to League'}</AsyncActionButton></div>
-    </section>
-    <div className="rotation-entry-actions"><button type="button" disabled={busy || !!leagueRunError(runSettings) || !account?.valid || !agent || !competitionId || !selectedDeckIds.length || missingDeck || (decksToPublish.length>0 && !siteAccount?.valid)} onClick={()=>void deploy('queue')}>{decksToPublish.length?'Publish & add to rotation':'Add to rotation'}</button><button type="button" aria-expanded={showRotation} onClick={()=>setShowRotation(value=>!value)}>{showRotation?'Hide rotation':'Manage rotation'}</button><small>Add to your waiting bench instead of deploying immediately. A full account can still have waiting agents.</small></div>
-    <section className="feature-card active-deployments"><header className="feature-heading"><div><span className="section-kicker">Live roster</span><h2>Agents in the League</h2></div><span>{leagueJobs.length} active</span></header>{stopNotice && <LeagueNotice label="League worker stopped" onDismiss={() => setStopNotice('')}>{stopNotice}</LeagueNotice>}{stopError && <LeagueNotice error label="League stop error" onDismiss={() => setStopError('')}>{stopError}</LeagueNotice>}{leagueJobs.length ? <div>{leagueJobs.map((job) => <article key={job.id}><span className="live-dot" /><div><strong>{job.label}</strong><small>{[...job.logs].reverse().find(line=>!line.startsWith('DEEPDECK_')) ?? "Waiting for a matchup…"}</small><LeagueRunReport job={job}/></div><AsyncActionButton loading={stoppingIds.includes(job.id)} loadingLabel="Bringing home…" onClick={() => void bringHome(job)}>Bring home</AsyncActionButton></article>)}</div> : <EmptyState icon="trophy" title="Your bench is ready" copy="Deploy an agent above and choose when it should return." />}</section>
-    <RecentLeagueRuns jobs={jobs}/>
-  </div>;
+export function LeagueHub(props:AgentLeaguePoolProps) {
+  return <AgentLeaguePool {...props}/>;
 }
 
 
@@ -775,18 +600,14 @@ function SettingsDrawer({
   account,
   siteAccount,
   connection,
-  settings,
   refresh,
-  onExperienceSaved,
 }: {
   open: boolean;
   onClose: () => void;
   account: AccountStatus | null;
   siteAccount: LeagueAccount | null;
   connection: LeagueConnection | null;
-  settings: ExperienceSettings | null;
   refresh: () => void | Promise<void>;
-  onExperienceSaved: (value: ExperienceSettings) => void;
 }) {
   const [message, setMessage] = useState("");
   const [checkingLeague,setCheckingLeague] = useState(false);
@@ -797,7 +618,6 @@ function SettingsDrawer({
       <section className="league-server-settings"><div className="settings-title"><Icon name="cloud" /><div><strong>League server</strong><small>{connection?.environment === 'production' ? 'Production · your live account and decks' : connection?.environment === 'staging' ? 'Staging · test environment' : 'Configured server'}</small></div><Pill state={connection?.reachable ? 'ready' : 'warn'}>{connection ? connection.reachable ? 'Reachable' : 'Unavailable' : 'Checking…'}</Pill></div>{connection && <><a href={connection.siteUrl} target="_blank" rel="noreferrer">{new URL(connection.siteUrl).host} ↗</a><p className="inline-notice">{connection.reason} No automatic switch to staging.</p></>}</section>
       <section><div className="settings-title"><Icon name="cloud" /><div><strong>Connect to League</strong><small>One account API key for MCP and agents</small></div></div><LeagueKeyConnection account={account} siteUrl={connection?.siteUrl||'https://deepdeckleague.com'} onChanged={refresh}/><p className="league-agent-status">Agent matchmaking credential: <strong>{account?.valid?'Ready':account?.configured?'Needs attention':'Not configured'}</strong>. Test MCP separately above.</p><AsyncActionButton type="button" loading={checkingLeague} loadingLabel="Checking League…" onClick={()=>void checkLeague()}>Check League connection</AsyncActionButton></section>
       <section><details><summary>Website session · advanced deck synchronization</summary><p>This optional session is only needed for website operations that do not yet accept the API key. It is not required to configure MCP.</p><AccountConnection account={siteAccount} agentAccount={account} connection={connection} onChanged={refresh}/></details></section>
-      <ReplayStorageSettings settings={settings} onSaved={onExperienceSaved}/>
       <LocalDiagnostics />
       <details><summary>Advanced laboratory</summary><p>GPU allocation, neural training, tensor diagnostics, and raw job logs are intentionally hidden from the player experience. The underlying APIs remain available for a future expert mode.</p></details>{message && <p className={message.includes("updated") || message.includes("connected") ? "settings-message success" : "settings-message"}>{message}</p>}
     </aside>
@@ -945,8 +765,8 @@ export default function PlayerApp() {
         {page === 'competitions' && <CompetitionHistory initialId={preferredCompetitionId} onCreate={() => { if (playDraft.current) playDraft.current = {...playDraft.current, mode: 'competition'}; setCompetitionPreset(true); navigate('play'); }} onWatch={job => {if (job.kind === 'playtest.table') openJob(job); else setWatchJob(job);}} onReplays={id => { setPreferredReplayId(id ?? ''); navigate('replays'); }} />}
         {page === "decks" && <DeckWorkshop downloaded={decks} revisionKey={deckRevisionKey} onImported={refreshLocalLibrary} openAssistant={() => openAssistant("deck")} account={siteAccount} openSettings={() => setSettingsOpen(true)} onDirtyChange={setDeckDraftDirty} onCreateAgent={deck=>{if(navigate('agents')) setAgentCreationDeck({id:deck.id,name:deck.name,format:deck.format});}} />}
         {page === "agents" && <div className="agent-workshop-shell"><div className="agent-value-strip"><div><Icon name="spark" /><span><strong>A shared strategy</strong><small>Reusable weighted decisions</small></span></div><div><Icon name="cards" /><span><strong>Deck specialists</strong><small>Card and tag rules</small></span></div><div><Icon name="replay" /><span><strong>Saved versions</strong><small>Review and restore strategies</small></span></div><button type="button" onClick={() => openAssistant("agent")}><Icon name="spark" />Open strategy copilot</button></div><AgentStudio initialDeck={agentCreationDeck} onInitialDeckUsed={consumeAgentCreationDeck} refresh={refreshLocalLibrary} revisionKey={agents.map((agent) => `${agent.id}:${agent.revision}`).join("|")} openAssistant={() => openAssistant("agent")} onDirtyChange={setAgentDraftDirty} openLeague={(agent) => { setPreferredLeagueAgentId(agent.id); setPage("league"); }} openPlaytest={(agent) => { playDraft.current = agentPlayDraft(playDraft.current, agent); setPreferredAgentId(agent?.id ?? ""); setBatchPreset(0); setPage("play"); }} /></div>}
-        {page === "league" && <LeagueHub account={account} siteAccount={siteAccount} connection={connection} agents={agents} competitions={competitions} jobs={jobs} refresh={refreshLocalLibrary} openSettings={() => setSettingsOpen(true)} preferredAgentId={preferredLeagueAgentId} capacity={leagueCapacity} replaySettings={experience} onReplays={()=>navigate('replays')} />}
-        {page === "replays" && <ReplayHub agents={agents} localDecks={decks} agentLibraryReady={agentsLoaded} onRefreshAgents={refreshAgents} settings={experience} jobs={jobs} activeGames={games} onWatch={setWatchJob} initialReplayId={preferredReplayId} openSettings={() => setSettingsOpen(true)} />}
+        {page === "league" && <LeagueHub account={account} siteAccount={siteAccount} connection={connection} agents={agents} competitions={competitions} jobs={jobs} refresh={refreshLocalLibrary} openSettings={() => setSettingsOpen(true)} preferredAgentId={preferredLeagueAgentId} capacity={leagueCapacity} />}
+        {page === "replays" && <ReplayHub agents={agents} localDecks={decks} agentLibraryReady={agentsLoaded} onRefreshAgents={refreshAgents} settings={experience} onSettingsSaved={acceptExperience} jobs={jobs} activeGames={games} onWatch={setWatchJob} initialReplayId={preferredReplayId} openSettings={() => setSettingsOpen(true)} />}
         {page === "insights" && <LocalInsights agents={agents} decks={decks} onStartBatch={() => { if (playDraft.current) playDraft.current = {...playDraft.current, mode: 'batch', games: 20}; setBatchPreset(20); setPage("play"); }} onViewReplays={() => setPage("replays")} />}
       </div>
     </main>
@@ -960,7 +780,7 @@ export default function PlayerApp() {
       window.localStorage.setItem('deepdeck.activeDeckId', id);
       setDeckRevisionKey(key => key + 1);
     }} onConnectLeague={() => setSettingsOpen(true)} onClose={() => setAssistantOpen(false)} onChanged={async (deckId) => { if (deckId || assistant === "deck") setDeckRevisionKey((key) => key + 1); await refreshLocalLibrary(); }} onStarted={openJob} />
-    <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} account={account} siteAccount={siteAccount} connection={connection} settings={experience} refresh={refresh} onExperienceSaved={acceptExperience} />
+    <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} account={account} siteAccount={siteAccount} connection={connection} refresh={refresh} />
     {watchJob && <LiveMatchViewer key={watchJob.id} initialJob={watchJob} onClose={() => { setWatchJob(null); void refresh(); }} />}
   </>;
 }
