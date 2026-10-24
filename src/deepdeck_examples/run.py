@@ -567,10 +567,20 @@ async def run(arguments: argparse.Namespace) -> None:
                 phase=None,
                 waitingForRegistration=True,
                 draining=False,
+                matchStatus=None,
+                matchId=None,
+                interventionRequired=False,
             )
             report_run()
             return
         phase = event["phase"]
+        # Report actual server match state, not merely an occupied local turn.
+        # Registration, waiting between rounds and a running game are distinct.
+        own_matches = event["ownMatches"]
+        current_match = next(
+            (match for status in ("running", "scheduled") for match in own_matches
+             if match.get("status") == status), None
+        )
         registration_state.update(
             eventRegistered=True,
             eventId=event["id"],
@@ -583,6 +593,9 @@ async def run(arguments: argparse.Namespace) -> None:
             mutationUncertain=False,
             lastError=None,
             statusReason=event.get("statusReason"),
+            matchStatus=current_match.get("status") if current_match else None,
+            matchId=current_match.get("matchId") if current_match else None,
+            interventionRequired=event.get("interventionRequired") is True,
         )
         report_run()
         for own_match in event["ownMatches"]:

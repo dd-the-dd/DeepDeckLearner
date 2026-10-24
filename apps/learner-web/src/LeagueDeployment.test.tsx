@@ -57,7 +57,7 @@ test('selecting agent and League appends once, then resumes using acknowledged r
   show();await choose();
   await waitFor(()=>expect(api.controlLeagueQueue).toHaveBeenCalledWith('resume',1));
   expect(api.appendLeagueQueueEntry).toHaveBeenCalledExactlyOnceWith(0,{agentId:agent.id,competitionVersionId:competition.versionId,deckVersionIds:[deck.id],lease:{mode:'continuous'}});
-  expect(await screen.findByText('Waiting for a place')).toBeInTheDocument();
+  expect(await screen.findByText('Waiting for a local worker')).toBeInTheDocument();
   expect(screen.getByLabelText('Agent')).toHaveValue('');expect(api.startJob).not.toHaveBeenCalled();expect(api.saveLeagueQueue).not.toHaveBeenCalled();
 });
 test('full account can append another agent without replacing its existing pool',async()=>{
@@ -67,7 +67,7 @@ test('full account can append another agent without replacing its existing pool'
   await choose(second.id);
   await waitFor(()=>expect(api.appendLeagueQueueEntry).toHaveBeenCalledOnce());
   expect(queue.entries.map(e=>e.agentId)).toEqual(['pilot-1','pilot-2']);
-  expect(screen.getAllByText('Waiting for a place')).toHaveLength(2);
+  expect(screen.getAllByText('Waiting for a local worker')).toHaveLength(2);
   expect(api.controlLeagueQueue).not.toHaveBeenCalled();expect(api.startJob).not.toHaveBeenCalled();
 });
 test('League dropdown uses the selected agent format, case-insensitively',async()=>{
@@ -117,12 +117,12 @@ test('accepted append stays visible if resume cannot be confirmed',async()=>{
   vi.mocked(api.controlLeagueQueue).mockRejectedValueOnce(new TypeError('Lost response'));
   show();await choose();
   expect(await screen.findByRole('alert')).toHaveTextContent('Agent added; pool activation could not be confirmed');
-  expect(screen.getByText('Waiting for a place')).toBeInTheDocument();expect(api.appendLeagueQueueEntry).toHaveBeenCalledOnce();
+  expect(screen.getByText('Paused')).toBeInTheDocument();expect(api.appendLeagueQueueEntry).toHaveBeenCalledOnce();
 });
 test('library refresh failure never turns acknowledged addition into a resubmission',async()=>{
   show({refresh:()=>Promise.reject(new Error('Library unavailable'))});await choose();
   expect(await screen.findByText(/The library could not refresh/)).toBeInTheDocument();
-  expect(api.appendLeagueQueueEntry).toHaveBeenCalledOnce();expect(screen.getByText('Waiting for a place')).toBeInTheDocument();
+  expect(api.appendLeagueQueueEntry).toHaveBeenCalledOnce();expect(screen.getByText('Waiting for a local worker')).toBeInTheDocument();
 });
 test('server alone defines places and no editable local cap exists',async()=>{
   show({capacity:{status:'ready',limit:37,used:7,available:30,reason:'Server quota'}});
@@ -154,10 +154,39 @@ test('a pausing pool does not get automatically resumed by an addition',async()=
 test('local turn is not confused with server admission or competition',()=>{
   const playing={...entry(),state:'playing' as const,turn:{dispatchId:'d',sequence:1,jobId:'job',createdAt:''}};
   const worker={id:'job',kind:'matchmaking.agent',status:'running',details:{leagueRun:{activeEntries:0,completedEntries:0,maxMatches:null,durationSeconds:null}}} as api.Job;
-  expect(poolAgentStatus(playing,[])).toBe('Checking connection');
-  expect(poolAgentStatus(playing,[worker])).toBe('Connecting');
-  expect(poolAgentStatus(playing,[{...worker,details:{leagueRun:{...worker.details!.leagueRun!,serverRegistered:true}}}])).toBe('Connected to server');
-  expect(poolAgentStatus(playing,[{...worker,details:{leagueRun:{...worker.details!.leagueRun!,activeEntries:1}}}])).toBe('In competition');
+  expect(poolAgentStatus(playing,[])).toBe('Checking local worker');
+  expect(poolAgentStatus(playing,[worker])).toBe('Connecting to League');
+  expect(poolAgentStatus(playing,[{...worker,details:{leagueRun:{...worker.details!.leagueRun!,serverRegistered:true}}}])).toBe('Connected — checking tournament');
+  expect(poolAgentStatus(playing,[{...worker,details:{leagueRun:{...worker.details!.leagueRun!,activeEntries:1}}}])).toBe('Competition status unavailable');
+});
+
+test('one grid distinguishes paused, local worker, registration, running match and between-round waits',async()=>{
+  const playing={...entry(),state:'playing' as const,turn:{dispatchId:'d',sequence:1,jobId:'job',createdAt:''}};
+  const report={completedEntries:0,activeEntries:1,maxMatches:null,durationSeconds:null,serverRegistered:true,eventRegistered:true,phase:'registration' as const};
+  const worker={id:'job',kind:'matchmaking.agent',status:'running',details:{leagueRun:report}} as api.Job;
+  expect(poolAgentStatus(entry(),[],queue)).toBe('Paused');
+  expect(poolAgentStatus(playing,[{...worker,status:'queued'}])).toBe('Waiting for a local worker');
+  expect(poolAgentStatus(playing,[worker])).toBe('Queued for tournament');
+  for(const [patch,label] of [
+    [{phase:'season',matchStatus:'running'},'Playing — season'],
+    [{phase:'playoffs',matchStatus:'running'},'Playing — playoffs'],
+    [{phase:'season',matchStatus:'scheduled'},'Waiting for a match worker'],
+    [{phase:'season',matchStatus:null},'Waiting for the next match'],
+    [{eventRegistered:false,phase:null,waitingForRegistration:true},'Waiting for the next legacy tournament'],
+    [{interventionRequired:true},'Tournament needs intervention'],
+    [{serverRegistered:false},'Reconnecting to League'],
+  ] as const)expect(poolAgentStatus(playing,[{...worker,details:{leagueRun:{...report,...patch}}}])).toBe(label);
+  queue={...queue,status:'running',entries:[playing]};show({jobs:[worker]});
+  expect(await screen.findByText('Queued for tournament')).toBeInTheDocument();
+  expect(screen.getAllByRole('table')).toHaveLength(1);
+  expect(screen.queryByText('Waiting pool')).toBeNull();expect(screen.queryByText('Connected to League')).toBeNull();
+});
+
+test('registration countdown uses server clock rather than the viewer clock',async()=>{
+  queue={...queue,status:'running',entries:[{...entry(),state:'playing',turn:{dispatchId:'d',sequence:1,jobId:'job',createdAt:''}}]};
+  const worker={id:'job',kind:'matchmaking.agent',status:'running',details:{leagueRun:{completedEntries:0,activeEntries:1,maxMatches:null,durationSeconds:null,serverRegistered:true,eventRegistered:true,phase:'registration',serverNow:'2000-01-01T12:00:00Z',registrationClosesAt:'2000-01-01T12:30:00Z'}}} as api.Job;
+  show({jobs:[worker]});
+  expect(await screen.findByRole('timer')).toHaveTextContent('30:00 until registration closes');
 });
 test('older controllers are never offered unsupported format rotation',async()=>{
   show();await waitFor(()=>expect(screen.getByLabelText('Rotation')).toBeEnabled());

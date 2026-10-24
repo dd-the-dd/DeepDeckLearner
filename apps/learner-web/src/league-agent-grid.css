@@ -38,7 +38,7 @@
 .agent-pool-status.blocked { background:#f8e4e5; color:#883d44; }
 .agent-pool-status.done { background:#e8e7e4; color:#555d62; }
 .agent-pool-row-actions { display:flex; gap:8px; justify-content:end; }
-.agent-pool-row-actions button:last-child { min-width:40px; font-size:20px; }
+.agent-pool-row-actions button:last-child { min-width:40px; font-size:13px; }
 .agent-league-pool .sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .agent-format-places { font-size:12px; margin-bottom:16px; }
 .agent-format-places summary { cursor:pointer; }
