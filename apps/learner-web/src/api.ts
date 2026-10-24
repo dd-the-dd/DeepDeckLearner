@@ -200,7 +200,8 @@ export async function recoverReplayInbox(modelId:string):Promise<Job>{
   return json<Job>(await authorizedFetch(`/api/v1/replay-inbox/${encodeURIComponent(modelId)}/collect`,{method:'POST'}));
 }
 export type LeagueQueue = {
-  id:string;revision:number;status:'paused'|'running'|'pausing';strategy:'round_robin'|'random';
+  id:string;revision:number;status:'paused'|'running'|'pausing';strategy:'round_robin'|'random'|'respect_format';
+  formatSeats?:{legacy:number;commander:number};
   entries:LeagueQueueEntry[];message:string|null;capacity:(LeagueCapacity & {checkedAt:string})|null;
   controllerError?:string;
   history:LeagueTurnSummary[];
@@ -215,7 +216,7 @@ export async function appendLeagueQueueEntry(revision:number,entry:LeagueQueueEn
 export async function removeLeagueQueueEntry(entryId:string,revision:number):Promise<LeagueQueue> {
   return json<LeagueQueue>(await authorizedFetch(`/api/v1/league-queue/entries/${encodeURIComponent(entryId)}/remove`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision})}));
 }
-export async function saveLeagueQueue(queue:Pick<LeagueQueue,'revision'|'strategy'> & {entries:Array<Pick<LeagueQueueEntry,'agentId'|'competitionVersionId'|'deckVersionIds'|'lease'>>}):Promise<LeagueQueue> {
+export async function saveLeagueQueue(queue:Pick<LeagueQueue,'revision'|'strategy'|'formatSeats'> & {entries:Array<Pick<LeagueQueueEntry,'agentId'|'competitionVersionId'|'deckVersionIds'|'lease'>>}):Promise<LeagueQueue> {
   return json<LeagueQueue>(await authorizedFetch('/api/v1/league-queue',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(queue)}));
 }
 export async function controlLeagueQueue(action:'pause'|'resume'|'retry',revision:number,entryId?:string):Promise<LeagueQueue> {

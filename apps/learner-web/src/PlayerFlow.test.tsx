@@ -17,7 +17,7 @@ vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')
   loadActiveGames: vi.fn(), loadExperienceSettings: vi.fn(), loadLlmSettings: vi.fn(), chatWithAgentStudio: vi.fn(),
   startJob: vi.fn(), stopJob: vi.fn(),
   saveExperienceSettings:vi.fn(),
-  loadLeagueQueue:vi.fn(),
+  loadLeagueQueue:vi.fn(),loadLocalTableReplays:vi.fn(),loadSavedReplays:vi.fn(),loadReplayInbox:vi.fn(),
 }));
 const job: Job = { id: 'chat-table', kind: 'playtest.table', status: 'queued', label: 'Your Legacy table', details: {}, logs: [], argv: [], created_at: '', started_at: null, finished_at: null, exit_code: null, artifact_path: null };
 const flowDeck = {id:'flow-deck',name:'Flow Legacy deck',format:'legacy',version:1,colors:['U'],playableCardCount:60} as DeckSummary;
@@ -73,6 +73,10 @@ beforeEach(() => {
   vi.mocked(api.loadExperienceSettings).mockResolvedValue({ replayStorageLimitBytes: 2 * 1024 ** 3, replayStorageUsedBytes: 0, replayPollSeconds: 600, autoCollectLeagueReplays: true } as ExperienceSettings);
   vi.mocked(api.loadLlmSettings).mockResolvedValue({ configured: true, providerName: 'Local fixture', model: 'fixture', baseUrl: 'http://127.0.0.1:11434/v1', hasApiKey: false, leagueMcpEnabled: false });
   vi.mocked(api.loadLeagueQueue).mockResolvedValue({id:'queue',revision:0,status:'paused',strategy:'round_robin',entries:[],history:[],capacity:null,message:null});
+  vi.mocked(api.loadLocalTableReplays).mockResolvedValue([]);
+  vi.mocked(api.loadSavedReplays).mockResolvedValue([]);
+  vi.mocked(api.loadReplayInbox).mockResolvedValue({items:[],observedAtUnixMs:0});
+  HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
   vi.mocked(api.loadJob).mockResolvedValue(job);
   vi.mocked(api.startJob).mockResolvedValue(job);vi.mocked(api.stopJob).mockResolvedValue({...job,status:'stopped'});
   vi.mocked(api.chatWithAgentStudio).mockResolvedValue({ message: 'Table started.', toolEvents: [{ tool: 'start_playtest', ok: true, result: job }], agents: [] });
@@ -98,17 +102,17 @@ test('navigation keeps complete accessible names and marks only the current page
   expect(screen.getByRole('button', {name: 'Settings Accounts & storage'})).toHaveAttribute('title', 'Settings — Accounts & storage');
 });
 
-test('returning to League shows the saved rotation overview without expanding it or starting a worker',async()=>{
+test('returning to League shows saved agent rows without starting a worker',async()=>{
   const entry={id:'e1',agentId:'pilot',name:'Waiting pilot',format:'legacy',competitionVersionId:'league',deckVersionIds:['deck'],lease:{mode:'continuous' as const},completedMatches:2,elapsedSeconds:100,state:'queued' as const,turn:null,error:null};
   vi.mocked(api.loadLeagueQueue).mockResolvedValue({id:'queue',revision:1,status:'running',strategy:'round_robin',entries:[entry],history:[],capacity:null,message:null});
   render(<PlayerApp/>);
   fireEvent.click(screen.getByRole('button',{name:/^League /}));
-  await waitFor(()=>expect(screen.getByRole('status',{name:'Rotation overview'})).toHaveTextContent('1 waiting'));
-  expect(screen.getByRole('status',{name:'Rotation overview'})).toHaveTextContent('Waiting for server capacity');
-  expect(screen.getByRole('button',{name:'Show rotation details'})).toHaveAttribute('aria-expanded','false');
+  expect(await screen.findByText('Waiting pilot')).toBeInTheDocument();
+  expect(screen.getByText('Waiting for a place')).toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Show rotation details'})).toBeNull();
   fireEvent.click(screen.getByRole('button',{name:/^Play /}));
   fireEvent.click(screen.getByRole('button',{name:/^League /}));
-  await waitFor(()=>expect(screen.getByRole('status',{name:'Rotation overview'})).toHaveTextContent('1 waiting'));
+  expect(await screen.findByText('Waiting pilot')).toBeInTheDocument();
   expect(api.startJob).not.toHaveBeenCalled();
 });
 
@@ -294,10 +298,9 @@ test('an older background jobs response cannot erase the newer League roster',as
   fireEvent.click(screen.getByRole('button',{name:'Refresh local library'}));
   await waitFor(()=>expect(api.loadJobs).toHaveBeenCalledTimes(2));
   fireEvent.click(screen.getByRole('button',{name:/^League /}));
-  await screen.findByRole('button',{name:'Bring home'});
+  await screen.findByText('Current League worker');
   await act(async()=>{oldRead([]);});
-  expect(screen.getByRole('button',{name:'Bring home'})).toBeInTheDocument();
-  expect(within(document.querySelector('.active-deployments') as HTMLElement).getByText('Current League worker')).toBeInTheDocument();
+  expect(within(screen.getByRole('table',{name:'Agents and Leagues'})).getByText('Current League worker')).toBeInTheDocument();
 });
 
 test('a stale initial agent read cannot erase a library refreshed explicitly by the user',async()=>{
@@ -322,7 +325,8 @@ test('a settings read started before a save cannot re-enable the newly paused co
   await prepareLocalTable();
   await act(async()=>{await vi.advanceTimersByTimeAsync(10_000);});
   expect(api.loadExperienceSettings).toHaveBeenCalledTimes(2);
-  fireEvent.click(screen.getByRole('button',{name:'YOU'}));
+  fireEvent.click(screen.getByRole('button',{name:/^Replays /}));
+  fireEvent.click(screen.getByRole('button',{name:'Limit replay storage'}));
   fireEvent.click(screen.getByLabelText('Automatically collect League replays'));
   fireEvent.click(screen.getByRole('button',{name:'Save replay settings'}));
   await screen.findByText(/Replay settings saved/);

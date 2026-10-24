@@ -4,7 +4,7 @@ import AsyncActionButton from './AsyncActionButton';
 import { DeckArtwork, ManaColors } from './DeckVisuals';
 import { ReplayPlaySettings } from './PlaySettings';
 import ReplayMatchFacts from './ReplayMatchFacts';
-import ReplayCollectionStatus from './ReplayCollectionStatus';
+import ReplayStorageControl from './ReplayStorageControl';
 import {
   acquireSavedReplay, loadSavedReplays, loadLocalTableReplays, releaseSavedReplayLease,
   renewSavedReplayLease, setReplayFavorite,
@@ -22,7 +22,7 @@ const dateLabel = (value: number | null) => value ? new Intl.DateTimeFormat(unde
 const bytesLabel = (value: number) => `${(value / 1024 ** 3).toFixed(2)} GB`;
 const complete = (item: ReplayItem) => ['complete', 'completed', 'gameOver'].includes(item.gameStatus ?? '');
 
-export default function ReplayHub({ agents, localDecks = [], settings, jobs = [], activeGames = [], onWatch, initialReplayId = '',openSettings,agentLibraryReady=true,onRefreshAgents }: { agents: ProgrammaticAgent[]; localDecks?: DeckSummary[]; settings: ExperienceSettings | null; jobs?: Job[]; activeGames?: ActiveGame[]; onWatch?: (job: Job) => void; initialReplayId?: string;openSettings?:()=>void;agentLibraryReady?:boolean;onRefreshAgents?:()=>Promise<void> }) {
+export default function ReplayHub({ agents, localDecks = [], settings, jobs = [], activeGames = [], onWatch, initialReplayId = '',agentLibraryReady=true,onRefreshAgents,onSettingsSaved }: { agents: ProgrammaticAgent[]; localDecks?: DeckSummary[]; settings: ExperienceSettings | null; jobs?: Job[]; activeGames?: ActiveGame[]; onWatch?: (job: Job) => void; initialReplayId?: string;openSettings?:()=>void;agentLibraryReady?:boolean;onRefreshAgents?:()=>Promise<void>;onSettingsSaved?:(value:ExperienceSettings)=>void }) {
   const [items, setItems] = useState<ReplayItem[]>([]);
   // Selection is explicit: new recordings must not replace an open match.
   const [selected, setSelected] = useState<ReplayItem | null>(null);
@@ -157,7 +157,7 @@ export default function ReplayHub({ agents, localDecks = [], settings, jobs = []
   const localLive = jobs.filter((job) => ['playtest.batch', 'playtest.table', 'playtest.agent'].includes(job.kind) && ['running', 'queued'].includes(job.status));
   const leagueLive = activeGames.filter((game) => game.source === 'league' && game.watchUrl);
   return <div className="replay-hub replay-library">
-    <ReplayCollectionStatus settings={settings} jobs={jobs} onSettings={openSettings} onRecovered={()=>setRefreshKey(value=>value+1)}/>
+    <ReplayStorageControl settings={settings} jobs={jobs} onSaved={onSettingsSaved} onRecovered={()=>setRefreshKey(value=>value+1)}/>
     {(localLive.length > 0 || leagueLive.length > 0) && <section className="feature-card live-now-card" aria-label="Live matches"><header><span className="live-dot" /><div><span className="section-kicker">Live now</span><h2>Watch your agents play</h2><p>Open a read-only table. Leaving the viewer keeps the match running.</p></div></header>{localLive.map((job) => <div className="live-now-row" key={job.id}><div><strong>{job.details?.deckNames?.join(' vs ') || job.label}</strong><small>Local Engine · {job.details?.completed ?? 0}/{job.details?.total ?? 1} completed{job.details?.participantNames?.length ? ` · ${job.details.participantNames.join(' vs ')}` : ''}</small></div><button className="primary-action" type="button" disabled={!onWatch} onClick={() => onWatch?.(job)}>Watch live</button></div>)}{leagueLive.map((game) => <div className="live-now-row" key={game.id}><div><strong>{game.decks.filter(Boolean).join(' vs ') || game.modelName}</strong><small>League · opens the server's live viewer</small></div><a className="primary-action" href={game.watchUrl!} target="_blank" rel="noreferrer">Watch on League ↗</a></div>)}</section>}
     <section className="replay-toolbar">
       <div className="segmented compact">{(['all', 'league', 'local'] as const).map((value) => <button key={value} type="button" className={source === value ? 'active' : ''} onClick={() => setSource(value)}>{value === 'all' ? 'All games' : value === 'league' ? 'League' : 'Local'}</button>)}</div>
