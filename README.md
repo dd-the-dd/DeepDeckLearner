@@ -41,7 +41,7 @@ An already-running shared Engine is never stopped by the launcher.
 
 ### From source
 
-These instructions target the **0.3.1 Player application**, with Play, Decks and
+These instructions target the **0.3.2 Player application**, with Play, Decks and
 Agents as its starting point. The earlier `v0.2.0` release opens the historical
 training interface and is not the app described here. The source check below
 stops before installation if an older revision was cloned.
@@ -585,7 +585,7 @@ py -m venv .deepdeck/desktop-build/venv
 .deepdeck/desktop-build/venv/Scripts/python.exe -m pip install ./external/deepdeck-agent ".[desktop,desktop-build]"
 .deepdeck/desktop-build/venv/Scripts/python.exe scripts/build_desktop.py --check
 .deepdeck/desktop-build/venv/Scripts/python.exe scripts/build_desktop.py
-python scripts/verify_desktop.py "dist/desktop/<timestamp>/DeepDeck-0.3.1-windows-x64.zip" --native --browser --work-dir .deepdeck/desktop-build/qa
+python scripts/verify_desktop.py "dist/desktop/<timestamp>/DeepDeck-0.3.2-windows-x64.zip" --native --browser --work-dir .deepdeck/desktop-build/qa
 ```
 
 The build script imports its freshness checks from this checkout's `src/`, not
