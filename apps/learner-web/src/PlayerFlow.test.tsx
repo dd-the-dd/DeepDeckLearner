@@ -108,7 +108,7 @@ test('returning to League shows saved agent rows without starting a worker',asyn
   render(<PlayerApp/>);
   fireEvent.click(screen.getByRole('button',{name:/^League /}));
   expect(await screen.findByText('Waiting pilot')).toBeInTheDocument();
-  expect(screen.getByText('Waiting for a place')).toBeInTheDocument();
+  expect(screen.getByText('Waiting for a local worker')).toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'Show rotation details'})).toBeNull();
   fireEvent.click(screen.getByRole('button',{name:/^Play /}));
   fireEvent.click(screen.getByRole('button',{name:/^League /}));

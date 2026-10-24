@@ -32,6 +32,7 @@ export function poolAgentStatus(entry:LeagueQueueEntry,jobs:Job[],queue?:LeagueQ
   if(run?.eventRegistered&&(run.phase==='season'||run.phase==='playoffs')){
     if(run.matchStatus==='running')return run.phase==='season'?'Playing — season':'Playing — playoffs';
     if(run.matchStatus==='scheduled')return 'Waiting for a match worker';
+    if(run.matchStatus===undefined)return 'Checking match status';
     return 'Waiting for the next match';
   }
   if(run?.phase==='complete'||run?.phase==='cancelled')return 'Tournament finished';
