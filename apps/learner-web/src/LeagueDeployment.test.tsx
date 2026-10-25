@@ -188,6 +188,17 @@ test('registration countdown uses server clock rather than the viewer clock',asy
   show({jobs:[worker]});
   expect(await screen.findByRole('timer')).toHaveTextContent('30:00 until registration closes');
 });
+
+test('an explicit maintenance hold preserves the place without a misleading start countdown',async()=>{
+  const reason='Engine maintenance: correcting section-only sideboards.';
+  queue={...queue,status:'running',entries:[{...entry(),state:'playing',turn:{dispatchId:'d',sequence:1,jobId:'job',createdAt:''}}]};
+  const worker={id:'job',kind:'matchmaking.agent',status:'running',details:{leagueRun:{completedEntries:0,activeEntries:1,maxMatches:null,durationSeconds:null,serverRegistered:true,eventRegistered:true,phase:'registration',interventionRequired:true,statusReason:reason,serverNow:'2000-01-01T12:00:00Z',registrationClosesAt:'2000-01-01T12:30:00Z'}}} as api.Job;
+  show({jobs:[worker]});
+  expect(await screen.findByText('League maintenance — place reserved')).toBeInTheDocument();
+  expect(screen.getByText(reason)).toBeInTheDocument();
+  expect(screen.queryByRole('timer')).toBeNull();
+  expect(api.controlLeagueQueue).not.toHaveBeenCalled();
+});
 test('older controllers are never offered unsupported format rotation',async()=>{
   show();await waitFor(()=>expect(screen.getByLabelText('Rotation')).toBeEnabled());
   expect(screen.queryByRole('option',{name:'Respect format'})).toBeNull();
