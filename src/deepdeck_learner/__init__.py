@@ -1,3 +1,3 @@
 """Local control plane for the DeepDeckLearner workbench."""
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
