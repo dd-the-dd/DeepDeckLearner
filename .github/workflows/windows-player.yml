@@ -10,7 +10,7 @@ on:
         description: Existing owned release receiving the verified assets
         required: true
         type: choice
-        options: [v0.3.3, v0.3.2]
+        options: [v0.3.4, v0.3.3, v0.3.2]
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
       - name: Validate explicit release inputs
         shell: pwsh
         run: |
-          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -notin @('v0.3.3', 'v0.3.2')) {
+          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:RELEASE_TAG -notin @('v0.3.4', 'v0.3.3', 'v0.3.2')) {
             throw 'Use an explicit public source SHA and the reviewed release tag.'
           }
       - uses: actions/checkout@v4
