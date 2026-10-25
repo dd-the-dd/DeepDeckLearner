@@ -27,7 +27,7 @@ export function poolAgentStatus(entry:LeagueQueueEntry,jobs:Job[],queue?:LeagueQ
   const run=job.details?.leagueRun;
   if(run?.lastError)return 'Needs attention';
   if(run?.serverRegistered===false)return run.eventRegistered?'Reconnecting to League':'Connecting to League';
-  if(run?.interventionRequired)return 'Tournament needs intervention';
+  if(run?.interventionRequired)return run.statusReason?.startsWith('Engine maintenance:')?'League maintenance — place reserved':'Tournament needs intervention';
   if(run?.eventRegistered&&run.phase==='registration')return 'Queued for tournament';
   if(run?.eventRegistered&&(run.phase==='season'||run.phase==='playoffs')){
     if(run.matchStatus==='running')return run.phase==='season'?'Playing — season':'Playing — playoffs';
@@ -51,7 +51,7 @@ function AgentStatus({entry,jobs,queue}:{entry:LeagueQueueEntry;jobs:Job[];queue
     setClock(Number.isFinite(remaining)?{remaining,observed:Date.now()}:null);
   },[run?.registrationClosesAt,run?.serverNow]);
   useEffect(()=>{if(run?.phase!=='registration'||!clock)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[run?.phase,clock]);
-  const seconds=clock?Math.max(0,Math.ceil((clock.remaining-Math.max(0,now-clock.observed))/1000)):null;
+  const seconds=clock&&!run?.interventionRequired?Math.max(0,Math.ceil((clock.remaining-Math.max(0,now-clock.observed))/1000)):null;
   return <><span className={`agent-pool-status ${entry.state}`} role="status">{poolAgentStatus(entry,jobs,queue)}</span>{run?.eventRegistered&&run.phase==='registration'&&seconds!==null&&<small role="timer" aria-label={`Tournament registration closes in ${Math.floor(seconds/60)} minutes ${seconds%60} seconds`}>{seconds>0?`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')} until registration closes`:'Registration closed — checking tournament start'}</small>}{entry.error&&<small className="inline-error">{entry.error}</small>}{run?.lastError&&<small className="inline-error">{run.lastError}</small>}{run?.statusReason&&run.interventionRequired&&<small>{run.statusReason}</small>}</>;
 }
 
