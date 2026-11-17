@@ -256,3 +256,51 @@ export function clickedEntityIds(value: any): string[] {
   }
   return [...ids];
 }
+
+// Pixi owns a pending Engine decision only on a live table, for a seat this
+// host controls, and when the decision maps to a dedicated Pixi primitive.
+// Everything else keeps the learner's existing decision panels.
+export function pixiOwnedDecision(
+  projection: any,
+  options: { replay?: boolean; unsupportedDecisionId?: string } = {},
+): any | null {
+  const model = projection?.decisionModel;
+  if (options.replay || !model?.decisionId || model.unsupported) return null;
+  if (model.decisionId === options.unsupportedDecisionId) return null;
+  const owner = (projection.players ?? []).find(
+    (player: any) => String(player?.key ?? "") === String(model.playerId ?? ""),
+  );
+  return owner?.role === "human" ? model : null;
+}
+
+// Converts a Pixi `decision-submit` payload into the learner's existing
+// action submission. The action must be one of the pending Engine options and
+// typed extras are forwarded only for the choice kind that accepts them.
+export function pixiDecisionSubmission(
+  decision: any,
+  submission: any,
+): { actionId: string; extra: Record<string, unknown> } | null {
+  const actionId = String(submission?.actionId ?? "");
+  if (!decision?.id || !actionId) return null;
+  if (submission.decisionId && submission.decisionId !== decision.id) return null;
+  if (!(decision.options ?? []).some((action: any) => action?.id === actionId)) return null;
+  const choiceKind = decision.choice?.kind;
+  const extra: Record<string, unknown> = {};
+  if (choiceKind === "numberSelection") {
+    const value = Number(submission.numberValue);
+    const minimum = Number(decision.choice.minimum);
+    const maximum = Number(decision.choice.maximum);
+    if (!Number.isInteger(value) || value < minimum || value > maximum) return null;
+    extra.numberValue = value;
+  }
+  if (Array.isArray(submission.cardInstanceIds)) {
+    if (!["cardSelection", "cardOrder"].includes(choiceKind)) return null;
+    extra.cardInstanceIds = submission.cardInstanceIds.map(String);
+  }
+  if (choiceKind === "cardNameSelection") {
+    const cardName = String(submission.cardName ?? "").trim();
+    if (!cardName || cardName.length > 256) return null;
+    extra.cardName = cardName;
+  }
+  return { actionId, extra };
+}

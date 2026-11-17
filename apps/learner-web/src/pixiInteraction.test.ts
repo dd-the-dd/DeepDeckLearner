@@ -3,7 +3,10 @@ import * as DeepDeckPixi from '@deepdeck/pixi';
 
 // The package currently declares its Vue component, not its JSON projection helpers.
 const {projectGameSessionView} = DeepDeckPixi as unknown as {
-  projectGameSessionView: (view: unknown) => {resolutionTargetChoice: {actions: unknown[]; targetKey: string}};
+  projectGameSessionView: (view: unknown, options?: Record<string, unknown>) => {
+    resolutionTargetChoice: {actions: unknown[]; targetKey: string};
+    decisionModel?: {decisionId?: string; unsupported?: string | null};
+  };
 };
 
 import {
@@ -11,6 +14,8 @@ import {
   candidateTargetIds,
   castingPaymentPresentations,
   castingXNumberChoice,
+  pixiDecisionSubmission,
+  pixiOwnedDecision,
   selectOnlyAttackDefender,
   selectPlanTarget,
   tableChoiceCardIds,
@@ -240,5 +245,58 @@ describe("visual Pixi targeting", () => {
       choiceAction,
       targetPlanFromAction(choiceAction),
     )).toBeNull();
+  });
+});
+
+describe("Pixi-owned Engine decisions", () => {
+  const player = (id: string) => ({id, name: id, life: 20, hand: [], battlefield: [], library: [], graveyard: [], exile: [], commandZone: [], manaPool: []});
+  const view = (decision: Record<string, unknown>) => ({
+    schemaVersion: 'mtg-game-session/v1', sessionId: 'decision-test', revision: 3,
+    state: {players: [player('local-human'), player('local-agent')], stack: [], events: [], activePlayer: 0, priorityPlayer: 0, turnNumber: 1, step: 'precombatMain'},
+    decision,
+  });
+  const roles = {playerRoleById: {'local-human': 'human', 'local-agent': 'ai'}};
+  const mulligan = (playerId: string) => ({id: `mulligan:${playerId}`, kind: 'mulligan', playerId, options: [
+    {id: 'keep', kind: 'keepHand', playerId, label: 'Keep'},
+    {id: 'mull', kind: 'mulligan', playerId, label: 'Mulligan'},
+  ]});
+
+  test('lets Pixi own a supported decision only for a live seat this host controls', () => {
+    const human = projectGameSessionView(view(mulligan('local-human')), roles);
+    expect(pixiOwnedDecision(human)?.decisionId).toBe('mulligan:local-human');
+    expect(pixiOwnedDecision(human, {replay: true})).toBeNull();
+    expect(pixiOwnedDecision(human, {unsupportedDecisionId: 'mulligan:local-human'})).toBeNull();
+    const agent = projectGameSessionView(view(mulligan('local-agent')), roles);
+    expect(pixiOwnedDecision(agent)).toBeNull();
+  });
+
+  test('keeps the learner panels for a decision without a dedicated primitive', () => {
+    const projected = projectGameSessionView(view({id: 'odd', kind: 'futureDecisionKind', playerId: 'local-human',
+      options: [{id: 'only', kind: 'chooseResolution', playerId: 'local-human', label: 'Only'}]}), roles);
+    expect(projected.decisionModel?.unsupported).toBeTruthy();
+    expect(pixiOwnedDecision(projected)).toBeNull();
+  });
+
+  test('forwards only offered actions with the typed extras their choice accepts', () => {
+    const numberDecision = {id: 'x', options: [{id: 'pick'}], choice: {kind: 'numberSelection', minimum: 1, maximum: 3}};
+    expect(pixiDecisionSubmission(numberDecision, {actionId: 'pick', numberValue: 2, decisionId: 'x'}))
+      .toEqual({actionId: 'pick', extra: {numberValue: 2}});
+    expect(pixiDecisionSubmission(numberDecision, {actionId: 'pick', numberValue: 4})).toBeNull();
+    expect(pixiDecisionSubmission(numberDecision, {actionId: 'pick', numberValue: 2, decisionId: 'stale'})).toBeNull();
+    expect(pixiDecisionSubmission(numberDecision, {actionId: 'invented', numberValue: 2})).toBeNull();
+
+    const cards = {id: 'c', options: [{id: 'confirm'}], choice: {kind: 'cardOrder'}};
+    expect(pixiDecisionSubmission(cards, {actionId: 'confirm', cardInstanceIds: [7, 'b']}))
+      .toEqual({actionId: 'confirm', extra: {cardInstanceIds: ['7', 'b']}});
+    expect(pixiDecisionSubmission({...cards, choice: {kind: 'optionSelection'}}, {actionId: 'confirm', cardInstanceIds: ['a']}))
+      .toBeNull();
+
+    const named = {id: 'n', options: [{id: 'name'}], choice: {kind: 'cardNameSelection'}};
+    expect(pixiDecisionSubmission(named, {actionId: 'name', cardName: '  Island '}))
+      .toEqual({actionId: 'name', extra: {cardName: 'Island'}});
+    expect(pixiDecisionSubmission(named, {actionId: 'name', cardName: ' '})).toBeNull();
+
+    expect(pixiDecisionSubmission({id: 'plain', options: [{id: 'pass'}]}, {actionId: 'pass', numberValue: 9}))
+      .toEqual({actionId: 'pass', extra: {}});
   });
 });
