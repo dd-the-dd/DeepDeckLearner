@@ -23,6 +23,8 @@ import {
   candidateTargetIds,
   castingPaymentPresentations,
   castingXNumberChoice,
+  pixiDecisionSubmission,
+  pixiOwnedDecision,
   selectPlanTarget,
   selectOnlyAttackDefender,
   tableChoiceCardIds,
@@ -256,6 +258,8 @@ type PixiEventRefs = {
   controls: RefObject<(element: HTMLElement | null) => void>;
   settled: RefObject<(scene: Record<string, any>) => void>;
   card: RefObject<(payload: any) => void>;
+  decisionSubmit: RefObject<(submission: any) => void>;
+  decisionUnsupported: RefObject<(decision: any) => void>;
   exit: RefObject<() => void>;
   hover: RefObject<(payload: any) => void>;
   leave: RefObject<() => void>;
@@ -267,17 +271,22 @@ type PixiEventRefs = {
 function mountPixi(
   host: HTMLDivElement,
   initialScene: Record<string, unknown>,
+  initialDecision: Record<string, unknown> | null,
   events: PixiEventRefs,
   mode: "play" | "replay",
 ) {
   const currentScene = shallowRef(initialScene);
+  const currentDecision = shallowRef(initialDecision);
   const vue = createApp({
     render: () => h(pixi.PixiGame, {
       brandName: "Deep Deck Learner",
       cardBackUrl: "/api/scryfall-images/back.png",
+      decision: currentDecision.value,
       mode,
       scene: currentScene.value,
       onControlsReady: (element: HTMLElement | null) => events.controls.current(element),
+      onDecisionSubmit: (submission: any) => events.decisionSubmit.current(submission),
+      onDecisionUnsupported: (decision: any) => events.decisionUnsupported.current(decision),
       onVisualSettled: (scene: Record<string, any>) => events.settled.current(scene),
       onCardClick: (payload: any) => events.card.current(payload),
       onCardHover: (payload: any) => events.hover.current(payload),
@@ -292,7 +301,7 @@ function mountPixi(
     console.warn("Pixi table runtime error", error);
   };
   vue.mount(host);
-  return { currentScene, vue };
+  return { currentDecision, currentScene, vue };
 }
 
 function actionLabel(action: any) {
@@ -454,6 +463,7 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
   const host = useRef<HTMLDivElement>(null);
   const vue = useRef<VueApp<Element> | null>(null);
   const sceneRef = useRef<ShallowRef<Record<string, unknown>> | null>(null);
+  const decisionRef = useRef<ShallowRef<Record<string, unknown> | null> | null>(null);
   const [controlsHost, setControlsHost] = useState<HTMLElement | null>(null);
   const [resolvedArtwork, setResolvedArtwork] = useState<Record<string, unknown>>({});
   const controlsRef = useRef(setControlsHost);
@@ -503,7 +513,17 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
     () => pixi.gameSessionActionPresentations(projection.directActions ?? []),
     [projection.directActions],
   );
+  // Decisions with a dedicated Pixi primitive are answered on the table; an
+  // unsupported decision (or one Pixi reports as unsupported) keeps the
+  // learner's existing panels below.
+  const [unsupportedDecisionId, setUnsupportedDecisionId] = useState("");
+  const pixiDecision = useMemo(
+    () => pixiOwnedDecision(projection, { replay: isReplay, unsupportedDecisionId }),
+    [isReplay, projection, unsupportedDecisionId],
+  );
+  const pixiOwnsDecision = Boolean(pixiDecision);
   const automaticTargetPlan = useMemo(() => {
+    if (pixiOwnsDecision) return null;
     const resolution = projection.resolutionTargetChoice;
     if (resolution) {
       return targetPlanFromAction({
@@ -516,11 +536,11 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
       (action: any) => actionTargetKeys(action).length > 0,
     );
     return visualDirect.length === 1 ? targetPlanFromAction(visualDirect[0]) : null;
-  }, [directPresentations, projection.resolutionTargetChoice]);
-  const activeTargetPlan = targetPlan ?? automaticTargetPlan;
-  const cardChoice = projection.resolutionCardChoice;
-  const cardNameChoice = projection.cardNameChoice;
-  const dungeonChoice = projection.dungeonChoice;
+  }, [directPresentations, pixiOwnsDecision, projection.resolutionTargetChoice]);
+  const activeTargetPlan = pixiOwnsDecision ? null : targetPlan ?? automaticTargetPlan;
+  const cardChoice = pixiOwnsDecision ? null : projection.resolutionCardChoice;
+  const cardNameChoice = pixiOwnsDecision ? null : projection.cardNameChoice;
+  const dungeonChoice = pixiOwnsDecision ? null : projection.dungeonChoice;
   const visibleNameCards = useMemo(() => visibleCardNameChoices(projection), [projection]);
   const visibleNameCardIds = useMemo(
     () => new Set<string>(visibleNameCards.map((card: any) => String(card.id))),
@@ -605,6 +625,7 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
     if (cue) setSoundSignal({ id: ++soundSequence.current, cue });
   };
   const initialScene = useRef(scene);
+  const initialDecision = useRef(pixiDecision);
   const initialSelectionKey = JSON.stringify(
     projection.resolutionCardChoice?.initialSelectedCardIds ?? [],
   );
@@ -694,6 +715,25 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
   const stackRef = useRef<(item: any) => void>(() => undefined);
   const passRef = useRef<() => void>(() => undefined);
   const exitRef = useRef(onExit);
+  const decisionSubmitRef = useRef<(submission: any) => void>(() => undefined);
+  const decisionUnsupportedRef = useRef<(decision: any) => void>(() => undefined);
+  useEffect(() => {
+    decisionSubmitRef.current = (submission: any) => {
+      const request = pixiDecisionSubmission(view.decision, submission);
+      if (request) {
+        submit(request.actionId, request.extra);
+        return;
+      }
+      // Never guess an answer: hand a rejected Pixi submission back to the
+      // learner's own decision panels for this decision.
+      console.warn("Pixi submitted an answer that the pending Engine decision does not offer.", submission);
+      if (view.decision?.id) setUnsupportedDecisionId(String(view.decision.id));
+    };
+    decisionUnsupportedRef.current = (decision: any) => {
+      const id = decision?.decisionId ?? decision?.id;
+      if (id) setUnsupportedDecisionId(String(id));
+    };
+  }, [submit, view.decision]);
   useEffect(() => { cardRef.current = handleCard; }, [handleCard]);
   useEffect(() => {
     hoverRef.current = (payload: any) => setHoveredCard(payload?.card ?? payload ?? null);
@@ -798,10 +838,12 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
   useEffect(() => {
     if (!host.current) return;
     try {
-      const mounted = mountPixi(host.current, initialScene.current, {
+      const mounted = mountPixi(host.current, initialScene.current, initialDecision.current, {
         controls: controlsRef,
         settled: settledRef,
         card: cardRef,
+        decisionSubmit: decisionSubmitRef,
+        decisionUnsupported: decisionUnsupportedRef,
         exit: exitRef,
         hover: hoverRef,
         leave: leaveRef,
@@ -811,6 +853,7 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
       }, mode);
       vue.current = mounted.vue;
       sceneRef.current = mounted.currentScene;
+      decisionRef.current = mounted.currentDecision;
     } catch (reason) {
       setVisualError(reason instanceof Error ? reason.message : "Pixi could not start.");
     }
@@ -818,16 +861,21 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
       vue.current?.unmount();
       vue.current = null;
       sceneRef.current = null;
+      decisionRef.current = null;
     };
   }, [mode]);
   useEffect(() => {
     if (sceneRef.current) sceneRef.current.value = scene;
   }, [scene]);
+  useEffect(() => {
+    if (decisionRef.current) decisionRef.current.value = pixiDecision;
+  }, [pixiDecision]);
 
-  const visualDirectChoices = directPresentations.filter(
+  const visualDirectChoices = pixiOwnsDecision ? [] : directPresentations.filter(
     (action: any) => actionTargetKeys(action).length > 0,
   );
   const abstractActions = directPresentations.filter((action: any) =>
+    !pixiOwnsDecision &&
     actionTargetKeys(action).length === 0 &&
     action.kind !== "passPriority" &&
     !projection.resolutionCardChoice &&
@@ -1060,7 +1108,7 @@ export default function LocalPixiRenderer({ deckSelections, cardCatalog: replayC
       })}</div>
       {tableChoiceCards.length === 0 && <button type="button" disabled={!cardSelectionValid} onClick={() => submit(cardChoice.options[0].actionId, { cardInstanceIds: selectedCardIds })}>Confirm selection</button>}
     </div>}
-    {projection.numberChoice && <div className="pixi-action-palette">
+    {!pixiOwnsDecision && projection.numberChoice && <div className="pixi-action-palette">
       <strong>{projection.numberChoice.prompt}</strong>
       <input type="number" min={projection.numberChoice.minimum} max={projection.numberChoice.maximum} value={numberValue} onChange={(event) => setNumberValue(Number(event.target.value))} />
       <button type="button" onClick={() => submit(projection.actions[0].id, { numberValue })}>Confirm</button>
